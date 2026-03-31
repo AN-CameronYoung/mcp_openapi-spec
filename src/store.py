@@ -40,7 +40,7 @@ class _OllamaEmbeddingFunction(EmbeddingFunction):
         self._url = url.rstrip("/") + "/api/embed"
         self._model = model
 
-    def __call__(self, input: list[str], batch_size: int = 16) -> Embeddings:
+    def __call__(self, input: list[str], batch_size: int = 1) -> Embeddings:
         # nomic-embed-text supports 8192 tokens (~32k chars), truncate to be safe
         texts = [t[:8000] for t in input]
         embeddings = []
