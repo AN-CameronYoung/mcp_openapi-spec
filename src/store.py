@@ -37,22 +37,22 @@ COLLECTION_NAME = "openapi_specs"
 
 class _OllamaEmbeddingFunction(EmbeddingFunction):
     def __init__(self, url: str, model: str):
-        self._base_url = url.rstrip("/")
+        self._url = url.rstrip("/") + "/api/embed"
         self._model = model
 
-    def __call__(self, input: list[str]) -> Embeddings:
+    def __call__(self, input: list[str], batch_size: int = 16) -> Embeddings:
         # nomic-embed-text supports 8192 tokens (~32k chars), truncate to be safe
+        texts = [t[:8000] for t in input]
         embeddings = []
-        for text in input:
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
             response = httpx.post(
-                self._base_url + "/api/embeddings",
-                json={"model": self._model, "prompt": text[:8000]},
+                self._url,
+                json={"model": self._model, "input": batch},
                 timeout=120,
             )
-            if not response.is_success:
-                print(f"[embeddings] error {response.status_code}: {response.text[:500]}")
             response.raise_for_status()
-            embeddings.append(response.json()["embedding"])
+            embeddings.extend(response.json()["embeddings"])
         return embeddings
 
 
