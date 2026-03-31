@@ -25,7 +25,6 @@ from typing import Optional
 
 import httpx
 import chromadb
-from chromadb.utils import embedding_functions
 from chromadb import EmbeddingFunction, Embeddings
 from dotenv import load_dotenv
 
@@ -59,7 +58,8 @@ def _build_embedding_function():
         return _OllamaEmbeddingFunction(url=ollama_url, model=model)
     model = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     print(f"[embeddings] using sentence-transformers  model={model}")
-    return embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model)
+    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+    return SentenceTransformerEmbeddingFunction(model_name=model)
 
 
 def _build_client() -> chromadb.ClientAPI:
