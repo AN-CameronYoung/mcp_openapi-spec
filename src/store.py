@@ -23,8 +23,10 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import chromadb
 from chromadb.utils import embedding_functions
+from chromadb import EmbeddingFunction, Embeddings
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -34,12 +36,27 @@ DEFAULT_DB_PATH = str(Path(__file__).parent.parent / ".chroma_db")
 COLLECTION_NAME = "openapi_specs"
 
 
+class _OllamaEmbeddingFunction(EmbeddingFunction):
+    def __init__(self, url: str, model: str):
+        self._url = url.rstrip("/") + "/api/embed"
+        self._model = model
+
+    def __call__(self, input: list[str]) -> Embeddings:
+        response = httpx.post(
+            self._url,
+            json={"model": self._model, "input": input},
+            timeout=60,
+        )
+        response.raise_for_status()
+        return response.json()["embeddings"]
+
+
 def _build_embedding_function():
     ollama_url = os.getenv("OLLAMA_URL")
     if ollama_url:
         model = os.getenv("OLLAMA_MODEL", "mxbai-embed-large")
         print(f"[embeddings] using Ollama  url={ollama_url}  model={model}")
-        return embedding_functions.OllamaEmbeddingFunction(url=ollama_url, model_name=model)
+        return _OllamaEmbeddingFunction(url=ollama_url, model=model)
     model = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     print(f"[embeddings] using sentence-transformers  model={model}")
     return embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model)
