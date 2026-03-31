@@ -1,0 +1,5 @@
+.env
+.claude
+.venv
+.zip
+__pycache__/
