@@ -99,6 +99,17 @@ def endpoint_to_document(endpoint: dict, api_name: str) -> Document:
         # ChromaDB metadata values must be str/int/float/bool — join tags
         metadata["tags"] = ", ".join(endpoint["tags"])
 
+    # Store full (untruncated) response schema for exact get_endpoint lookups
+    for status, resp in responses.items():
+        if str(status).startswith("2") and isinstance(resp, dict):
+            for _, media_obj in (resp.get("content") or {}).items():
+                if isinstance(media_obj, dict):
+                    full_schema = _full_schema_str(media_obj.get("schema", {}))
+                    if full_schema:
+                        metadata["response_schema"] = full_schema
+                break
+            break
+
     return doc_id, text, metadata
 
 
@@ -145,6 +156,29 @@ def schema_to_document(schema: dict, api_name: str) -> Document:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _full_schema_str(schema: Any) -> str:
+    """Produce a complete schema string with all fields and types (no truncation)."""
+    if not isinstance(schema, dict):
+        return ""
+    stype = schema.get("type", "")
+    if stype == "array":
+        return f"array of {_full_schema_str(schema.get('items', {}))}"
+    if stype == "object" or schema.get("properties"):
+        props = schema.get("properties", {})
+        if not props:
+            return "object"
+        parts = [f"{k}: {_full_schema_str(v)}" for k, v in props.items()]
+        return "{ " + ", ".join(parts) + " }"
+    if stype:
+        return stype
+    for combiner in ("allOf", "oneOf", "anyOf"):
+        parts = schema.get(combiner)
+        if parts:
+            summaries = [_full_schema_str(p) for p in parts if isinstance(p, dict)]
+            return f"{combiner}({', '.join(s for s in summaries if s)})"
+    return ""
+
 
 def _schema_summary(schema: Any, depth: int = 0) -> str:
     """Produce a compact one-line summary of a JSON schema."""
