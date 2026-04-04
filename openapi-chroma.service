@@ -13,7 +13,7 @@ RestartSec=5
 # Keep ChromaDB data across restarts
 Environment=CHROMA_DB_PATH=/var/lib/openapi-chroma
 Environment=OLLAMA_URL=https://ai.home.itsnotcam.dev
-Environment=OLLAMA_MODEL=nomic-embed-text
+Environment=OLLAMA_MODEL=snowflake-arctic-embed2
 
 [Install]
 WantedBy=multi-user.target
