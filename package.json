@@ -1,0 +1,31 @@
+{
+	"name": "openapi-chroma",
+	"version": "0.1.0",
+	"type": "module",
+	"description": "OpenAPI spec ingestion into ChromaDB with MCP server for Claude",
+	"main": "main.ts",
+	"bin": {
+		"openapi-chroma": "main.ts"
+	},
+	"scripts": {
+		"start": "bun run main.ts serve",
+		"dev": "bun run --watch main.ts serve",
+		"test": "bun test",
+		"lint": "eslint . --ext .ts",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@apidevtools/json-schema-ref-parser": "^11.9.3",
+		"@modelcontextprotocol/sdk": "^1.12.1",
+		"axios": "^1.9.0",
+		"chromadb": "^1.9.2",
+		"commander": "^13.1.0",
+		"hono": "^4.7.7",
+		"yaml": "^2.7.1",
+		"zod": "^3.24.4"
+	},
+	"devDependencies": {
+		"@types/bun": "latest",
+		"typescript": "^5.8.3"
+	}
+}

@@ -2,188 +2,128 @@
 
 OpenAPI spec ingestion into ChromaDB with an MCP server for Claude. Ingest any OpenAPI v2/v3 spec and search it semantically via MCP tools.
 
-## Quick start
+## Quick Start
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
+bun install
 cp .env.example .env  # edit as needed
 ```
 
-### Ingest a spec
+### CLI
 
 ```bash
-python main.py ingest ./specs/zerotier.yaml --api zerotier
-python main.py ingest https://example.com/openapi.yaml --api myapi
+# Ingest a spec
+bun run main.ts ingest ./specs/zerotier.yaml --api zerotier
+
+# Semantic search
+bun run main.ts query "how do I list all devices" --api proxmox
+
+# List ingested APIs
+bun run main.ts list
+
+# Start MCP server (stdio)
+bun run main.ts serve
+
+# Start MCP server (HTTP)
+bun run main.ts serve --transport http --port 3000
 ```
 
-### Run the MCP server
+### Frontend (React SPA)
 
 ```bash
-# stdio (local Claude Code subprocess)
-python main.py serve
-
-# HTTP (remote / homelab)
-python main.py serve --transport http --port 3000
+cd ui
+bun install
+bun run dev
 ```
 
-### Other CLI commands
+The frontend proxies `/openapi/*` to the backend on port 3000. Start the backend first with `--transport http`.
 
-```bash
-python main.py list          # list all ingested APIs
-python main.py query "list all devices" --api proxmox
+## MCP Configuration
+
+### Stdio (local Claude Code subprocess)
+
+```json
+{
+  "mcpServers": {
+    "openapi": {
+      "command": "bun",
+      "args": ["/path/to/main.ts", "serve"]
+    }
+  }
+}
 ```
 
-## MCP tools
+### HTTP (remote / homelab)
 
-| Tool | Description | Role |
+```json
+{
+  "mcpServers": {
+    "openapi": {
+      "type": "http",
+      "url": "https://mcp.home.itsnotcam.dev/openapi"
+    }
+  }
+}
+```
+
+## MCP Tools
+
+| Tool | Description | Auth |
 |------|-------------|------|
 | `search_endpoints` | Semantic search over API endpoints | read |
 | `search_schemas` | Semantic search over data schemas | read |
-| `get_endpoint` | Exact lookup by path + HTTP method | read |
+| `get_endpoint` | Exact lookup by method + path | read |
 | `list_apis` | List all ingested API names | read |
-| `ingest_spec` | Ingest a spec from file or URL at runtime | admin |
-| `delete_api` | Remove all documents for an API | admin |
-
-## MCP client config
-
-### stdio (local)
-
-```json
-{
-  "mcpServers": {
-    "openapi": {
-      "command": "python",
-      "args": ["/path/to/main.py", "serve"]
-    }
-  }
-}
-```
-
-### HTTP (remote)
-
-```json
-{
-  "mcpServers": {
-    "openapi": {
-      "type": "http",
-      "url": "http://your-server:3000/openapi/"
-    }
-  }
-}
-```
-
-If auth is enabled, add the token header:
-
-```json
-{
-  "mcpServers": {
-    "openapi": {
-      "type": "http",
-      "url": "http://your-server:3000/openapi/",
-      "headers": {
-        "Authorization": "Bearer <your-token>"
-      }
-    }
-  }
-}
-```
-
-## Swagger UI
-
-When running in HTTP mode, the server serves Swagger UI for browsing your ingested API specs.
-
-| URL | Description |
-|-----|-------------|
-| `/openapi/docs` | Swagger UI with a dropdown to select any spec |
-| `/openapi/specs/<filename>` | Raw spec files (YAML/JSON) |
-| `/openapi/` | MCP endpoint |
-
-Specs are auto-discovered from the `specs/` directory. Drop a new `.yaml` or `.json` file in there and it appears in the dropdown immediately.
-
-Large specs (>10 MB) are labeled with a warning in the dropdown -- Swagger UI parses the entire spec client-side and files like the MS Graph spec (60+ MB) will freeze the browser.
+| `list_endpoints` | List all endpoints for an API | read |
+| `ingest_spec` | Ingest a spec from file/URL | admin |
+| `delete_api` | Remove all docs for an API | admin |
 
 ## Authentication
 
-Auth is controlled by two environment variables:
+Authentication is **only enforced when `NODE_ENV=production`**. Set `MCP_ADMIN_TOKEN` and/or `MCP_READ_TOKEN` in your `.env`.
 
-| Variable | Description |
-|----------|-------------|
-| `MCP_ADMIN_TOKEN` | Full access -- all MCP tools including `ingest_spec` and `delete_api` |
-| `MCP_READ_TOKEN` | Read-only -- `search_endpoints`, `search_schemas`, `get_endpoint`, `list_apis`, plus Swagger UI and spec files |
+- **Admin token**: full access to all tools
+- **Read token**: read-only tools + Swagger UI + spec files
+- **No tokens set in production**: all endpoints are open (warning logged)
+- **Development mode**: auth is disabled
 
-If neither is set, auth is **disabled** and all endpoints are open (for local dev only).
+## Environment Variables
 
-### Setup
+See `.env.example` for all options. Key variables:
 
-Generate tokens:
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CHROMA_HOST` | Remote ChromaDB server | _(local)_ |
+| `CHROMA_DB_PATH` | Local DB path | `.chroma_db` |
+| `OLLAMA_URL` | Ollama server for embeddings | _(none)_ |
+| `OLLAMA_MODEL` | Ollama embedding model | `mxbai-embed-large` |
+| `MCP_ADMIN_TOKEN` | Admin auth token | _(none)_ |
+| `MCP_READ_TOKEN` | Read-only auth token | _(none)_ |
+| `NODE_ENV` | Environment (enables auth in production) | `development` |
 
-```bash
-export MCP_ADMIN_TOKEN=$(openssl rand -hex 32)
-export MCP_READ_TOKEN=$(openssl rand -hex 32)
-```
-
-Or add them to `.env`:
-
-```
-MCP_ADMIN_TOKEN=your-admin-token-here
-MCP_READ_TOKEN=your-read-token-here
-```
-
-For the systemd service, add to the unit file:
-
-```ini
-Environment=MCP_ADMIN_TOKEN=your-admin-token-here
-Environment=MCP_READ_TOKEN=your-read-token-here
-```
-
-### Behavior
-
-| Request | No token | Read token | Admin token |
-|---------|----------|------------|-------------|
-| `GET /openapi/docs` | 401 | 200 | 200 |
-| `GET /openapi/specs/*` | 401 | 200 | 200 |
-| MCP `list_apis` | 401 | 200 | 200 |
-| MCP `search_endpoints` | 401 | 200 | 200 |
-| MCP `ingest_spec` | 401 | **403** | 200 |
-| MCP `delete_api` | 401 | **403** | 200 |
-
-When auth is disabled (no tokens set), all requests are allowed.
-
-## Scripts
-
-### Reconstruct spec from ChromaDB
-
-Rebuild an OpenAPI YAML from data already ingested in ChromaDB:
+## Helper Scripts
 
 ```bash
-# From ChromaDB directly (needs access to the DB)
-python scripts/reconstruct_spec.py darktrace
+# Reconstruct a spec from ChromaDB
+bun run scripts/reconstructSpec.ts darktrace -o specs/darktrace.yaml
 
-# From a text dump (e.g. saved MCP search output)
-python scripts/reconstruct_spec.py darktrace -f /tmp/endpoints.txt -o specs/darktrace.yaml
+# Convert Postman collection to OpenAPI
+bun run scripts/postmanToOpenapi.ts collection.json -o specs/api.yaml
+
+# Enrich Proxmox spec from live API
+bun run scripts/proxmoxEnrich.ts
+
+# Debug ChromaDB store
+bun run scripts/debugStore.ts
 ```
 
-### Postman collection to OpenAPI
+## Tech Stack
 
-Convert a Postman Collection v2.1 export to OpenAPI 3.0:
-
-```bash
-python scripts/postman_to_openapi.py collection.json -o specs/myapi.yaml --title "My API"
-```
-
-## Environment variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CHROMA_HOST` | *(unset)* | Remote ChromaDB host. If unset, uses local persistent storage. |
-| `CHROMA_PORT` | `8000` | Port for remote ChromaDB |
-| `CHROMA_SSL` | `false` | Enable SSL for remote ChromaDB |
-| `CHROMA_AUTH_TOKEN` | *(unset)* | Bearer token for remote ChromaDB |
-| `CHROMA_DB_PATH` | `.chroma_db` | Local persistent DB path |
-| `CHROMA_COLLECTION` | `openapi_specs` | ChromaDB collection name |
-| `OLLAMA_URL` | *(unset)* | Ollama server URL for embeddings. If unset, uses sentence-transformers locally. |
-| `OLLAMA_MODEL` | `mxbai-embed-large` | Ollama embedding model |
-| `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | sentence-transformers model (only if `OLLAMA_URL` is unset) |
-| `MCP_ADMIN_TOKEN` | *(unset)* | Admin auth token (full access) |
-| `MCP_READ_TOKEN` | *(unset)* | Read-only auth token |
+- **Runtime**: Bun
+- **Language**: TypeScript (strict)
+- **HTTP**: Hono
+- **MCP**: @modelcontextprotocol/sdk
+- **Database**: ChromaDB
+- **Embeddings**: Ollama or ChromaDB built-in
+- **Validation**: Zod
+- **Frontend**: React + Vite + Tailwind CSS + Zustand + React Router

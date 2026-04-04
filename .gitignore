@@ -1,7 +1,8 @@
 .env
 .claude
-.venv
-.zip
-__pycache__/
-.chroma_db
+node_modules/
+dist/
+.chroma_db/
 proxmox_observed.json
+*.tsbuildinfo
+bun.lock
