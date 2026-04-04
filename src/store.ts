@@ -1,5 +1,4 @@
 import { ChromaClient, IncludeEnum, type Collection, type IEmbeddingFunction } from "chromadb";
-import axios from "axios";
 
 import config from "./config";
 import { StoreError } from "./errors";
@@ -25,13 +24,21 @@ class OllamaEmbeddingFunction implements IEmbeddingFunction {
 
 		for (let i = 0; i < truncated.length; i += batchSize) {
 			const batch = truncated.slice(i, i + batchSize);
-			const response = await axios.post(this.#url, {
-				model: this.#model,
-				input: batch,
-				truncate: true,
-			}, { timeout: 120000 });
-
-			embeddings.push(...response.data.embeddings);
+			const response = await fetch(this.#url, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					model: this.#model,
+					input: batch,
+					truncate: true,
+				}),
+				signal: AbortSignal.timeout(120000),
+			});
+			if (!response.ok) {
+				throw new StoreError(`Ollama embedding request failed: HTTP ${response.status}`);
+			}
+			const data = await response.json() as { embeddings: number[][] };
+			embeddings.push(...data.embeddings);
 		}
 
 		return embeddings;

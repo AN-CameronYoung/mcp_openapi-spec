@@ -2,7 +2,6 @@ import fs from "fs/promises";
 import path from "path";
 import $RefParser from "@apidevtools/json-schema-ref-parser";
 import YAML from "yaml";
-import axios from "axios";
 
 import { SpecLoadError } from "./errors";
 import type { Endpoint, Parameter, SchemaDefinition } from "../types/openapi";
@@ -16,13 +15,15 @@ export async function loadSpec(source: string): Promise<Record<string, unknown>>
 
 	try {
 		if (source.startsWith("http://") || source.startsWith("https://")) {
-			const response = await axios.get(source, {
-				timeout: 30000,
-				maxRedirects: 5,
-				responseType: "text",
+			const response = await fetch(source, {
+				signal: AbortSignal.timeout(30000),
+				redirect: "follow",
 			});
-			const raw = response.data as string;
-			const contentType = response.headers["content-type"] ?? "";
+			if (!response.ok) {
+				throw new Error(`HTTP ${response.status} ${response.statusText}`);
+			}
+			const raw = await response.text();
+			const contentType = response.headers.get("content-type") ?? "";
 
 			if (source.endsWith(".json") || contentType.startsWith("application/json")) {
 				data = JSON.parse(raw);

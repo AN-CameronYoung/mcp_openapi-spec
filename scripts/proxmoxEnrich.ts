@@ -5,7 +5,6 @@ import path from "path";
 import crypto from "crypto";
 import { Command } from "commander";
 import YAML from "yaml";
-import axios, { type AxiosInstance } from "axios";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -142,23 +141,41 @@ function loadAuth(): string {
 
 const BASE_URL = "https://gate.home.itsnotcam.dev";
 
-function createClient(authToken: string, skipSsl: boolean): AxiosInstance {
-	const https = skipSsl ? require("https") as typeof import("https") : undefined;
-	return axios.create({
-		baseURL: BASE_URL,
-		headers: {
-			"Authorization": authToken,
+interface FetchClient {
+	get(url: string): Promise<{ data: unknown }>;
+}
+
+function createClient(authToken: string, skipSsl: boolean): FetchClient {
+	return {
+		async get(url: string) {
+			const fullUrl = `${BASE_URL}${url}`;
+			const resp = await fetch(fullUrl, {
+				headers: { "Authorization": authToken },
+				signal: AbortSignal.timeout(30000),
+				...(skipSsl ? { tls: { rejectUnauthorized: false } } : {}),
+			});
+			if (!resp.ok) {
+				throw new FetchError(resp.status, resp.statusText);
+			}
+			const data = await resp.json();
+			return { data };
 		},
-		timeout: 30000,
-		...(skipSsl && https ? { httpsAgent: new https.Agent({ rejectUnauthorized: false }) } : {}),
-	});
+	};
+}
+
+class FetchError extends Error {
+	status: number;
+	constructor(status: number, statusText: string) {
+		super(`HTTP ${status} ${statusText}`);
+		this.status = status;
+	}
 }
 
 // ---------------------------------------------------------------------------
 // Discovery
 // ---------------------------------------------------------------------------
 
-async function safeGet(client: AxiosInstance, url: string): Promise<Record<string, unknown> | null> {
+async function safeGet(client: FetchClient, url: string): Promise<Record<string, unknown> | null> {
 	try {
 		const resp = await client.get(url);
 		return resp.data as Record<string, unknown>;
@@ -180,7 +197,7 @@ function firstField(items: Record<string, unknown>[], field: string): string {
 	return val !== undefined && val !== null ? String(val) : "";
 }
 
-async function discover(client: AxiosInstance): Promise<DiscoveryContext> {
+async function discover(client: FetchClient): Promise<DiscoveryContext> {
 	const ctx: DiscoveryContext = {
 		node: "",
 		vmid: "",
@@ -1012,7 +1029,7 @@ function stripApiPrefix(apiPath: string): string {
 }
 
 async function collectEndpoints(
-	client: AxiosInstance,
+	client: FetchClient,
 	ctx: DiscoveryContext,
 	dryRun: boolean,
 ): Promise<Observation[]> {
@@ -1075,7 +1092,7 @@ async function collectEndpoints(
 			okCount++;
 			console.log(`  [ok] ${operationId}`);
 		} catch (err: unknown) {
-			const status = axios.isAxiosError(err) ? err.response?.status ?? "?" : "?";
+			const status = err instanceof FetchError ? err.status : "?";
 			console.log(`  [fail] ${operationId} — ${status}`);
 			failedCount++;
 			observations.push({
