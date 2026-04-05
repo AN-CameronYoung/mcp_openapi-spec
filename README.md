@@ -1,6 +1,8 @@
 # openapi-chroma
 
-OpenAPI spec ingestion into ChromaDB with an MCP server for Claude. Ingest any OpenAPI v2/v3 spec and search it semantically via MCP tools.
+Give Claude (or any MCP client) the ability to search your API documentation. Point it at any OpenAPI v2/v3 spec — local file or URL — and it chunks, embeds, and indexes every endpoint and schema into ChromaDB. Claude can then semantically search across all your ingested APIs to find relevant endpoints, look up request/response schemas, and understand how services fit together, without you having to paste spec files into the conversation.
+
+Runs as an MCP server over stdio (for Claude Code) or HTTP (for remote/homelab setups), and includes a REST search API, Swagger UI for browsing raw specs, and a React frontend.
 
 ## Quick Start
 
@@ -84,7 +86,7 @@ Authentication is **only enforced when `NODE_ENV=production`**. Set `MCP_ADMIN_T
 
 - **Admin token**: full access to all tools
 - **Read token**: read-only tools + Swagger UI + spec files
-- **No tokens set in production**: all endpoints are open (warning logged)
+- **No tokens set in production**: server refuses to start
 - **Development mode**: auth is disabled
 
 ## Environment Variables
@@ -99,6 +101,8 @@ See `.env.example` for all options. Key variables:
 | `OLLAMA_MODEL` | Ollama embedding model | `mxbai-embed-large` |
 | `MCP_ADMIN_TOKEN` | Admin auth token | _(none)_ |
 | `MCP_READ_TOKEN` | Read-only auth token | _(none)_ |
+| `PORT` | HTTP server port | `3000` |
+| `HOST` | HTTP server bind address | `0.0.0.0` |
 | `NODE_ENV` | Environment (enables auth in production) | `development` |
 
 ## Helper Scripts

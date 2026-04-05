@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { Command } from "commander";
+import config from "./src/core/config";
 import Retriever from "./src/core/retriever";
 import { runStdioServer } from "./src/server/mcpServer";
 import { runHttpServer } from "./src/server/httpServer";
@@ -96,14 +97,16 @@ program
 program
 	.command("serve")
 	.description("Start the MCP server")
-	.option("--port <port>", "Port", "3000")
-	.option("--host <host>", "Bind host", "0.0.0.0")
+	.option("--port <port>", "Port (default: PORT env or 3000)")
+	.option("--host <host>", "Bind host (default: HOST env or 0.0.0.0)")
 	.option("--transport <mode>", "Transport mode: stdio or http", "stdio")
-	.action(async (opts: { port: string; host: string; transport: string }) => {
+	.action(async (opts: { port?: string; host?: string; transport: string }) => {
 		if (opts.transport === "stdio") {
 			await runStdioServer();
 		} else if (opts.transport === "http") {
-			await runHttpServer(opts.host, parseInt(opts.port, 10));
+			const port = opts.port ? parseInt(opts.port, 10) : config.PORT;
+			const host = opts.host ?? config.HOST;
+			await runHttpServer(host, port);
 		} else {
 			console.error(`Unknown transport: '${opts.transport}'. Choose 'stdio' or 'http'.`);
 			process.exit(1);

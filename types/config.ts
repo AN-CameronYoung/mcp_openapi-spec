@@ -13,6 +13,9 @@ export const AppConfig = z.object({
 	OLLAMA_MODEL: z.string().default("mxbai-embed-large"),
 	EMBEDDING_MODEL: z.string().default("all-MiniLM-L6-v2"),
 
+	PORT: z.coerce.number().default(3000),
+	HOST: z.string().default("0.0.0.0"),
+
 	MCP_ADMIN_TOKEN: z.string().optional(),
 	MCP_READ_TOKEN: z.string().optional(),
 

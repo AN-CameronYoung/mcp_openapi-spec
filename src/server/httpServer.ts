@@ -9,7 +9,7 @@ import { createMcpServer, WRITE_TOOLS } from "./mcpServer";
 import Retriever from "../core/retriever";
 import { renderSwaggerUi } from "./swaggerUi";
 
-const SPECS_DIR = path.resolve(import.meta.dir, "..", "specs");
+const SPECS_DIR = path.resolve(import.meta.dir, "..", "..", "specs");
 const SIZE_WARN_BYTES = 10 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
@@ -81,6 +81,15 @@ export async function runHttpServer(host: string, port: number): Promise<void> {
 	const app = new Hono();
 	const retriever = new Retriever();
 
+	// ── Request logging ──────────────────────────────────────────
+	app.use("*", async (c, next) => {
+		const start = Date.now();
+		await next();
+		const ms = Date.now() - start;
+		const status = c.res.status;
+		console.log(`[http] ${c.req.method} ${c.req.path} ${status} ${ms}ms`);
+	});
+
 	// ── Auth middleware ────────────────────────────────────────────
 	app.use("/openapi/*", async (c, next) => {
 		const role = getRole(c.req.header("authorization"));
@@ -114,7 +123,7 @@ export async function runHttpServer(host: string, port: number): Promise<void> {
 			return c.html(renderSwaggerUi(specs));
 		});
 
-		app.use("/openapi/specs/*", serveStatic({ root: path.resolve(SPECS_DIR, "..") }));
+		app.use("/openapi/specs/*", serveStatic({ root: SPECS_DIR, rewriteRequestPath: (p) => p.replace("/openapi/specs", "") }));
 	}
 
 	// ── REST search endpoint ──────────────────────────────────────
@@ -161,10 +170,13 @@ export async function runHttpServer(host: string, port: number): Promise<void> {
 	});
 
 	// ── Start server ──────────────────────────────────────────────
+	if (config.NODE_ENV === "production" && !config.MCP_ADMIN_TOKEN && !config.MCP_READ_TOKEN) {
+		console.error("[auth] FATAL: NODE_ENV=production but no auth tokens set. Set MCP_ADMIN_TOKEN and/or MCP_READ_TOKEN in .env, or use NODE_ENV=development.");
+		process.exit(1);
+	}
+
 	if (isAuthEnabled()) {
 		console.log(`[auth] token auth enabled — admin: ${config.MCP_ADMIN_TOKEN ? "set" : "unset"}, read: ${config.MCP_READ_TOKEN ? "set" : "unset"}`);
-	} else if (config.NODE_ENV === "production") {
-		console.log("[auth] WARNING: no auth tokens set — all endpoints are open");
 	} else {
 		console.log("[auth] auth disabled (NODE_ENV != production)");
 	}
