@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
 import { Command } from "commander";
-import Retriever from "./src/retriever";
-import { runStdioServer } from "./src/mcpServer";
-import { runHttpServer } from "./src/httpServer";
+import Retriever from "./src/core/retriever";
+import { runStdioServer } from "./src/server/mcpServer";
+import { runHttpServer } from "./src/server/httpServer";
 
 const program = new Command();
 

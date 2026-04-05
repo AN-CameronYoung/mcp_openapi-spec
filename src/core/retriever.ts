@@ -1,7 +1,7 @@
 import SpecStore from "./store";
 import { loadSpec, extractEndpoints, extractSchemas } from "./parser";
 import { endpointToDocument, schemaToDocument } from "./chunker";
-import type { DocumentResult, IngestSummary, QueryResult } from "../types/store";
+import type { DocumentResult, IngestSummary, QueryResult } from "#types/store";
 
 // ---------------------------------------------------------------------------
 // Retriever

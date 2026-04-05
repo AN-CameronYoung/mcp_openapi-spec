@@ -1,9 +1,11 @@
 {
 	"compilerOptions": {
+		"ignoreDeprecations": "6.0",
 		"target": "ES2022",
 		"module": "ESNext",
 		"moduleResolution": "bundler",
-		"lib": ["ES2022"],
+		"lib": ["ES2022", "DOM"],
+		"types": ["bun-types"],
 		"outDir": "./dist",
 		"rootDir": ".",
 		"strict": true,
@@ -21,9 +23,7 @@
 
 		"baseUrl": ".",
 		"paths": {
-			"@src/*": ["src/*"],
-			"@types": ["types/index.ts"],
-			"@config": ["src/config.ts"]
+			"#types/*": ["types/*"]
 		}
 	},
 	"include": ["src", "types", "scripts", "main.ts", "__tests__"],

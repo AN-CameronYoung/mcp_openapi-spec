@@ -1,5 +1,5 @@
-import type { Endpoint, SchemaDefinition } from "../types/openapi";
-import type { Document } from "../types/store";
+import type { Endpoint, SchemaDefinition } from "#types/openapi";
+import type { Document } from "#types/store";
 
 // ---------------------------------------------------------------------------
 // Endpoint → Document

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import SpecStore from "../src/store";
+import SpecStore from "../src/core/store";
 
 async function main(): Promise<void> {
 	const store = new SpecStore();

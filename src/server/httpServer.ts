@@ -4,12 +4,12 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
-import config from "./config";
+import config from "../core/config";
 import { createMcpServer, WRITE_TOOLS } from "./mcpServer";
-import Retriever from "./retriever";
+import Retriever from "../core/retriever";
 import { renderSwaggerUi } from "./swaggerUi";
 
-const SPECS_DIR = path.resolve(import.meta.dirname ?? ".", "..", "specs");
+const SPECS_DIR = path.resolve(import.meta.dir, "..", "specs");
 const SIZE_WARN_BYTES = 10 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ function discoverSpecs(): SpecEntry[] {
 // ---------------------------------------------------------------------------
 
 function isAuthEnabled(): boolean {
-	return config.nodeEnv === "production" && !!(config.mcpAdminToken || config.mcpReadToken);
+	return config.NODE_ENV === "production" && !!(config.MCP_ADMIN_TOKEN || config.MCP_READ_TOKEN);
 }
 
 function getRole(authHeader: string | undefined): "admin" | "read" | null {
@@ -68,8 +68,8 @@ function getRole(authHeader: string | undefined): "admin" | "read" | null {
 		? authHeader.slice(7).trim()
 		: "";
 
-	if (config.mcpAdminToken && token === config.mcpAdminToken) return "admin";
-	if (config.mcpReadToken && token === config.mcpReadToken) return "read";
+	if (config.MCP_ADMIN_TOKEN && token === config.MCP_ADMIN_TOKEN) return "admin";
+	if (config.MCP_READ_TOKEN && token === config.MCP_READ_TOKEN) return "read";
 	return null;
 }
 
@@ -162,8 +162,8 @@ export async function runHttpServer(host: string, port: number): Promise<void> {
 
 	// ── Start server ──────────────────────────────────────────────
 	if (isAuthEnabled()) {
-		console.log(`[auth] token auth enabled — admin: ${config.mcpAdminToken ? "set" : "unset"}, read: ${config.mcpReadToken ? "set" : "unset"}`);
-	} else if (config.nodeEnv === "production") {
+		console.log(`[auth] token auth enabled — admin: ${config.MCP_ADMIN_TOKEN ? "set" : "unset"}, read: ${config.MCP_READ_TOKEN ? "set" : "unset"}`);
+	} else if (config.NODE_ENV === "production") {
 		console.log("[auth] WARNING: no auth tokens set — all endpoints are open");
 	} else {
 		console.log("[auth] auth disabled (NODE_ENV != production)");

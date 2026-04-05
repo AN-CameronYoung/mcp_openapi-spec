@@ -1,74 +1,40 @@
-import { ChromaClient, IncludeEnum, type Collection, type IEmbeddingFunction } from "chromadb";
+import {
+	ChromaClient,
+	IncludeEnum,
+	OllamaEmbeddingFunction,
+	DefaultEmbeddingFunction,
+	type Collection,
+	type IEmbeddingFunction,
+} from "chromadb";
 
 import config from "./config";
 import { StoreError } from "./errors";
-import type { DocumentResult, QueryResult } from "../types/store";
-
-// ---------------------------------------------------------------------------
-// Ollama Embedding Function
-// ---------------------------------------------------------------------------
-
-class OllamaEmbeddingFunction implements IEmbeddingFunction {
-	#url: string;
-	#model: string;
-
-	constructor(url: string, model: string) {
-		this.#url = url.replace(/\/+$/, "") + "/api/embed";
-		this.#model = model;
-	}
-
-	async generate(texts: string[]): Promise<number[][]> {
-		const truncated = texts.map((t) => t.slice(0, 8000));
-		const batchSize = 16;
-		const embeddings: number[][] = [];
-
-		for (let i = 0; i < truncated.length; i += batchSize) {
-			const batch = truncated.slice(i, i + batchSize);
-			const response = await fetch(this.#url, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					model: this.#model,
-					input: batch,
-					truncate: true,
-				}),
-				signal: AbortSignal.timeout(120000),
-			});
-			if (!response.ok) {
-				throw new StoreError(`Ollama embedding request failed: HTTP ${response.status}`);
-			}
-			const data = await response.json() as { embeddings: number[][] };
-			embeddings.push(...data.embeddings);
-		}
-
-		return embeddings;
-	}
-}
+import type { DocumentResult, QueryResult } from "#types/store";
 
 // ---------------------------------------------------------------------------
 // Client & Embedding Builders
 // ---------------------------------------------------------------------------
 
 function buildEmbeddingFunction(): IEmbeddingFunction {
-	if (config.ollamaUrl) {
-		console.log(`[embeddings] using Ollama  url=${config.ollamaUrl}  model=${config.ollamaModel}`);
-		return new OllamaEmbeddingFunction(config.ollamaUrl, config.ollamaModel);
+	if (config.OLLAMA_URL) {
+		console.log(`[embeddings] using Ollama  url=${config.OLLAMA_URL}  model=${config.OLLAMA_MODEL}`);
+		return new OllamaEmbeddingFunction({ url: config.OLLAMA_URL, model: config.OLLAMA_MODEL });
 	}
-	console.log(`[embeddings] using default chromadb embeddings  model=${config.embeddingModel}`);
-	return new OllamaEmbeddingFunction("http://localhost:11434", config.embeddingModel);
+	console.log(`[embeddings] using default chromadb embeddings  model=${config.EMBEDDING_MODEL}`);
+	return new DefaultEmbeddingFunction({ model: config.EMBEDDING_MODEL });
 }
 
 function buildClient(): ChromaClient {
-	if (config.chromaHost) {
-		const baseUrl = `${config.chromaSsl ? "https" : "http"}://${config.chromaHost}:${config.chromaPort}`;
+	if (config.CHROMA_HOST) {
+		const baseUrl = `${config.CHROMA_SSL ? "https" : "http"}://${config.CHROMA_HOST}:${config.CHROMA_PORT}`;
 		return new ChromaClient({
 			path: baseUrl,
-			auth: config.chromaAuthToken
-				? { provider: "token", credentials: config.chromaAuthToken }
+			auth: config.CHROMA_AUTH_TOKEN
+				? { provider: "token", credentials: config.CHROMA_AUTH_TOKEN }
 				: undefined,
 		});
 	}
-	return new ChromaClient({ path: config.chromaDbPath });
+	return new ChromaClient({ path: config.CHROMA_DB_PATH });
 }
 
 // ---------------------------------------------------------------------------
@@ -86,7 +52,7 @@ export default class SpecStore {
 	constructor() {
 		this.#client = buildClient();
 		this.#embeddingFunction = buildEmbeddingFunction();
-		this.#collectionName = config.chromaCollection;
+		this.#collectionName = config.CHROMA_COLLECTION;
 	}
 
 	async #getCollection(): Promise<Collection> {

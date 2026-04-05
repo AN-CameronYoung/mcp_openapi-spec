@@ -2,8 +2,8 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
-import Retriever from "./retriever";
-import type { QueryResult } from "../types/store";
+import Retriever from "../core/retriever";
+import type { QueryResult } from "#types/store";
 
 // ---------------------------------------------------------------------------
 // MCP Server Setup

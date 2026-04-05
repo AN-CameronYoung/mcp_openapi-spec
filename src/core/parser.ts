@@ -4,7 +4,7 @@ import $RefParser from "@apidevtools/json-schema-ref-parser";
 import YAML from "yaml";
 
 import { SpecLoadError } from "./errors";
-import type { Endpoint, Parameter, SchemaDefinition } from "../types/openapi";
+import type { Endpoint, Parameter, SchemaDefinition } from "#types/openapi";
 
 // ---------------------------------------------------------------------------
 // Spec Loading

@@ -2,19 +2,19 @@ import z from "zod";
 
 export type AppConfig = z.infer<typeof AppConfig>;
 export const AppConfig = z.object({
-	chromaHost: z.string().optional(),
-	chromaPort: z.coerce.number().default(8000),
-	chromaSsl: z.boolean().default(false),
-	chromaAuthToken: z.string().optional(),
-	chromaDbPath: z.string().default(".chroma_db"),
-	chromaCollection: z.string().default("openapi_specs"),
+	CHROMA_HOST: z.string().optional(),
+	CHROMA_PORT: z.coerce.number().default(8000),
+	CHROMA_SSL: z.string().transform((v) => v === "true").default("false"),
+	CHROMA_AUTH_TOKEN: z.string().optional(),
+	CHROMA_DB_PATH: z.string().default(".chroma_db"),
+	CHROMA_COLLECTION: z.string().default("openapi_specs"),
 
-	ollamaUrl: z.string().optional(),
-	ollamaModel: z.string().default("mxbai-embed-large"),
-	embeddingModel: z.string().default("all-MiniLM-L6-v2"),
+	OLLAMA_URL: z.string().optional(),
+	OLLAMA_MODEL: z.string().default("mxbai-embed-large"),
+	EMBEDDING_MODEL: z.string().default("all-MiniLM-L6-v2"),
 
-	mcpAdminToken: z.string().optional(),
-	mcpReadToken: z.string().optional(),
+	MCP_ADMIN_TOKEN: z.string().optional(),
+	MCP_READ_TOKEN: z.string().optional(),
 
-	nodeEnv: z.string().default("development"),
+	NODE_ENV: z.string().default("development"),
 });

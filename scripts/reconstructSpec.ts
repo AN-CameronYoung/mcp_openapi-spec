@@ -4,7 +4,7 @@ import fs from "fs/promises";
 import path from "path";
 import { Command } from "commander";
 import YAML from "yaml";
-import SpecStore from "../src/store";
+import SpecStore from "../src/core/store";
 
 // ---------------------------------------------------------------------------
 // Parsing
