@@ -6,3 +6,4 @@ dist/
 proxmox_observed.json
 *.tsbuildinfo
 bun.lock
+.next/

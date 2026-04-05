@@ -1,0 +1,9 @@
+{
+	"name": "@greg/shared",
+	"version": "0.1.0",
+	"type": "module",
+	"main": "types/index.ts",
+	"dependencies": {
+		"zod": "^3.24.4"
+	}
+}

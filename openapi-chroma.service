@@ -1,16 +1,16 @@
 [Unit]
-Description=openapi-chroma MCP server
+Description=greg MCP server
 After=network.target
 
 [Service]
 Type=simple
 User=mcp
 WorkingDirectory=/home/mcp
-ExecStart=/home/mcp/.bun/bin/bun run main.ts serve --transport http --port 3000
+ExecStart=/home/mcp/.bun/bin/bun run packages/mcp-server/main.ts serve --transport http --port 3000
 Restart=on-failure
 RestartSec=5
 
-Environment=CHROMA_DB_PATH=/var/lib/openapi-chroma
+Environment=CHROMA_DB_PATH=/var/lib/greg
 Environment=OLLAMA_URL=https://ai.home.itsnotcam.dev
 Environment=OLLAMA_MODEL=snowflake-arctic-embed2
 Environment=NODE_ENV=production
