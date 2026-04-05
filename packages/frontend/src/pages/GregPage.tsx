@@ -1,8 +1,19 @@
 import { useState, useRef, useEffect, useMemo, memo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
+import python from "react-syntax-highlighter/dist/esm/languages/prism/python";
+import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
+import json from "react-syntax-highlighter/dist/esm/languages/prism/json";
+import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
+SyntaxHighlighter.registerLanguage("typescript", typescript);
+SyntaxHighlighter.registerLanguage("javascript", typescript);
+SyntaxHighlighter.registerLanguage("python", python);
+SyntaxHighlighter.registerLanguage("bash", bash);
+SyntaxHighlighter.registerLanguage("json", json);
+SyntaxHighlighter.registerLanguage("yaml", yaml);
 import { C } from "../lib/constants";
 import { Ic } from "../lib/icons";
 import { streamChat, listModels } from "../lib/api";
@@ -309,6 +320,16 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint }: {
 						<span style={{ fontFamily: "monospace", fontSize: 20, fontWeight: 600, color: C.green }}>
 							greg
 						</span>
+						{msg.model && !msg.streaming && (
+							<span style={{ fontSize: 12, color: C.textDim, fontFamily: "monospace" }}>
+								{msg.model}
+							</span>
+						)}
+						{msg.usage && !msg.streaming && (
+							<span style={{ fontSize: 12, color: C.textDim, fontFamily: "monospace", marginLeft: "auto" }}>
+								{msg.usage.input + msg.usage.output} tokens
+							</span>
+						)}
 					</div>
 				)}
 				<div
@@ -437,6 +458,8 @@ export default function GregPage() {
 		];
 
 		let accumulated = "";
+		let doneModel: string | undefined;
+		let doneUsage: { input: number; output: number } | undefined;
 		const endpointMap = new Map<string, EndpointCard>();
 
 		try {
@@ -469,6 +492,8 @@ export default function GregPage() {
 						updateLastAssistant((m) => ({ ...m, text: accumulated }));
 						break;
 					case "done":
+						doneModel = event.model;
+						doneUsage = event.usage;
 						break;
 				}
 			}
@@ -479,7 +504,13 @@ export default function GregPage() {
 
 		abortRef.current = null;
 		const dedupedEndpoints = [...endpointMap.values()];
-		updateLastAssistant((m) => ({ ...m, streaming: false, endpoints: dedupedEndpoints.length > 0 ? dedupedEndpoints : undefined }));
+		updateLastAssistant((m) => ({
+			...m,
+			streaming: false,
+			endpoints: dedupedEndpoints.length > 0 ? dedupedEndpoints : undefined,
+			model: doneModel,
+			usage: doneUsage,
+		}));
 		saveChat();
 		setChatLoading(false);
 	};

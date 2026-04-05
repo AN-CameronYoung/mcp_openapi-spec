@@ -10,6 +10,8 @@ export interface ChatMsg {
 	text: string;
 	endpoints?: EndpointCard[];
 	streaming?: boolean;
+	model?: string;
+	usage?: { input: number; output: number };
 }
 
 // ---------------------------------------------------------------------------

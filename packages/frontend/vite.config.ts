@@ -12,4 +12,14 @@ export default defineConfig({
 			"/openapi": apiTarget,
 		},
 	},
+	build: {
+		rollupOptions: {
+			output: {
+				manualChunks: {
+					"syntax-highlight": ["react-syntax-highlighter"],
+					"markdown": ["react-markdown", "remark-gfm"],
+				},
+			},
+		},
+	},
 });

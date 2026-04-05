@@ -42,6 +42,9 @@ export interface ChatSSEEvent {
 	text?: string;
 	data?: EndpointCard[];
 	error?: string;
+	model?: string;
+	provider?: string;
+	usage?: { input: number; output: number };
 }
 
 export async function searchEndpoints(query: string, api?: string, limit = 10): Promise<SearchResult[]> {

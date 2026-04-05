@@ -9,5 +9,8 @@
 		"dev:server": "bun run --filter @greg/server dev",
 		"dev:frontend": "bun run --filter @greg/frontend dev",
 		"build": "bun run --filter @greg/frontend build"
+	},
+	"devDependencies": {
+		"sass-embedded": "^1.99.0"
 	}
 }

@@ -63,7 +63,9 @@ Rules:
 - If you have the search_gif tool, use it occasionally for reactions when it fits the vibe (found something, confused, celebrating). Include the result as a markdown image. Don't overdo it — maybe 1 in 4 messages. Bias your GIF searches toward cats (e.g. "sorry cat", "cat confused", "cat celebration").
 - MANDATORY: If you made a mistake, got corrected, said something wrong, or the user calls you out — you MUST use search_gif immediately. Search for something like "sorry cat", "cat oops", "embarrassed cat", or "my bad cat". This is not optional. Every apology needs a cat GIF. No exceptions.
 
-IMPORTANT: Occasionally and unpredictably (roughly 1 in 5 messages), drop a single sentence that is eloquent and uses perfect grammar with sophisticated vocabulary. Then immediately continue being greg. Never acknowledge it.`;
+IMPORTANT: Occasionally and unpredictably (roughly 1 in 5 messages), drop a single sentence that is eloquent and uses perfect grammar with sophisticated vocabulary. Then immediately continue being greg. Never acknowledge it.
+
+You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.`;
 
 export const PROFESSIONAL_PROMPT = `You are an API documentation assistant. Search the indexed OpenAPI specifications to answer questions about available endpoints, request/response schemas, and API capabilities. Be concise and technical. Present endpoints and schemas as structured blocks for the frontend to render.
 
@@ -317,6 +319,7 @@ async function chatAnthropic(
 	personality: "greg" | "professional",
 	onText: (text: string) => void,
 	onEndpoints: (eps: EndpointCard[]) => void,
+	usage: { input: number; output: number },
 ): Promise<void> {
 	const { default: Anthropic } = await import("@anthropic-ai/sdk");
 	const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
@@ -366,6 +369,15 @@ async function chatAnthropic(
 			}
 		}
 
+		// Accumulate token usage from this round
+		try {
+			const final = await stream.finalMessage();
+			if (final.usage) {
+				usage.input += (final.usage as { input_tokens?: number }).input_tokens ?? 0;
+				usage.output += (final.usage as { output_tokens?: number }).output_tokens ?? 0;
+			}
+		} catch {}
+
 		if (!hasToolUse) break;
 
 		// Execute tools and feed results back
@@ -396,6 +408,7 @@ async function chatOllama(
 	personality: "greg" | "professional",
 	onText: (text: string) => void,
 	onEndpoints: (eps: EndpointCard[]) => void,
+	usage: { input: number; output: number },
 ): Promise<void> {
 	const baseUrl = config.OLLAMA_URL ?? "http://localhost:11434";
 
@@ -473,6 +486,8 @@ async function chatOllama(
 							});
 						}
 					}
+					if (chunk.prompt_eval_count) usage.input += chunk.prompt_eval_count;
+					if (chunk.eval_count) usage.output += chunk.eval_count;
 				} catch {
 					// skip malformed lines
 				}
@@ -618,6 +633,8 @@ async function chatOllamaDirect(
 					const clean = chunk.message.content.replace(/<endpoint[^>]*\/?>/g, "");
 					if (clean) onText(clean);
 				}
+				if (chunk.prompt_eval_count) usage.input += chunk.prompt_eval_count;
+				if (chunk.eval_count) usage.output += chunk.eval_count;
 			} catch {
 				// skip
 			}
@@ -638,11 +655,18 @@ export async function handleChat(c: Context, retriever: Retriever): Promise<Resp
 
 	const personality = body.personality ?? "greg";
 	const defaultPrompt = personality === "greg" ? GREG_PROMPT : PROFESSIONAL_PROMPT;
-	const systemPrompt = body.system_prompt || defaultPrompt;
-	const provider = body.provider ?? config.LLM_PROVIDER;
+	const rawPrompt = body.system_prompt || defaultPrompt;
+	// If model is specified, infer provider from model name if not explicitly set
+	let provider = body.provider ?? config.LLM_PROVIDER;
+	if (body.model && !body.provider) {
+		provider = /^claude/i.test(body.model) ? "anthropic" : "ollama";
+	}
 	// Temporarily override model if specified in request
 	const origModel = config.LLM_MODEL;
 	if (body.model) (config as Record<string, unknown>).LLM_MODEL = body.model;
+	const modelName = config.LLM_MODEL;
+	const systemPrompt = rawPrompt.replace("{MODEL_NAME}", modelName);
+	console.log(`[chat] provider=${provider} model=${modelName}`);
 
 	if (provider === "anthropic" && !config.ANTHROPIC_API_KEY) {
 		return c.json({ error: "ANTHROPIC_API_KEY not set" }, 500);
@@ -660,15 +684,18 @@ export async function handleChat(c: Context, retriever: Retriever): Promise<Resp
 	const onText = (text: string) => send({ type: "text", text });
 	const onEndpoints = (eps: EndpointCard[]) => send({ type: "endpoints", data: eps });
 
+	// Track token usage
+	const usage = { input: 0, output: 0 };
+
 	(async () => {
 		try {
 			console.log(`[chat] starting ${provider} chat`);
 			if (provider === "anthropic") {
-				await chatAnthropic(body.messages, systemPrompt, retriever, personality, onText, onEndpoints);
+				await chatAnthropic(body.messages, systemPrompt, retriever, personality, onText, onEndpoints, usage);
 			} else {
-				await chatOllama(body.messages, systemPrompt, retriever, personality, onText, onEndpoints);
+				await chatOllama(body.messages, systemPrompt, retriever, personality, onText, onEndpoints, usage);
 			}
-			send({ type: "done" });
+			send({ type: "done", model: modelName, provider, usage });
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			console.error("[chat] error:", msg);
