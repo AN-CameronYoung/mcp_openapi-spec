@@ -106,7 +106,7 @@ export const useStore = create<AppState>((set) => ({
 	theme: getStoredTheme(),
 	setTheme: (t) => { applyTheme(t); set({ theme: t }); },
 
-	page: "docs",
+	page: "greg",
 	setPage: (p) => set({ page: p, docsAnchor: p !== "docs" ? null : undefined }),
 
 	apis: [],
@@ -118,7 +118,7 @@ export const useStore = create<AppState>((set) => ({
 	viewDocs: (api, method, path, operationId, tag) => set({ page: "docs", docsApi: api, docsAnchor: { method, path, operationId, tag } }),
 
 	chatMessages: [],
-	gregMode: true,
+	gregMode: (() => { try { return localStorage.getItem("greg-mode") !== "false"; } catch { return true; } })(),
 	chatLoading: false,
 	setChatMessages: (msgs) => set({ chatMessages: msgs }),
 	addChatMessage: (msg) => set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
@@ -133,7 +133,7 @@ export const useStore = create<AppState>((set) => ({
 			}
 			return { chatMessages: msgs };
 		}),
-	setGregMode: (v) => set({ gregMode: v }),
+	setGregMode: (v) => { try { localStorage.setItem("greg-mode", String(v)); } catch {} set({ gregMode: v }); },
 	setChatLoading: (v) => set({ chatLoading: v }),
 	clearChat: () => set({ chatMessages: [], chatLoading: false }),
 

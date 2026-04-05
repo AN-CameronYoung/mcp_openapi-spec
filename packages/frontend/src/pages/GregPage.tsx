@@ -12,32 +12,24 @@ import EpCard from "../components/EpCard";
 import DetailPanel from "../components/DetailPanel";
 
 function cleanText(raw: string): string {
-	let text = raw
+	const text = raw
 		.replace(/<endpoint[^>]*\/?>/g, "")
 		.replace(/\n{3,}/g, "\n\n")
 		.trim();
 
-	// Preserve line breaks: convert single \n to double \n (markdown paragraph break)
-	// but don't touch code blocks, tables, or list items
+	// Convert single newlines to double (markdown paragraph breaks)
+	// but preserve: code blocks, tables, list items, headings
 	const parts = text.split(/(```[\s\S]*?```)/);
 	return parts.map((part, i) => {
-		if (i % 2 === 1) return part; // code block — leave as-is
-		// Split into lines, double-space only plain text lines
-		const lines = part.split("\n");
-		const result: string[] = [];
-		for (let j = 0; j < lines.length; j++) {
-			result.push(lines[j]);
-			if (j < lines.length - 1) {
-				const curr = lines[j].trimStart();
-				const next = lines[j + 1].trimStart();
-				// Don't double-space between table rows, list items, or already blank
-				const isTable = curr.startsWith("|") || next.startsWith("|");
-				const isList = /^[-*\d]/.test(next);
-				const isBlank = curr === "" || next === "";
-				result.push(isTable || isList || isBlank ? "" : "\n");
-			}
-		}
-		return result.join("\n");
+		if (i % 2 === 1) return part; // code block
+		return part.replace(/([^\n])\n([^\n])/g, (_, before, after) => {
+			const prevLine = before.split("\n").pop() ?? before;
+			// Don't double-space if either line is a table row, list item, or heading
+			if (prevLine.trimStart().startsWith("|") || after.trimStart().startsWith("|")) return `${before}\n${after}`;
+			if (/^[-*\d#>]/.test(after.trimStart())) return `${before}\n${after}`;
+			if (prevLine.trimStart().startsWith("|---")) return `${before}\n${after}`;
+			return `${before}\n\n${after}`;
+		});
 	}).join("");
 }
 
@@ -235,6 +227,21 @@ function EndpointDropdown({ endpoints, onSelect }: { endpoints: EndpointCard[]; 
 	);
 }
 
+const GREG_GREETINGS = [
+	"greg here. what api u need",
+	"yo. greg ready. ask greg thing",
+	"greg online. u need endpoint or what",
+	"greg awake. what u looking for",
+	"sup. greg know ur apis. ask",
+	"greg here. tell greg what u need",
+	"ok greg ready. go",
+];
+
+function getGreeting(isGreg: boolean): string {
+	if (!isGreg) return "How can I help you with your API documentation?";
+	return GREG_GREETINGS[Math.floor(Math.random() * GREG_GREETINGS.length)];
+}
+
 export default function GregPage() {
 	const {
 		chatMessages,
@@ -251,6 +258,12 @@ export default function GregPage() {
 		customGregPrompt,
 		customProPrompt,
 	} = useStore();
+
+	const [greetingGif, setGreetingGif] = useState<string | null>(null);
+	useEffect(() => {
+		if (!gregMode) return;
+		fetch("/api/greeting-gif").then((r) => r.json()).then((d) => setGreetingGif(d.url)).catch(() => {});
+	}, [gregMode]);
 
 	const [input, setInput] = useState("");
 	const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -427,8 +440,11 @@ export default function GregPage() {
 								>
 									<span style={{ fontFamily: "monospace", fontWeight: 700, color: C.green, fontSize: 25 }}>G</span>
 								</div>
+								{gregMode && greetingGif && (
+									<img src={greetingGif} alt="greg" style={{ maxHeight: 180, borderRadius: 8 }} />
+								)}
 								<span style={{ fontSize: 16 }}>
-									{gregMode ? "talk to greg about ur apis" : "Ask about your API documentation"}
+									{getGreeting(gregMode)}
 								</span>
 							</div>
 						)}

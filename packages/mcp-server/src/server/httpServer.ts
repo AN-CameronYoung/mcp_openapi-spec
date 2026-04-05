@@ -475,6 +475,20 @@ onComplete:function(){
 		return c.json({ greg: GREG_PROMPT, professional: PROFESSIONAL_PROMPT });
 	});
 
+	app.get("/api/greeting-gif", async (c) => {
+		if (!config.GIPHY_API_KEY) return c.json({ url: null });
+		try {
+			const queries = ["cat hello", "cat wave", "cat typing", "cat computer", "cat greeting", "cat sup"];
+			const q = encodeURIComponent(queries[Math.floor(Math.random() * queries.length)]);
+			const offset = Math.floor(Math.random() * 20);
+			const res = await fetch(`https://api.giphy.com/v1/gifs/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=1&offset=${offset}&rating=g&lang=en`);
+			const data = await res.json() as { data: Array<{ images: { fixed_height: { url: string } } }> };
+			return c.json({ url: data.data?.[0]?.images?.fixed_height?.url ?? null });
+		} catch {
+			return c.json({ url: null });
+		}
+	});
+
 	app.post("/api/chat", async (c) => {
 		return handleChat(c, retriever);
 	});
