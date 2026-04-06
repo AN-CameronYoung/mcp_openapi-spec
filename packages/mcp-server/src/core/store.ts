@@ -30,6 +30,7 @@ class RemoteOllamaEmbeddingFunction implements IEmbeddingFunction {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ model: this.#model, input: text }),
+				signal: AbortSignal.timeout(120_000), // 2 min per request
 			});
 			if (!res.ok) {
 				const body = await res.text().catch(() => "");
@@ -82,7 +83,8 @@ export default class SpecStore {
 	#embeddingFunction: IEmbeddingFunction | undefined;
 	#collectionName: string;
 
-	static readonly BATCH_SIZE = 5000;
+	static readonly BATCH_SIZE = 250;   // smaller batches avoid ChromaDB timeouts on large specs
+	static readonly EMBED_BATCH = 50;   // embed 50 texts at a time (up from 10)
 
 	constructor() {
 		this.#client = buildClient();
@@ -119,12 +121,11 @@ export default class SpecStore {
 		let embeddings: number[][] | undefined;
 		if (this.#embeddingFunction) {
 			embeddings = [];
-			const EMBED_BATCH = 10;
-			for (let i = 0; i < texts.length; i += EMBED_BATCH) {
-				const batch = texts.slice(i, i + EMBED_BATCH);
+			for (let i = 0; i < texts.length; i += SpecStore.EMBED_BATCH) {
+				const batch = texts.slice(i, i + SpecStore.EMBED_BATCH);
 				const batchEmbeddings = await this.#embeddingFunction.generate(batch);
 				embeddings.push(...batchEmbeddings);
-				onProgress?.(Math.min(i + EMBED_BATCH, texts.length), texts.length, "embedding");
+				onProgress?.(Math.min(i + SpecStore.EMBED_BATCH, texts.length), texts.length, "embedding");
 			}
 		}
 
@@ -151,8 +152,8 @@ export default class SpecStore {
 		const collection = await this.#getCollection();
 		const results = await collection.get({ where: { api: apiName } });
 		const ids = results.ids ?? [];
-		if (ids.length > 0) {
-			await collection.delete({ ids });
+		for (let i = 0; i < ids.length; i += SpecStore.BATCH_SIZE) {
+			await collection.delete({ ids: ids.slice(i, i + SpecStore.BATCH_SIZE) });
 		}
 	}
 

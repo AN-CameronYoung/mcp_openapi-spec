@@ -93,7 +93,7 @@ export default class Retriever {
 		maxDistance: number = MAX_DISTANCE,
 	): Promise<QueryResult[]> {
 		const where = buildWhere({ type: "endpoint", api, method });
-		let results = await this.#store.query(query, n * 3, where ?? undefined);
+		let results = await this.#store.query(query, n * 4, where ?? undefined);
 		results = results.filter((r) => (r.distance ?? 1) <= maxDistance);
 		if (tag) {
 			const tagLower = tag.toLowerCase();
@@ -101,6 +101,8 @@ export default class Retriever {
 				(r) => r.metadata.tags?.toLowerCase().includes(tagLower)
 			);
 		}
+		results = applyHybridBoost(query, results);
+		results = deduplicateByPathPrefix(results);
 		return results.slice(0, n);
 	}
 
@@ -169,6 +171,52 @@ interface WhereFilters {
 	type?: string;
 	api?: string;
 	method?: string;
+}
+
+// Hybrid boost: apply rule-based score adjustments on top of semantic distance.
+// Currently handles "create lxc/container" → boost POST /nodes/{node}/lxc exact match.
+function applyHybridBoost(query: string, results: QueryResult[]): QueryResult[] {
+	const q = query.toLowerCase();
+	const isCreateLxc = /\bcreate\b/.test(q) && /\b(lxc|container)\b/.test(q);
+	if (!isCreateLxc) return results;
+
+	const boosted = results.map((r) => {
+		const method = r.metadata.method ?? "";
+		const path = r.metadata.path ?? "";
+		// Match exact collection endpoint: POST /nodes/{node}/lxc (no trailing segments)
+		const isTarget = method === "POST" && /^\/nodes\/\{[^}]+\}\/lxc$/.test(path);
+		if (isTarget) return { ...r, distance: Math.max(0, (r.distance ?? 0) - 0.2) };
+		return r;
+	});
+
+	return boosted.sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0));
+}
+
+// Deduplicate results to one entry per path prefix, keeping the best score.
+// Prefix = path up to (but not including) the second path parameter.
+// e.g. /nodes/{node}/lxc/{vmid}/status/start → /nodes/{node}/lxc
+function deduplicateByPathPrefix(results: QueryResult[]): QueryResult[] {
+	const seen = new Map<string, QueryResult>();
+	for (const r of results) {
+		const key = pathPrefix(r.metadata.path ?? "");
+		const existing = seen.get(key);
+		if (!existing || (r.distance ?? 1) < (existing.distance ?? 1)) {
+			seen.set(key, r);
+		}
+	}
+	// Preserve original order (best score first)
+	return results.filter((r) => seen.get(pathPrefix(r.metadata.path ?? "")) === r);
+}
+
+function pathPrefix(path: string): string {
+	const segments = path.split("/").filter(Boolean);
+	let paramCount = 0;
+	const kept: string[] = [];
+	for (const seg of segments) {
+		if (/^\{[^}]+\}$/.test(seg) && ++paramCount >= 2) break;
+		kept.push(seg);
+	}
+	return "/" + kept.join("/");
 }
 
 function buildWhere(filters: WhereFilters): Record<string, unknown> | null {

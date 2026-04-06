@@ -5,11 +5,13 @@ interface EpCardProps {
 	path: string;
 	api: string;
 	description: string;
+	warnings?: string;
 	compact?: boolean;
 	onClick?: () => void;
 }
 
-export default function EpCard({ method, path, api, description, compact, onClick }: EpCardProps) {
+export default function EpCard({ method, path, api, description, warnings, compact, onClick }: EpCardProps) {
+	const warningList = warnings ? warnings.split("|").filter(Boolean) : [];
 	const m = METHOD_COLORS[method] ?? METHOD_COLORS.GET;
 	return (
 		<div
@@ -87,6 +89,23 @@ export default function EpCard({ method, path, api, description, compact, onClic
 			>
 				{description}
 			</p>
+			{!compact && warningList.length > 0 && (
+				<div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 4, paddingLeft: 40 }}>
+					{warningList.map((w, i) => (
+						<span key={i} style={{
+							fontSize: 9,
+							padding: "1px 5px",
+							borderRadius: 3,
+							background: "rgba(251,191,36,0.08)",
+							color: "#FBBF24",
+							border: "1px solid rgba(251,191,36,0.2)",
+							lineHeight: 1.4,
+						}}>
+							⚠ {w}
+						</span>
+					))}
+				</div>
+			)}
 		</div>
 	);
 }

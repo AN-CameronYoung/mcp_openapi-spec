@@ -30,7 +30,7 @@ function PBadge({ type }: { type: string }) {
 	return (
 		<span
 			style={{
-				fontSize: 13,
+				fontSize: 11,
 				padding: "1px 7px",
 				borderRadius: 4,
 				background: c.bg,
@@ -50,12 +50,12 @@ function CodeBlock({ lines, nameColor }: { lines: string[]; nameColor: string })
 		<div
 			style={{
 				fontFamily: "monospace",
-				fontSize: 15,
+				fontSize: 12,
 				color: C.textMuted,
 				background: C.bg,
 				borderRadius: 4,
-				padding: "11px 14px",
-				lineHeight: 1.8,
+				padding: "8px 11px",
+				lineHeight: 1.7,
 				overflowX: "auto",
 			}}
 		>
@@ -108,7 +108,7 @@ function CurlExample({ method, path, params }: {
 	return (
 		<div>
 			<div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-				<div style={{ fontSize: 14, fontWeight: 600, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+				<div style={{ fontSize: 12, fontWeight: 600, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.06em" }}>
 					Example
 				</div>
 				<button
@@ -118,7 +118,7 @@ function CurlExample({ method, path, params }: {
 					{Ic.copy()}
 				</button>
 			</div>
-			<SyntaxHighlighter style={oneDark} language="bash" PreTag="div" wrapLongLines customStyle={{ margin: 0, borderRadius: 4, fontSize: 13, background: C.bg }} codeTagProps={{ style: { background: C.bg } }}>
+			<SyntaxHighlighter style={oneDark} language="bash" PreTag="div" wrapLongLines customStyle={{ margin: 0, borderRadius: 4, fontSize: 11, background: C.bg }} codeTagProps={{ style: { background: C.bg } }}>
 				{curl}
 			</SyntaxHighlighter>
 		</div>
@@ -137,7 +137,7 @@ function ResponseDropdown({ content }: { content: string }) {
 					display: "flex",
 					alignItems: "center",
 					gap: 6,
-					fontSize: 14,
+					fontSize: 12,
 					fontWeight: 600,
 					color: C.textDim,
 					background: "transparent",
@@ -162,7 +162,7 @@ function ResponseDropdown({ content }: { content: string }) {
 						language={isJson ? "json" : "text"}
 						PreTag="div"
 						wrapLongLines
-						customStyle={{ margin: 0, borderRadius: 4, fontSize: 13, background: C.bg }}
+						customStyle={{ margin: 0, borderRadius: 4, fontSize: 11, background: C.bg }}
 						codeTagProps={{ style: { background: C.bg } }}
 					>
 						{content}
@@ -281,7 +281,7 @@ export default function DetailPanel({
 			>
 				<span
 					style={{
-						fontSize: 14,
+						fontSize: 12,
 						fontWeight: 600,
 						color: C.textDim,
 						textTransform: "uppercase",
@@ -298,7 +298,7 @@ export default function DetailPanel({
 							display: "flex",
 							alignItems: "center",
 							gap: 4,
-							fontSize: 14,
+							fontSize: 12,
 							fontWeight: 500,
 							border: "none",
 							cursor: "pointer",
@@ -335,7 +335,7 @@ export default function DetailPanel({
 						<div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8, flexWrap: "wrap" }}>
 							<span
 								style={{
-									fontSize: 14,
+									fontSize: 12,
 									fontWeight: 600,
 									padding: "1px 8px",
 									borderRadius: 4,
@@ -349,7 +349,7 @@ export default function DetailPanel({
 							</span>
 							<span
 								style={{
-									fontSize: 14,
+									fontSize: 12,
 									padding: "1px 7px",
 									borderRadius: 4,
 									background: C.accentDim,
@@ -378,7 +378,7 @@ export default function DetailPanel({
 								gap: 6,
 							}}
 						>
-							<code style={{ fontSize: 15, fontFamily: "monospace", color: C.text, flex: 1, wordBreak: "break-all" }}>
+							<code style={{ fontSize: 12, fontFamily: "monospace", color: C.text, flex: 1, wordBreak: "break-all" }}>
 								{item.path}
 							</code>
 							<button
@@ -400,7 +400,7 @@ export default function DetailPanel({
 
 						{/* Description */}
 						{fullDescription && (
-							<p style={{ fontSize: 15, color: C.textMuted, margin: "0 0 14px", lineHeight: 1.5 }}>
+							<p style={{ fontSize: 12, color: C.textMuted, margin: "0 0 14px", lineHeight: 1.5 }}>
 								{fullDescription}
 							</p>
 						)}
@@ -410,7 +410,7 @@ export default function DetailPanel({
 							<div style={{ marginBottom: 14 }}>
 								<div
 									style={{
-										fontSize: 14,
+										fontSize: 12,
 										fontWeight: 600,
 										color: C.textDim,
 										textTransform: "uppercase",
@@ -427,7 +427,7 @@ export default function DetailPanel({
 											display: "flex",
 											alignItems: "center",
 											gap: 7,
-											fontSize: 15,
+											fontSize: 12,
 											padding: "6px 8px",
 											background: j % 2 === 0 ? C.bg : "transparent",
 											borderRadius: 4,
@@ -436,7 +436,7 @@ export default function DetailPanel({
 										<PBadge type={p.in} />
 										<code style={{ fontFamily: "monospace", color: C.text, fontWeight: 500 }}>{p.name}</code>
 										<span style={{ color: C.textDim, fontSize: 14 }}>{p.type}</span>
-										{p.required && <span style={{ fontSize: 13, color: "#F87171" }}>req</span>}
+										{p.required && <span style={{ fontSize: 11, color: "#F87171" }}>req</span>}
 										<span style={{ color: C.textDim, marginLeft: "auto", fontSize: 14 }}>{p.desc}</span>
 									</div>
 								))}
@@ -452,12 +452,12 @@ export default function DetailPanel({
 						{/* Schema header */}
 						<div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
 							<span style={{ display: "flex", color: C.accent, opacity: 0.5 }}>{Ic.cube(18)}</span>
-							<span style={{ fontSize: 18, fontWeight: 600, fontFamily: "monospace", color: C.text }}>
+							<span style={{ fontSize: 14, fontWeight: 600, fontFamily: "monospace", color: C.text }}>
 								{item.name}
 							</span>
 							<span
 								style={{
-									fontSize: 14,
+									fontSize: 12,
 									padding: "1px 7px",
 									borderRadius: 4,
 									background: C.accentDim,
@@ -475,7 +475,7 @@ export default function DetailPanel({
 						</div>
 
 						{/* Description */}
-						<p style={{ fontSize: 15, color: C.textMuted, margin: "0 0 14px", lineHeight: 1.5 }}>
+						<p style={{ fontSize: 12, color: C.textMuted, margin: "0 0 14px", lineHeight: 1.5 }}>
 							{item.description}
 						</p>
 
@@ -484,7 +484,7 @@ export default function DetailPanel({
 							<div
 								style={{
 									fontFamily: "monospace",
-									fontSize: 15,
+									fontSize: 12,
 									color: C.textMuted,
 									background: C.bg,
 									borderRadius: 4,

@@ -564,20 +564,95 @@ onComplete:function(){
 		return c.json(models);
 	});
 
+	let lastGifUrl: string | null = null;
 	app.get("/api/greeting-gif", async (c) => {
 		if (!config.GIPHY_API_KEY) return c.json({ url: null });
 		try {
-			const queries = ["cat hello", "cat wave", "cat typing", "cat computer", "cat greeting", "cat sup"];
-			const q = encodeURIComponent(queries[Math.floor(Math.random() * queries.length)]);
-			const offset = Math.floor(Math.random() * 20);
-			const res = await fetch(`https://api.giphy.com/v1/gifs/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=10&offset=${offset}&rating=g&lang=en`);
-			const data = await res.json() as { data: Array<{ title: string; images: { original: { url: string } } }> };
+			const queries = ["anime hello wave", "cartoon greeting funny", "anime excited hello", "cartoon character wave", "anime sup", "cat wave hello", "cartoon thumbs up"];
 			const blocked = /lebron|james|lbj/i;
-			const match = data.data?.find((g: { title: string; images: { original: { url: string } } }) => !blocked.test(g.title ?? "") && !blocked.test(g.images?.original?.url ?? ""));
-			return c.json({ url: match?.images?.original?.url ?? null });
+			// Try up to 3 times to avoid repeating the last gif
+			for (let attempt = 0; attempt < 3; attempt++) {
+				const q = encodeURIComponent(queries[Math.floor(Math.random() * queries.length)]);
+				const offset = Math.floor(Math.random() * 20);
+				const res = await fetch(`https://api.giphy.com/v1/gifs/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=10&offset=${offset}&rating=g&lang=en`);
+				const data = await res.json() as { data: Array<{ title: string; images: { original: { url: string } } }> };
+				const match = data.data?.find((g) => !blocked.test(g.title ?? "") && !blocked.test(g.images?.original?.url ?? "") && g.images?.original?.url !== lastGifUrl);
+				if (match?.images?.original?.url) {
+					lastGifUrl = match.images.original.url;
+					return c.json({ url: lastGifUrl });
+				}
+			}
+			return c.json({ url: null });
 		} catch {
 			return c.json({ url: null });
 		}
+	});
+
+	app.get("/api/suggestions", async (c) => {
+		const apis = await retriever.listApis().catch(() => []);
+		const apiNames = apis.map((a) => a.name);
+
+		const FALLBACK = [
+			"what APIs are indexed",
+			"how do I authenticate",
+			"show me the most common endpoints",
+			"what can I monitor or query",
+			"how do I create a new resource",
+		];
+
+		if (apiNames.length === 0) return c.json({ suggestions: FALLBACK });
+
+		const sysMsg = "You are helping a developer explore API documentation. Return ONLY a JSON array of 4 short question strings a developer might ask. No explanation, no numbering — just the JSON array.";
+		const userMsg = `Indexed APIs: ${apiNames.join(", ")}. Generate 4 short, specific questions about these APIs. Return ONLY a JSON array of strings.`;
+
+		let suggestions: string[] | null = null;
+
+		// Try Ollama first
+		if (config.OLLAMA_URL) {
+			try {
+				const res = await fetch(`${config.OLLAMA_URL}/api/chat`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						model: config.OLLAMA_CHAT_SUMMARY_MODEL,
+						messages: [{ role: "system", content: sysMsg }, { role: "user", content: userMsg }],
+						stream: false,
+					}),
+					signal: AbortSignal.timeout(10_000),
+				});
+				if (res.ok) {
+					const data = await res.json() as { message?: { content?: string } };
+					const raw = data.message?.content?.trim() ?? "";
+					const match = raw.match(/\[[\s\S]*\]/);
+					if (match) suggestions = JSON.parse(match[0]) as string[];
+				}
+			} catch {}
+		}
+
+		// Fall back to Anthropic haiku
+		if (!suggestions && config.ANTHROPIC_API_KEY) {
+			try {
+				const { default: Anthropic } = await import("@anthropic-ai/sdk");
+				const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+				const msg = await client.messages.create({
+					model: "claude-haiku-4-5-20251001",
+					max_tokens: 200,
+					system: sysMsg,
+					messages: [{ role: "user", content: userMsg }],
+				});
+				const block = msg.content[0];
+				if (block.type === "text") {
+					const match = block.text.match(/\[[\s\S]*\]/);
+					if (match) suggestions = JSON.parse(match[0]) as string[];
+				}
+			} catch {}
+		}
+
+		if (!Array.isArray(suggestions) || suggestions.length === 0) {
+			return c.json({ suggestions: FALLBACK });
+		}
+
+		return c.json({ suggestions: suggestions.slice(0, 5).map((s) => String(s)) });
 	});
 
 	app.post("/api/chat", async (c) => {

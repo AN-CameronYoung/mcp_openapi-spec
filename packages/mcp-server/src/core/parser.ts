@@ -12,7 +12,7 @@ import type { Endpoint, Parameter, SchemaDefinition } from "#types/openapi";
 
 const MAX_SPEC_SIZE = 50 * 1024 * 1024; // 50 MB
 const MAX_REDIRECTS = 5;
-const MAX_YAML_ALIASES = 100;
+const MAX_YAML_ALIASES = -1; // unlimited — large specs (e.g. MikroTik) use many aliases for $ref deduplication
 const ALLOWED_EXTENSIONS = new Set([".json", ".yaml", ".yml"]);
 
 // ---------------------------------------------------------------------------

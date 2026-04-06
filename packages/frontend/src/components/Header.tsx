@@ -74,7 +74,11 @@ export default function Header() {
 						justifyContent: "center",
 					}}
 				>
-					<span style={{ fontFamily: "monospace", fontWeight: 800, color: "#0D0D10", fontSize: 15 }}>G</span>
+					<svg width={18} height={18} viewBox="0 0 20 20" fill="none">
+						<circle cx="7" cy="8" r="1.4" fill="white"/>
+						<circle cx="13" cy="8" r="1.4" fill="white"/>
+						<path d="M6.5 13.5h7" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
+					</svg>
 				</div>
 				<span style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.01em" }}>greg</span>
 			</div>

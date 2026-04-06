@@ -3628,3 +3628,32 @@ paths:
                     type: string
                   kibana:
                     type: string
+
+components:
+  securitySchemes:
+    DarktraceHMAC:
+      type: apiKey
+      in: header
+      name: DTAPI-Token
+      description: |
+        Darktrace uses HMAC-SHA1 authentication. Every request requires three headers:
+
+        - `DTAPI-Token`: Your public token (the API key identifier, transmitted in plaintext).
+        - `DTAPI-Date`: Current UTC timestamp in `YYYYMMDDTHHMMSS` format (e.g. `20190101T120000`). Must be within 30 minutes of the Darktrace appliance's system time.
+        - `DTAPI-Signature`: HMAC-SHA1 hex digest. Computed as:
+            HMAC-SHA1(key=private_token, msg="{path+querystring}\n{public_token}\n{date}")
+          where `path+querystring` is only the path and query string (no scheme or hostname).
+
+        Example (Python):
+          import hmac, hashlib
+          sig = hmac.new(
+              private_token.encode('ASCII'),
+              f'{request_path}\n{public_token}\n{date}'.encode('ASCII'),
+              hashlib.sha1
+          ).hexdigest()
+
+        Token pairs are created in the Darktrace Threat Visualizer under System Config > Settings > API Token > New.
+        The private token is shown only once at creation time and is never transmitted — it is used solely as the HMAC key.
+
+security:
+  - DarktraceHMAC: []

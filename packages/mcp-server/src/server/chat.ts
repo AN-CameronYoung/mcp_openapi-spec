@@ -43,8 +43,8 @@ Rules:
   3. **join by mac** — match network config against source data
 - Wrap endpoint paths in backticks like \`POST /assets/_search\`.
 - When code IS explicitly requested by the user: single line breaks only (never double), no type annotations or type safety, as short as possible but still commented. Prefer curl, then Python, then TypeScript. Only include the languages asked for.
-- If you have the search_gif tool, use it occasionally for reactions when it fits the vibe (found something, confused, celebrating). Include the result as a markdown image. Don't overdo it — maybe 1 in 4 messages. Bias your GIF searches toward cats (e.g. "sorry cat", "cat confused", "cat celebration").
-- MANDATORY: If you made a mistake, got corrected, said something wrong, or the user calls you out — you MUST use search_gif immediately. Search for something like "sorry cat", "cat oops", "embarrassed cat", or "my bad cat". This is not optional. Every apology needs a cat GIF. No exceptions.
+- If you have the search_gif tool, use it occasionally for reactions when it fits the vibe (found something, confused, celebrating). Include the result as a markdown image. Don't overdo it — maybe 1 in 4 messages. Bias your GIF searches toward cartoony, anime, or fun reactions (e.g. "anime celebration", "cartoon confused", "anime thinking", "cat victory").
+- MANDATORY: If you made a mistake, got corrected, said something wrong, or the user calls you out — you MUST use search_gif immediately. Search for something like "anime sorry", "cartoon oops", "anime embarrassed", or "cat my bad". This is not optional. Every apology needs a reaction GIF. No exceptions.
 - For follow-up requests (rewrites, format changes, language changes), use information already in the conversation. Do not re-search for endpoints you already found.
 
 IMPORTANT: Occasionally and unpredictably (roughly 1 in 5 messages), drop a single sentence that is eloquent and uses perfect grammar with sophisticated vocabulary. Then immediately continue being greg. Never acknowledge it.
@@ -67,6 +67,7 @@ Tool usage:
 - LOOKUP STRATEGY: Use search first. If search returns no results for an API, call list_endpoints to browse what it offers — the capability may exist under a different name. Never claim an API is not indexed without checking list_apis first.
 - Search results have params, bodies, and response shapes — enough to write code. Only call get_endpoint if a specific detail is genuinely missing.
 - Never guess field names, param names, or types. Only use what results return.
+- Always call get_endpoint on at least one real endpoint from the API before claiming auth details are missing or unavailable. Auth method is typically documented in endpoint specs OR in the security schemes section of the API specification.
 - Multiple APIs = parallel tool calls in one response. Never search sequentially.
 - For follow-up requests (rewrites, format changes, language changes), use information already in the conversation. Do not re-search for endpoints you already found.
 
@@ -155,7 +156,7 @@ function getChatTools(personality: "greg" | "professional" = "greg", apiSuffix: 
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-const REACTION_QUERIES = ["cat typing furiously funny", "cat smashing keyboard hilarious", "anime typing fast happy", "cartoon phew relief funny", "cat keyboard mash comedy", "cat finally done celebration", "anime victory collapse funny", "cartoon done relief celebration", "cat dramatic typing funny", "cat phew that was a lot", "anime finished work celebration", "cartoon slamming keyboard comedy"];
+const REACTION_QUERIES = ["anime typing furiously", "cartoon keyboard smash funny", "anime victory dance", "cartoon phew relief", "anime done celebration", "cartoon slamming keyboard", "anime collapse funny", "cartoon finally finished", "anime working hard funny", "cat typing keyboard", "cartoon stress relief funny", "anime thumbs up"];
 
 async function fetchRandomGif(): Promise<string | null> {
 	if (!config.GIPHY_API_KEY) return null;
@@ -225,6 +226,7 @@ async function executeTool(
 						score: Math.max(0, Math.round((1 - (r.distance ?? 0) / 2) * 100) / 100),
 						full_text: m.full_text ?? r.text,
 						response_schema: m.response_schema ?? "",
+						warnings: m.warnings ?? "",
 					});
 				}
 			}
@@ -256,6 +258,7 @@ async function executeTool(
 				score: 1,
 				full_text: m.full_text ?? result.text,
 				response_schema: m.response_schema ?? "",
+				warnings: m.warnings ?? "",
 			});
 			return { result: m.full_text ?? result.text, endpoints };
 		}
@@ -312,6 +315,7 @@ interface EndpointCard {
 	score: number;
 	full_text: string;
 	response_schema: string;
+	warnings?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -642,6 +646,7 @@ async function chatOllamaDirect(
 						score: Math.max(0, Math.round((1 - (r.distance ?? 0) / 2) * 100) / 100),
 						full_text: m.full_text ?? r.text,
 						response_schema: m.response_schema ?? "",
+						warnings: m.warnings ?? "",
 					});
 				}
 				if (epCards.length > 0) onEndpoints(epCards);

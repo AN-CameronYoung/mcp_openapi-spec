@@ -36,6 +36,7 @@ export interface EndpointCard {
 	score: number;
 	full_text: string;
 	response_schema: string;
+	warnings?: string;
 }
 
 export interface ChatSSEEvent {
@@ -98,6 +99,17 @@ export async function listModels(): Promise<ModelInfo[]> {
 	const res = await fetch("/api/models");
 	if (!res.ok) return [];
 	return res.json();
+}
+
+export async function fetchSuggestions(): Promise<string[]> {
+	try {
+		const res = await fetch("/api/suggestions");
+		if (!res.ok) return [];
+		const data = await res.json() as { suggestions: string[] };
+		return data.suggestions ?? [];
+	} catch {
+		return [];
+	}
 }
 
 export async function generateTitle(prompt: string): Promise<string> {

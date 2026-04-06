@@ -73,4 +73,12 @@ export const Ic = {
 			<path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
 		</svg>
 	),
+	bug: (s = 14) => (
+		<svg width={s} height={s} viewBox="0 0 16 16" fill="none">
+			<ellipse cx="8" cy="9.5" rx="3.5" ry="4.5" stroke="currentColor" strokeWidth="1.2"/>
+			<path d="M5.5 6C5.5 4.5 6.5 3.5 8 3.5s2.5 1 2.5 2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+			<path d="M4 8.5H2M12 8.5h2M4 11H2M12 11h2M4.5 14l-1.5 1.5M11.5 14l1.5 1.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/>
+			<path d="M6.5 3.5L5.5 2M9.5 3.5l1-1.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/>
+		</svg>
+	),
 };
