@@ -5,6 +5,7 @@
 export interface ApiInfo {
 	name: string;
 	endpoints: number;
+	schemas: number;
 }
 
 export interface SearchResult {
@@ -97,6 +98,21 @@ export async function listModels(): Promise<ModelInfo[]> {
 	const res = await fetch("/api/models");
 	if (!res.ok) return [];
 	return res.json();
+}
+
+export async function generateTitle(prompt: string): Promise<string> {
+	try {
+		const res = await fetch("/api/chat/title", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt }),
+		});
+		if (!res.ok) return prompt.slice(0, 50);
+		const data = await res.json();
+		return data.title ?? prompt.slice(0, 50);
+	} catch {
+		return prompt.slice(0, 50);
+	}
 }
 
 export async function* streamChat(

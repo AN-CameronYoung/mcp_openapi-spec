@@ -488,13 +488,7 @@ onComplete:function(){
 	app.get("/api/apis", async (c) => {
 		try {
 			const apis = await retriever.listApis();
-			const details = await Promise.all(
-				apis.map(async (name) => {
-					const eps = await retriever.listEndpoints(name);
-					return { name, endpoints: eps.length };
-				}),
-			);
-			return c.json(details);
+			return c.json(apis);
 		} catch (err) {
 			console.error("[api] list apis error:", err);
 			return c.json({ error: err instanceof Error ? err.message : "list failed" }, 500);
@@ -560,6 +554,55 @@ onComplete:function(){
 
 	app.post("/api/chat", async (c) => {
 		return handleChat(c, retriever);
+	});
+
+	app.post("/api/chat/title", async (c) => {
+		try {
+			const { prompt } = await c.req.json<{ prompt: string }>();
+			if (!prompt?.trim()) return c.json({ title: "New chat" });
+
+			const sysMsg = "Summarize the user's message into a short chat title (max 6 words). Return ONLY the title, nothing else.";
+			let title: string | null = null;
+
+			// Try Ollama first (uses small/fast summary model)
+			if (config.OLLAMA_URL) {
+				try {
+					const res = await fetch(`${config.OLLAMA_URL}/api/chat`, {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							model: config.OLLAMA_CHAT_SUMMARY_MODEL,
+							messages: [{ role: "system", content: sysMsg }, { role: "user", content: prompt }],
+							stream: false,
+						}),
+					});
+					if (res.ok) {
+						const data = await res.json() as { message?: { content?: string } };
+						title = data.message?.content?.trim() || null;
+					}
+				} catch {}
+			}
+
+			// Fall back to Anthropic
+			if (!title && config.ANTHROPIC_API_KEY) {
+				try {
+					const { default: Anthropic } = await import("@anthropic-ai/sdk");
+					const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+					const msg = await client.messages.create({
+						model: "claude-haiku-4-5-20251001",
+						max_tokens: 30,
+						system: sysMsg,
+						messages: [{ role: "user", content: prompt }],
+					});
+					const block = msg.content[0];
+					if (block.type === "text") title = block.text.trim();
+				} catch {}
+			}
+
+			return c.json({ title: title || prompt.slice(0, 50) });
+		} catch {
+			return c.json({ title: "New chat" });
+		}
 	});
 
 	// ── MCP HTTP transport ────────────────────────────────────────

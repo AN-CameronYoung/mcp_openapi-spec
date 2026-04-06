@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { generateTitle } from "../lib/api";
 import type { ApiInfo, SearchResult, EndpointCard } from "../lib/api";
 
 // ---------------------------------------------------------------------------
@@ -11,7 +12,7 @@ export interface ChatMsg {
 	endpoints?: EndpointCard[];
 	streaming?: boolean;
 	model?: string;
-	usage?: { input: number; output: number };
+	usage?: { input: number; output: number; toolCalls: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -165,10 +166,21 @@ export const useStore = create<AppState>((set) => ({
 	saveChat: () => set((s) => {
 		if (s.chatMessages.length === 0) return {};
 		const id = s.activeChatId ?? `chat-${Date.now()}`;
-		const title = s.chatMessages.find((m) => m.role === "user")?.text.slice(0, 50) ?? "New chat";
+		const userMsg = s.chatMessages.find((m) => m.role === "user")?.text ?? "";
+		const title = userMsg.slice(0, 50) || "New chat";
 		const existing = s.chatHistory.filter((c) => c.id !== id);
 		const history = [{ id, title, messages: s.chatMessages, ts: Date.now() }, ...existing].slice(0, 50);
 		try { localStorage.setItem("greg-history", JSON.stringify(history)); } catch {}
+		// Generate a better title async
+		if (userMsg) {
+			generateTitle(userMsg).then((t) => {
+				set((cur) => {
+					const updated = cur.chatHistory.map((c) => c.id === id ? { ...c, title: t } : c);
+					try { localStorage.setItem("greg-history", JSON.stringify(updated)); } catch {}
+					return { chatHistory: updated };
+				});
+			});
+		}
 		return { chatHistory: history, activeChatId: id };
 	}),
 	loadChat: (id) => set((s) => {

@@ -11,6 +11,7 @@ export const AppConfig = z.object({
 
 	OLLAMA_URL: z.string().optional(),
 	OLLAMA_MODEL: z.string().default("mxbai-embed-large"),
+	OLLAMA_CHAT_SUMMARY_MODEL: z.string().default("smollm:1.7b"),
 	EMBEDDING_MODEL: z.string().default("all-MiniLM-L6-v2"),
 
 	PORT: z.coerce.number().default(3000),

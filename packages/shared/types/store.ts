@@ -19,3 +19,9 @@ export interface IngestSummary {
 	schemasIngested: number;
 	total: number;
 }
+
+export interface ApiInfo {
+	name: string;
+	endpoints: number;
+	schemas: number;
+}

@@ -83,9 +83,9 @@ program
 		if (apis.length === 0) {
 			console.log("No APIs ingested yet.");
 		} else {
-			console.log("Ingested APIs:");
+			console.log("Indexed APIs:");
 			for (const api of apis) {
-				console.log(`  - ${api}`);
+				console.log(`  - ${api.name} (${api.endpoints} endpoints, ${api.schemas} schemas)`);
 			}
 		}
 	});

@@ -101,6 +101,16 @@ export function endpointToDocument(endpoint: Endpoint, apiName: string): Documen
 			embedParts.push(`params: ${paramNames.join(", ")}`);
 		}
 	}
+	if (endpoint.operationId) embedParts.push(endpoint.operationId);
+	if (reqBody && typeof reqBody === "object") {
+		const content = reqBody.content ?? {};
+		for (const mediaObj of Object.values(content)) {
+			if (mediaObj?.schema?.properties) {
+				embedParts.push(`body: ${Object.keys(mediaObj.schema.properties).join(", ")}`);
+				break;
+			}
+		}
+	}
 	const embedText = embedParts.join("\n");
 
 	// ── Metadata ──────────────────────────────────────────────────
@@ -128,6 +138,21 @@ export function endpointToDocument(endpoint: Endpoint, apiName: string): Documen
 		}
 	}
 
+	// Store full request schema
+	if (reqBody && typeof reqBody === "object") {
+		const content = reqBody.content ?? {};
+		for (const mediaObj of Object.values(content)) {
+			if (mediaObj && typeof mediaObj === "object") {
+				const schema = fullSchemaToStr(mediaObj.schema ?? {});
+				if (schema) metadata.request_schema = schema;
+				break;
+			}
+		}
+	}
+
+	// Pre-build compact medium_text for LLM consumption
+	metadata.medium_text = buildMediumText(endpoint, metadata);
+
 	return [docId, embedText, metadata];
 }
 
@@ -139,17 +164,18 @@ export function schemaToDocument(schema: SchemaDefinition, apiName: string): Doc
 	const { name } = schema;
 	const docId = `${apiName}:schema:${name}`;
 
-	const lines: string[] = [`Schema: ${name}`];
-	if (schema.description) lines.push(`Description: ${schema.description}`);
-	if (schema.schemaType) lines.push(`Type: ${schema.schemaType}`);
+	// ── Full text (stored in metadata, used for display) ───────────
+	const fullLines: string[] = [`Schema: ${name}`];
+	if (schema.description) fullLines.push(`Description: ${schema.description}`);
+	if (schema.schemaType) fullLines.push(`Type: ${schema.schemaType}`);
 	if (schema.enum) {
-		lines.push(`Enum values: ${schema.enum.map(String).join(", ")}`);
+		fullLines.push(`Enum values: ${schema.enum.map(String).join(", ")}`);
 	}
 
 	const props = schema.properties ?? {};
 	const requiredSet = new Set(schema.required ?? []);
 	if (Object.keys(props).length > 0) {
-		lines.push("Properties:");
+		fullLines.push("Properties:");
 		for (const [propName, propSchema] of Object.entries(props)) {
 			if (!propSchema || typeof propSchema !== "object") continue;
 			const req = requiredSet.has(propName) ? "required" : "optional";
@@ -159,18 +185,36 @@ export function schemaToDocument(schema: SchemaDefinition, apiName: string): Doc
 			let line = `  - ${propName} (${ptype}, ${req})`;
 			if (desc) line += `: ${desc}`;
 			if (enumVals) line += ` — one of: ${enumVals.map(String).join(", ")}`;
-			lines.push(line);
+			fullLines.push(line);
 		}
 	}
 
-	const text = lines.join("\n");
+	const fullText = fullLines.join("\n");
+
+	// ── Embedding text (short, semantic) ──────────────────────────
+	const embedParts: string[] = [`Schema: ${name}`];
+	if (schema.description) {
+		const firstSentence = schema.description.split(". ")[0].split(".\n")[0];
+		embedParts.push(firstSentence);
+	}
+	if (schema.schemaType) embedParts.push(`Type: ${schema.schemaType}`);
+	if (schema.enum) {
+		embedParts.push(`Enum: ${schema.enum.map(String).slice(0, 10).join(", ")}`);
+	}
+	const propNames = Object.keys(props);
+	if (propNames.length > 0) {
+		embedParts.push(`Properties: ${propNames.join(", ")}`);
+	}
+	const embedText = embedParts.join("\n");
+
 	const metadata: Record<string, string> = {
 		type: "schema",
 		name,
 		api: apiName,
+		full_text: fullText,
 	};
 
-	return [docId, text, metadata];
+	return [docId, embedText, metadata];
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +268,110 @@ function fullSchemaToStr(schema: unknown, depth: number = 0): string {
 	} catch {
 		return "";
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Medium text helpers
+// ---------------------------------------------------------------------------
+
+const TYPE_ABBREV: Record<string, string> = {
+	string: "str", integer: "int", boolean: "bool", number: "num", object: "obj", array: "arr",
+};
+
+function abbreviateType(t: string): string {
+	const lower = t.toLowerCase();
+	if (TYPE_ABBREV[lower]) return TYPE_ABBREV[lower];
+	const arrMatch = lower.match(/^array\s+of\s+(.+)/);
+	if (arrMatch) return `${abbreviateType(arrMatch[1])}[]`;
+	return t;
+}
+
+function abbreviateSchema(fullSchemaStr: string, maxFields: number): string {
+	if (!fullSchemaStr) return "";
+	try {
+		const parsed = JSON.parse(fullSchemaStr);
+		if (typeof parsed !== "object" || parsed === null) {
+			return abbreviateType(String(parsed));
+		}
+		return abbreviateObj(parsed, maxFields, 0);
+	} catch {
+		return fullSchemaStr.slice(0, 120);
+	}
+}
+
+function abbreviateObj(obj: unknown, maxFields: number, depth: number): string {
+	if (depth > 2) return "obj";
+	if (Array.isArray(obj)) {
+		const item = obj[0];
+		if (item == null) return "arr";
+		if (typeof item === "string") return `${abbreviateType(item)}[]`;
+		return `${abbreviateObj(item, maxFields, depth + 1)}[]`;
+	}
+	if (typeof obj === "string") return abbreviateType(obj);
+	if (typeof obj !== "object" || obj === null) return "obj";
+
+	const entries = Object.entries(obj as Record<string, unknown>);
+	if (entries.length === 0) return "obj";
+	const shown = entries.slice(0, maxFields);
+	const parts = shown.map(([k, v]) => `${k}:${abbreviateObj(v, maxFields, depth + 1)}`);
+	const suffix = entries.length > maxFields ? `, ...+${entries.length - maxFields}` : "";
+	return `{${parts.join(", ")}${suffix}}`;
+}
+
+function buildMediumText(endpoint: Endpoint, metadata: Record<string, string>): string {
+	const lines: string[] = [];
+
+	// Line 1: op + tags
+	const opParts: string[] = [];
+	if (endpoint.operationId) opParts.push(`op: ${endpoint.operationId}`);
+	if (endpoint.tags.length > 0) opParts.push(`tags: ${endpoint.tags.join(", ")}`);
+	if (opParts.length > 0) lines.push(opParts.join(" | "));
+
+	// Line 2: summary
+	if (endpoint.summary) lines.push(endpoint.summary);
+
+	// Line 3: params
+	const params = endpoint.parameters ?? [];
+	if (params.length > 0) {
+		const locAbbrev: Record<string, string> = { query: "q", path: "p", header: "h", cookie: "c" };
+		const MAX_PARAMS = 8;
+		const shown = params.slice(0, MAX_PARAMS);
+		const paramParts = shown
+			.filter((p): p is typeof p & { name: string } => typeof p === "object" && !!p.name)
+			.map((p) => {
+				const loc = locAbbrev[p.in ?? ""] ?? p.in ?? "";
+				const req = p.required ? "req" : "opt";
+				const schema = (p.schema ?? {}) as Record<string, unknown>;
+				const ptype = abbreviateType((schema.type as string) ?? p.type ?? "");
+				return `${p.name}(${loc},${req})${ptype ? `:${ptype}` : ""}`;
+			});
+		const suffix = params.length > MAX_PARAMS ? ` ...+${params.length - MAX_PARAMS} more` : "";
+		if (paramParts.length > 0) lines.push(`params: ${paramParts.join(", ")}${suffix}`);
+	}
+
+	// Line 4: request body
+	if (metadata.request_schema) {
+		lines.push(`body: ${abbreviateSchema(metadata.request_schema, 10)}`);
+	} else {
+		const reqBody = endpoint.requestBody;
+		if (reqBody && typeof reqBody === "object") {
+			const content = reqBody.content ?? {};
+			for (const mediaObj of Object.values(content)) {
+				if (mediaObj && typeof mediaObj === "object") {
+					const s = schemaSummary(mediaObj.schema ?? {});
+					if (s) lines.push(`body: ${s}`);
+					break;
+				}
+			}
+		}
+	}
+
+	// Line 5: response (2xx only)
+	if (metadata.response_schema) {
+		lines.push(`resp: ${abbreviateSchema(metadata.response_schema, 15)}`);
+	}
+
+	return lines.join("\n");
 }
 
 function schemaSummary(schema: unknown, depth: number = 0): string {

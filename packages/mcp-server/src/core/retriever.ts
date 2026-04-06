@@ -1,7 +1,7 @@
 import SpecStore from "./store";
 import { loadSpec, parseSpecContent, extractEndpoints, extractSchemas } from "./parser";
 import { endpointToDocument, schemaToDocument } from "./chunker";
-import type { DocumentResult, IngestSummary, QueryResult } from "#types/store";
+import type { ApiInfo, DocumentResult, IngestSummary, QueryResult } from "#types/store";
 
 export interface ProgressEvent {
 	phase: "parsing" | "parsed" | "deleting" | "embedding" | "storing" | "done";
@@ -89,28 +89,29 @@ export default class Retriever {
 		api?: string,
 		method?: string,
 		tag?: string,
-		n: number = 5,
+		n: number = 2,
 	): Promise<QueryResult[]> {
 		const where = buildWhere({ type: "endpoint", api, method });
-		let results = await this.#store.query(query, n, where ?? undefined);
-
+		let results = await this.#store.query(query, n * 3, where ?? undefined);
+		results = results.filter((r) => (r.distance ?? 1) <= MAX_DISTANCE);
 		if (tag) {
 			const tagLower = tag.toLowerCase();
 			results = results.filter(
 				(r) => r.metadata.tags?.toLowerCase().includes(tagLower)
 			);
 		}
-
-		return results;
+		return results.slice(0, n);
 	}
 
 	async searchSchemas(
 		query: string,
 		api?: string,
-		n: number = 5,
+		n: number = 2,
 	): Promise<QueryResult[]> {
 		const where = buildWhere({ type: "schema", api });
-		return this.#store.query(query, n, where ?? undefined);
+		let results = await this.#store.query(query, n * 3, where ?? undefined);
+		results = results.filter((r) => (r.distance ?? 1) <= MAX_DISTANCE);
+		return results.slice(0, n);
 	}
 
 	async getEndpoint(
@@ -142,7 +143,7 @@ export default class Retriever {
 		await this.#store.deleteApi(apiName);
 	}
 
-	async listApis(): Promise<string[]> {
+	async listApis(): Promise<ApiInfo[]> {
 		return this.#store.listApis();
 	}
 
@@ -151,6 +152,12 @@ export default class Retriever {
 		return docs.filter((d) => d.metadata.type === "endpoint");
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const MAX_DISTANCE = 0.75;
 
 // ---------------------------------------------------------------------------
 // Internal helpers

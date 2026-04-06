@@ -8,7 +8,7 @@ import {
 
 import config from "./config";
 import { StoreError } from "./errors";
-import type { DocumentResult, QueryResult } from "#types/store";
+import type { ApiInfo, DocumentResult, QueryResult } from "#types/store";
 
 // ---------------------------------------------------------------------------
 // Remote Ollama embedding via HTTP (no ollama npm dep needed)
@@ -233,15 +233,21 @@ export default class SpecStore {
 	// Metadata
 	// ------------------------------------------------------------------
 
-	async listApis(): Promise<string[]> {
+	async listApis(): Promise<ApiInfo[]> {
 		const collection = await this.#getCollection();
 		const results = await collection.get({ include: [IncludeEnum.Metadatas] });
-		const apis = new Set<string>();
+		const counts = new Map<string, { endpoints: number; schemas: number }>();
 		for (const meta of results.metadatas ?? []) {
 			const m = meta as Record<string, string> | null;
-			if (m?.api) apis.add(m.api);
+			if (!m?.api) continue;
+			const entry = counts.get(m.api) ?? { endpoints: 0, schemas: 0 };
+			if (m.type === "endpoint") entry.endpoints++;
+			else if (m.type === "schema") entry.schemas++;
+			counts.set(m.api, entry);
 		}
-		return Array.from(apis).sort();
+		return Array.from(counts.entries())
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([name, c]) => ({ name, endpoints: c.endpoints, schemas: c.schemas }));
 	}
 
 	async count(): Promise<number> {

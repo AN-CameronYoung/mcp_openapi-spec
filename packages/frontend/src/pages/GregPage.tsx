@@ -31,12 +31,18 @@ function cleanText(raw: string): string {
 
 	// Convert single newlines to double (markdown paragraph breaks)
 	// but preserve: code blocks, tables, list items, headings
+	// Also collapse blank lines inside code blocks (LLMs often add them despite instructions)
 	const parts = text.split(/(```[\s\S]*?```)/);
 	return parts.map((part, i) => {
-		if (i % 2 === 1) return part; // code block
+		if (i % 2 === 1) {
+			// Code block — collapse multiple blank lines to single newlines
+			const fence = part.match(/^(```\w*\n)/)?.[1] ?? "```\n";
+			const close = "\n```";
+			const inner = part.slice(fence.length, part.length - 3).replace(/\n{2,}/g, "\n");
+			return fence + inner + close;
+		}
 		return part.replace(/([^\n])\n([^\n])/g, (_, before, after) => {
 			const prevLine = before.split("\n").pop() ?? before;
-			// Don't double-space if either line is a table row, list item, or heading
 			if (prevLine.trimStart().startsWith("|") || after.trimStart().startsWith("|")) return `${before}\n${after}`;
 			if (/^[-*\d#>]/.test(after.trimStart())) return `${before}\n${after}`;
 			if (prevLine.trimStart().startsWith("|---")) return `${before}\n${after}`;
@@ -100,14 +106,6 @@ function CopyBtn({ text }: { text: string }) {
 function CodeDropdown({ code, lang, lineCount, blockKey }: { code: string; lang: string; lineCount: number; blockKey: string }) {
 	const open = useStore((s) => !!s.openCodeBlocks[blockKey]);
 	const toggle = useStore((s) => s.toggleCodeBlock);
-	const contentRef = useRef<HTMLDivElement>(null);
-	const [height, setHeight] = useState(0);
-
-	useEffect(() => {
-		if (open && contentRef.current) {
-			setHeight(contentRef.current.scrollHeight);
-		}
-	}, [open, code]);
 
 	return (
 		<div style={{ margin: "6px 0" }}>
@@ -138,13 +136,13 @@ function CodeDropdown({ code, lang, lineCount, blockKey }: { code: string; lang:
 				</button>
 				<CopyBtn text={code} />
 			</div>
-			<div style={{ overflow: "hidden", maxHeight: open ? height : 0, transition: "max-height 0.25s ease", marginTop: open ? 4 : 0 }}>
-				<div ref={contentRef}>
-					<SyntaxHighlighter style={oneDark} language={lang} PreTag="div" wrapLongLines customStyle={{ background: C.bg, borderRadius: 6 }} codeTagProps={{ style: { background: C.bg } }}>
+			{open && (
+				<div style={{ marginTop: 4 }}>
+					<SyntaxHighlighter style={oneDark} language={lang} PreTag="div" customStyle={{ background: C.bg, borderRadius: 6, fontSize: 14, lineHeight: 1.4, padding: "8px 12px", overflowX: "auto" }} codeTagProps={{ style: { background: C.bg, fontSize: 14, lineHeight: 1.4, whiteSpace: "pre" } }}>
 						{code}
 					</SyntaxHighlighter>
 				</div>
-			</div>
+			)}
 		</div>
 	);
 }
@@ -155,63 +153,90 @@ function stableKey(s: string): string {
 	return String(h >>> 0);
 }
 
+const mdComponents = (msgKey: number, langMap: Record<string, string>) => ({
+	code({ className, children }: { className?: string; children?: React.ReactNode }) {
+		const match = /language-(\w+)/.exec(String(className ?? ""));
+		const code = String(children ?? "").replace(/\n$/, "");
+		if (match || code.includes("\n")) {
+			const rawLang = match?.[1] ?? "text";
+			const lang = langMap[rawLang] ?? rawLang;
+			const lineCount = code.split("\n").length;
+			const key = `msg-${msgKey}-${stableKey(code)}`;
+			return <CodeDropdown code={code} lang={lang} lineCount={lineCount} blockKey={key} />;
+		}
+		return (
+			<code style={{ background: C.bg, padding: "1px 5px", borderRadius: 4, fontFamily: "monospace", fontSize: "0.9em", color: C.accent }}>
+				{children as React.ReactNode}
+			</code>
+		);
+	},
+	pre({ children }: { children?: React.ReactNode }) { return <>{children as React.ReactNode}</>; },
+	p({ children }: { children?: React.ReactNode }) { return <p style={{ margin: "10px 0" }}>{children as React.ReactNode}</p>; },
+	ul({ children }: { children?: React.ReactNode }) { return <ul style={{ margin: "4px 0", paddingLeft: 18 }}>{children as React.ReactNode}</ul>; },
+	ol({ children }: { children?: React.ReactNode }) { return <ol style={{ margin: "4px 0", paddingLeft: 18 }}>{children as React.ReactNode}</ol>; },
+	a({ href, children }: { href?: string; children?: React.ReactNode }) { return <a href={String(href)} style={{ color: C.accent }} target="_blank" rel="noopener noreferrer">{children as React.ReactNode}</a>; },
+	img({ src, alt }: { src?: string; alt?: string }) { return <img src={String(src)} alt={String(alt ?? "")} style={{ maxWidth: "100%", maxHeight: 300, borderRadius: 10, marginTop: 6 }} />; },
+	table({ children }: { children?: React.ReactNode }) { return <table style={{ borderCollapse: "collapse", width: "100%", margin: "6px 0", fontSize: 14 }}>{children as React.ReactNode}</table>; },
+	thead({ children }: { children?: React.ReactNode }) { return <thead style={{ borderBottom: `1px solid ${C.border}` }}>{children as React.ReactNode}</thead>; },
+	th({ children }: { children?: React.ReactNode }) { return <th style={{ textAlign: "left", padding: "4px 8px", color: C.text, fontWeight: 600 }}>{children as React.ReactNode}</th>; },
+	td({ children }: { children?: React.ReactNode }) { return <td style={{ padding: "4px 8px", borderTop: `1px solid ${C.border}`, color: C.textMuted }}>{children as React.ReactNode}</td>; },
+});
+
+function SectionDropdown({ title, body, msgKey, langMap, defaultOpen }: { title: string; body: string; msgKey: number; langMap: Record<string, string>; defaultOpen: boolean }) {
+	const [open, setOpen] = useState(defaultOpen);
+	return (
+		<div style={{ marginBottom: 6 }}>
+			<button
+				onClick={() => setOpen(!open)}
+				style={{
+					background: "none", border: "none", cursor: "pointer", padding: "4px 0",
+					display: "flex", alignItems: "center", gap: 6, width: "100%", textAlign: "left",
+				}}
+			>
+				<span style={{ color: C.textDim, fontSize: 16, transition: "transform 0.15s", transform: open ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block" }}>▶</span>
+				<span style={{ color: C.text, fontWeight: 600, fontSize: 20 }}>{title}</span>
+			</button>
+			{open && (
+				<div style={{ paddingLeft: 18, fontSize: 18 }}>
+					<ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap) as never}>{body}</ReactMarkdown>
+				</div>
+			)}
+		</div>
+	);
+}
+
 function GregMarkdown({ text, msgKey }: { text: string; msgKey: number }) {
 	const langMap: Record<string, string> = { ts: "typescript", js: "javascript", py: "python", sh: "bash", yml: "yaml" };
 
+	// Split into sections by headings — only use dropdowns if 2+ headings
+	const sectionRegex = /^(#{1,3})\s+(.+)$/gm;
+	const headings = [...text.matchAll(sectionRegex)];
+
+	if (headings.length >= 2) {
+		const sections: { preamble?: string; items: { title: string; body: string }[] } = { items: [] };
+		const firstIdx = text.indexOf(headings[0][0]);
+		if (firstIdx > 0) sections.preamble = text.slice(0, firstIdx).trim();
+
+		for (let i = 0; i < headings.length; i++) {
+			const start = text.indexOf(headings[i][0]) + headings[i][0].length;
+			const end = i + 1 < headings.length ? text.indexOf(headings[i + 1][0]) : text.length;
+			sections.items.push({ title: headings[i][2], body: text.slice(start, end).trim() });
+		}
+
+		return (
+			<>
+				{sections.preamble && (
+					<ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap) as never}>{sections.preamble}</ReactMarkdown>
+				)}
+				{sections.items.map((s, i) => (
+					<SectionDropdown key={i} title={s.title} body={s.body} msgKey={msgKey} langMap={langMap} defaultOpen={i === 0} />
+				))}
+			</>
+		);
+	}
+
 	return (
-		<ReactMarkdown
-			remarkPlugins={[remarkGfm]}
-			components={{
-				code({ className, children }) {
-					const match = /language-(\w+)/.exec(String(className ?? ""));
-					const code = String(children ?? "").replace(/\n$/, "");
-
-					if (match || code.includes("\n")) {
-						const rawLang = match?.[1] ?? "text";
-						const lang = langMap[rawLang] ?? rawLang;
-						const lineCount = code.split("\n").length;
-						const key = `msg-${msgKey}-${stableKey(code)}`;
-						return <CodeDropdown code={code} lang={lang} lineCount={lineCount} blockKey={key} />;
-					}
-
-					return (
-						<code style={{ background: C.bg, padding: "1px 5px", borderRadius: 4, fontFamily: "monospace", fontSize: "0.9em", color: C.accent }}>
-							{children as React.ReactNode}
-						</code>
-					);
-				},
-				pre({ children }) {
-					return <>{children as React.ReactNode}</>;
-				},
-				p({ children }) {
-					return <p style={{ margin: "4px 0" }}>{children as React.ReactNode}</p>;
-				},
-				ul({ children }) {
-					return <ul style={{ margin: "4px 0", paddingLeft: 18 }}>{children as React.ReactNode}</ul>;
-				},
-				ol({ children }) {
-					return <ol style={{ margin: "4px 0", paddingLeft: 18 }}>{children as React.ReactNode}</ol>;
-				},
-				a({ href, children }) {
-					return <a href={String(href)} style={{ color: C.accent }} target="_blank" rel="noopener noreferrer">{children as React.ReactNode}</a>;
-				},
-				img({ src, alt }) {
-					return <img src={String(src)} alt={String(alt ?? "")} style={{ maxWidth: "100%", maxHeight: 300, borderRadius: 10, marginTop: 6 }} />;
-				},
-				table({ children }) {
-					return <table style={{ borderCollapse: "collapse", width: "100%", margin: "6px 0", fontSize: 14 }}>{children as React.ReactNode}</table>;
-				},
-				thead({ children }) {
-					return <thead style={{ borderBottom: `1px solid ${C.border}` }}>{children as React.ReactNode}</thead>;
-				},
-				th({ children }) {
-					return <th style={{ textAlign: "left", padding: "4px 8px", color: C.text, fontWeight: 600 }}>{children as React.ReactNode}</th>;
-				},
-				td({ children }) {
-					return <td style={{ padding: "4px 8px", borderTop: `1px solid ${C.border}`, color: C.textMuted }}>{children as React.ReactNode}</td>;
-				},
-			}}
-		>
+		<ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap) as never}>
 			{text}
 		</ReactMarkdown>
 	);
@@ -327,7 +352,7 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint }: {
 						)}
 						{msg.usage && !msg.streaming && (
 							<span style={{ fontSize: 12, color: C.textDim, fontFamily: "monospace", marginLeft: "auto" }}>
-								{msg.usage.input + msg.usage.output} tokens
+								{(msg.usage.input + msg.usage.output).toLocaleString()} tokens{msg.usage.toolCalls > 0 ? ` / ${msg.usage.toolCalls} tool call${msg.usage.toolCalls === 1 ? "" : "s"}` : ""}
 							</span>
 						)}
 					</div>

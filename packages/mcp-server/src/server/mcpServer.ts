@@ -10,12 +10,23 @@ import type { QueryResult } from "#types/store";
 // ---------------------------------------------------------------------------
 
 let retriever: Retriever | null = null;
+let cachedApiList: string | null = null;
 
 function getRetriever(): Retriever {
 	if (!retriever) {
 		retriever = new Retriever();
 	}
 	return retriever;
+}
+
+async function getIndexedApisSuffix(): Promise<string> {
+	if (cachedApiList === null) {
+		const apis = await getRetriever().listApis();
+		cachedApiList = apis.length > 0
+			? ` Currently indexed: ${apis.map((a) => a.name).join(", ")}.`
+			: "";
+	}
+	return cachedApiList;
 }
 
 export function createMcpServer(): Server {
@@ -28,90 +39,86 @@ export function createMcpServer(): Server {
 	// Tool definitions
 	// ------------------------------------------------------------------
 
-	server.setRequestHandler(ListToolsRequestSchema, async () => ({
-		tools: [
-			{
-				name: "search_endpoints",
-				description: "Semantic search over ingested OpenAPI endpoints. Use this to find endpoints related to a task or feature.",
-				inputSchema: {
-					type: "object" as const,
-					properties: {
-						query: { type: "string", description: "Natural language description of what you're looking for" },
-						api: { type: "string", description: "Optional: filter to a specific API name" },
-						method: { type: "string", description: "Optional: filter by HTTP method (GET, POST, PUT, DELETE, ...)" },
-						tag: { type: "string", description: "Optional: filter by tag (substring match)" },
-						n: { type: "integer", description: "Number of results to return (default: 5)", default: 5 },
+	server.setRequestHandler(ListToolsRequestSchema, async () => {
+		const apiSuffix = await getIndexedApisSuffix();
+
+		return {
+			tools: [
+				{
+					name: "search",
+					description:
+						"Search indexed OpenAPI specs. Returns endpoints by default, or schemas with type='schema'. Medium detail is usually enough to write code." +
+						apiSuffix,
+					inputSchema: {
+						type: "object" as const,
+						properties: {
+							query: { type: "string", description: "What to search for" },
+							type: { type: "string", enum: ["endpoint", "schema"], description: "endpoint (default) or schema", default: "endpoint" },
+							api: { type: "string", description: "Filter to specific API" },
+							method: { type: "string", description: "HTTP method filter" },
+							tag: { type: "string", description: "Filter by tag" },
+							n: { type: "integer", description: "Max results (default: 2)", default: 2 },
+							detail: { type: "string", enum: ["compact", "medium", "full"], description: "compact (browse), medium (default, code-ready), full (raw spec)", default: "medium" },
+						},
+						required: ["query"],
 					},
-					required: ["query"],
 				},
-			},
-			{
-				name: "search_schemas",
-				description: "Semantic search over ingested OpenAPI data schemas. Use this to understand the shape of request/response objects.",
-				inputSchema: {
-					type: "object" as const,
-					properties: {
-						query: { type: "string", description: "Natural language description of the schema you're looking for" },
-						api: { type: "string", description: "Optional: filter to a specific API name" },
-						n: { type: "integer", description: "Number of results to return (default: 5)", default: 5 },
+				{
+					name: "get_endpoint",
+					description: "Get full raw spec for an endpoint by method+path. Only needed when search results lack detail.",
+					inputSchema: {
+						type: "object" as const,
+						properties: {
+							path: { type: "string", description: "Endpoint path (e.g. /payments/create)" },
+							method: { type: "string", description: "HTTP method (e.g. POST)" },
+							api: { type: "string", description: "API name" },
+						},
+						required: ["path", "method"],
 					},
-					required: ["query"],
 				},
-			},
-			{
-				name: "get_endpoint",
-				description: "Exact lookup of a specific endpoint by HTTP method and path.",
-				inputSchema: {
-					type: "object" as const,
-					properties: {
-						path: { type: "string", description: "The endpoint path, e.g. /payments/create" },
-						method: { type: "string", description: "The HTTP method, e.g. POST" },
-						api: { type: "string", description: "Optional: restrict to a specific API name" },
+				{
+					name: "list_apis",
+					description: "List all ingested API specs.",
+					inputSchema: { type: "object" as const, properties: {}, required: [] },
+				},
+				{
+					name: "list_endpoints",
+					description: "List all endpoints for an API.",
+					inputSchema: {
+						type: "object" as const,
+						properties: {
+							api: { type: "string", description: "API name (e.g. 'proxmox')" },
+							verbose: { type: "boolean", description: "Full details (default: false)", default: false },
+						},
+						required: ["api"],
 					},
-					required: ["path", "method"],
 				},
-			},
-			{
-				name: "list_apis",
-				description: "List all API specs that have been ingested into the knowledge base.",
-				inputSchema: { type: "object" as const, properties: {}, required: [] },
-			},
-			{
-				name: "list_endpoints",
-				description: "List all endpoints for a given API. Returns method, path, summary, and tags for every endpoint.",
-				inputSchema: {
-					type: "object" as const,
-					properties: {
-						api: { type: "string", description: "The API name to list endpoints for (e.g. 'proxmox')" },
+				{
+					name: "ingest_spec",
+					description: "Ingest an OpenAPI spec from file path or URL.",
+					inputSchema: {
+						type: "object" as const,
+						properties: {
+							source: { type: "string", description: "File path or URL to spec (YAML/JSON)" },
+							api_name: { type: "string", description: "Short API name (e.g. 'stripe')" },
+						},
+						required: ["source", "api_name"],
 					},
-					required: ["api"],
 				},
-			},
-			{
-				name: "ingest_spec",
-				description: "Ingest an OpenAPI spec from a file path or URL into the knowledge base. Use this when the user wants to add a new API.",
-				inputSchema: {
-					type: "object" as const,
-					properties: {
-						source: { type: "string", description: "File path or URL to the OpenAPI spec (YAML or JSON)" },
-						api_name: { type: "string", description: "Short name to identify this API (e.g. 'stripe', 'github')" },
+				{
+					name: "delete_api",
+					description: "Remove all documents for an API.",
+					inputSchema: {
+						type: "object" as const,
+						properties: {
+							api_name: { type: "string", description: "API name to delete" },
+						},
+						required: ["api_name"],
 					},
-					required: ["source", "api_name"],
 				},
-			},
-			{
-				name: "delete_api",
-				description: "Remove all documents for a given API from the knowledge base.",
-				inputSchema: {
-					type: "object" as const,
-					properties: {
-						api_name: { type: "string", description: "The API name to delete (e.g. 'proxmox')" },
-					},
-					required: ["api_name"],
-				},
-			},
-		],
-	}));
+			],
+		};
+	});
 
 	// ------------------------------------------------------------------
 	// Tool execution
@@ -122,24 +129,14 @@ export function createMcpServer(): Server {
 		const r = getRetriever();
 
 		switch (name) {
-			case "search_endpoints": {
-				const results = await r.searchEndpoints(
-					args?.query as string,
-					args?.api as string | undefined,
-					args?.method as string | undefined,
-					args?.tag as string | undefined,
-					Number(args?.n ?? 5),
-				);
-				return { content: [{ type: "text", text: formatResults(results) }] };
-			}
-
-			case "search_schemas": {
-				const results = await r.searchSchemas(
-					args?.query as string,
-					args?.api as string | undefined,
-					Number(args?.n ?? 5),
-				);
-				return { content: [{ type: "text", text: formatResults(results) }] };
+			case "search": {
+				const type = (args?.type as string) ?? "endpoint";
+				const n = Number(args?.n ?? 2);
+				const detail = ((args?.detail as string) ?? "medium") as "compact" | "medium" | "full";
+				const results = type === "schema"
+					? await r.searchSchemas(args?.query as string, args?.api as string | undefined, n)
+					: await r.searchEndpoints(args?.query as string, args?.api as string | undefined, args?.method as string | undefined, args?.tag as string | undefined, n);
+				return { content: [{ type: "text", text: formatResults(results, detail) }] };
 			}
 
 			case "get_endpoint": {
@@ -160,24 +157,34 @@ export function createMcpServer(): Server {
 				if (apis.length === 0) {
 					return { content: [{ type: "text", text: "No APIs ingested yet." }] };
 				}
-				return { content: [{ type: "text", text: `Ingested APIs:\n${apis.map((a) => `- ${a}`).join("\n")}` }] };
+				const lines = apis.map((a) => `- ${a.name} (${a.endpoints} endpoints, ${a.schemas} schemas)`);
+				return { content: [{ type: "text", text: `Indexed APIs:\n${lines.join("\n")}` }] };
 			}
 
 			case "list_endpoints": {
 				const apiName = args?.api as string;
+				const verbose = args?.verbose === true;
 				const endpoints = await r.listEndpoints(apiName);
 				if (endpoints.length === 0) {
 					return { content: [{ type: "text", text: `No endpoints found for API '${apiName}'.` }] };
 				}
-				const lines = endpoints
-					.sort((a, b) => {
-						const pa = a.metadata.path ?? "";
-						const pb = b.metadata.path ?? "";
-						if (pa !== pb) return pa.localeCompare(pb);
-						return (a.metadata.method ?? "").localeCompare(b.metadata.method ?? "");
-					})
-					.map((ep) => ep.metadata.full_text ?? ep.text);
-				return { content: [{ type: "text", text: lines.join("\n\n---\n\n") }] };
+				const sorted = endpoints.sort((a, b) => {
+					const pa = a.metadata.path ?? "";
+					const pb = b.metadata.path ?? "";
+					if (pa !== pb) return pa.localeCompare(pb);
+					return (a.metadata.method ?? "").localeCompare(b.metadata.method ?? "");
+				});
+				if (verbose) {
+					const lines = sorted.map((ep) => ep.metadata.full_text ?? ep.text);
+					return { content: [{ type: "text", text: lines.join("\n\n---\n\n") }] };
+				}
+				const lines = sorted.map((ep) => {
+					const m = ep.metadata.method ?? "?";
+					const p = ep.metadata.path ?? "?";
+					const summary = ep.text.split("\n")[1] ?? "";
+					return summary ? `${m} ${p} - ${summary}` : `${m} ${p}`;
+				});
+				return { content: [{ type: "text", text: `${apiName} (${lines.length} endpoints):\n${lines.join("\n")}` }] };
 			}
 
 			case "ingest_spec": {
@@ -185,6 +192,7 @@ export function createMcpServer(): Server {
 					args?.source as string,
 					args?.api_name as string,
 				);
+				cachedApiList = null;
 				return {
 					content: [{
 						type: "text",
@@ -196,6 +204,7 @@ export function createMcpServer(): Server {
 			case "delete_api": {
 				const apiName = args?.api_name as string;
 				await r.deleteApi(apiName);
+				cachedApiList = null;
 				return { content: [{ type: "text", text: `Deleted all documents for API '${apiName}'.` }] };
 			}
 
@@ -223,16 +232,22 @@ export async function runStdioServer(): Promise<void> {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function formatResults(results: QueryResult[]): string {
+function formatResults(results: QueryResult[], detail: "compact" | "medium" | "full" = "medium"): string {
 	if (results.length === 0) return "No results found.";
-
-	const parts = results.map((res, i) => {
+	const lines: string[] = [];
+	for (let i = 0; i < results.length; i++) {
+		if (i > 0) lines.push("---");
+		const res = results[i];
 		const meta = res.metadata;
-		const dist = res.distance ?? 0;
-		const header = `[${i + 1}] ${meta.method ?? ""} ${meta.path ?? meta.name ?? ""}  (api: ${meta.api ?? "?"}, distance: ${dist.toFixed(4)})`;
-		const displayText = meta.full_text ?? res.text;
-		return `${header}\n${displayText}`;
-	});
-
-	return parts.join("\n\n---\n\n");
+		const header = meta.method && meta.path
+			? `[${i + 1}] ${meta.method} ${meta.path}  (${meta.api ?? "?"}, d=${(res.distance ?? 0).toFixed(2)})`
+			: `[${i + 1}] ${meta.name ?? "?"}  (${meta.api ?? "?"}, d=${(res.distance ?? 0).toFixed(2)})`;
+		lines.push(header);
+		switch (detail) {
+			case "compact": break;
+			case "full": lines.push(meta.full_text ?? res.text); break;
+			default: lines.push(meta.medium_text ?? meta.full_text ?? res.text); break;
+		}
+	}
+	return lines.join("\n");
 }
