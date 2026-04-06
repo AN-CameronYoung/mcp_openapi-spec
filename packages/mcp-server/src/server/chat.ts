@@ -43,8 +43,8 @@ Rules:
   3. **join by mac** — match network config against source data
 - Wrap endpoint paths in backticks like \`POST /assets/_search\`.
 - When code IS explicitly requested by the user: single line breaks only (never double), no type annotations or type safety, as short as possible but still commented. Prefer curl, then Python, then TypeScript. Only include the languages asked for.
-- If you have the search_gif tool, use it occasionally for reactions when it fits the vibe (found something, confused, celebrating). Include the result as a markdown image. Don't overdo it — maybe 1 in 4 messages. Bias your GIF searches toward cartoony, anime, or fun reactions (e.g. "anime celebration", "cartoon confused", "anime thinking", "cat victory").
-- MANDATORY: If you made a mistake, got corrected, said something wrong, or the user calls you out — you MUST use search_gif immediately. Search for something like "anime sorry", "cartoon oops", "anime embarrassed", or "cat my bad". This is not optional. Every apology needs a reaction GIF. No exceptions.
+- If you have the search_gif tool, use it occasionally for reactions when it fits the vibe (found something, confused, celebrating). Include the result as a markdown image. Don't overdo it — maybe 1 in 4 messages. Bias your GIF searches toward cats, with anime/cartoon as backup (e.g. "cat celebration", "cat confused", "cat thinking", "anime victory").
+- MANDATORY: If you made a mistake, got corrected, said something wrong, or the user calls you out — you MUST use search_gif immediately. Search for something like "cat sorry", "cat oops", "cat embarrassed", or "cat my bad". This is not optional. Every apology needs a cat GIF. No exceptions.
 - For follow-up requests (rewrites, format changes, language changes), use information already in the conversation. Do not re-search for endpoints you already found.
 
 IMPORTANT: Occasionally and unpredictably (roughly 1 in 5 messages), drop a single sentence that is eloquent and uses perfect grammar with sophisticated vocabulary. Then immediately continue being greg. Never acknowledge it.
@@ -156,18 +156,17 @@ function getChatTools(personality: "greg" | "professional" = "greg", apiSuffix: 
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-const REACTION_QUERIES = ["anime typing furiously", "cartoon keyboard smash funny", "anime victory dance", "cartoon phew relief", "anime done celebration", "cartoon slamming keyboard", "anime collapse funny", "cartoon finally finished", "anime working hard funny", "cat typing keyboard", "cartoon stress relief funny", "anime thumbs up"];
+const REACTION_QUERIES = ["cat typing keyboard", "cat computer funny", "cat keyboard smash", "cat finally done", "cat phew relief", "cat victory celebration", "anime typing furiously", "cartoon done celebration", "cat dramatic funny", "anime victory dance", "cat working hard", "cartoon stress relief"];
 
 async function fetchRandomGif(): Promise<string | null> {
 	if (!config.GIPHY_API_KEY) return null;
 	try {
 		const q = encodeURIComponent(REACTION_QUERIES[Math.floor(Math.random() * REACTION_QUERIES.length)]);
-		const offset = Math.floor(Math.random() * 20);
-		const res = await fetch(`https://api.giphy.com/v1/gifs/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=10&offset=${offset}&rating=g&lang=en`);
+		const offset = Math.floor(Math.random() * 5);
+		const res = await fetch(`https://api.giphy.com/v1/stickers/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=10&offset=${offset}&rating=g&lang=en`);
 		if (!res.ok) return null;
 		const data = await res.json() as { data: Array<{ title: string; images: { original: { url: string } } }> };
-		const blocked = /lebron|james|lbj/i;
-		const match = data.data?.find((g) => !blocked.test(g.title ?? "") && !blocked.test(g.images?.original?.url ?? ""));
+		const match = data.data?.[0];
 		return match?.images?.original?.url ? `![gif](${match.images.original.url})` : null;
 	} catch {
 		return null;
@@ -288,12 +287,11 @@ async function executeTool(
 			try {
 				const q = encodeURIComponent(String(input.query ?? "reaction"));
 				const res = await fetch(
-					`https://api.giphy.com/v1/gifs/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=10&rating=g&lang=en`,
+					`https://api.giphy.com/v1/stickers/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=10&rating=g&lang=en`,
 				);
 				if (!res.ok) return { result: "GIF search failed", endpoints: [] };
 				const data = await res.json() as { data: Array<{ title: string; images: { original: { url: string } } }> };
-				const blocked = /lebron|james|lbj/i;
-				const match = data.data?.find((g) => !blocked.test(g.title ?? "") && !blocked.test(g.images?.original?.url ?? ""));
+				const match = data.data?.[0];
 				const gif = match?.images?.original?.url;
 				if (!gif) return { result: "No GIF found", endpoints: [] };
 				return { result: `![gif](${gif})`, endpoints: [] };

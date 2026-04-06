@@ -707,10 +707,20 @@ export default function GregPage() {
 	useEffect(() => { listModels().then(setModels).catch(() => {}); }, []);
 	useEffect(() => { fetchSuggestions().then(setSuggestions).catch(() => {}); }, []);
 	useEffect(() => { setGreetingText(getGreeting(gregMode)); }, [gregMode]);
-	useEffect(() => {
-		if (!gregMode) return;
-		fetch("/api/greeting-gif").then((r) => r.json()).then((d) => setGreetingGif(d.url)).catch(() => {});
+
+	const fetchGreetingGif = useCallback(() => {
+		fetch("/api/greeting-gif").then((r) => r.json()).then((d) => setGreetingGif(d.url ?? null)).catch(() => {});
 	}, []);
+
+	// Fetch greeting gif on initial mount
+	useEffect(() => { if (gregMode) fetchGreetingGif(); }, []);
+
+	const handleNewChat = useCallback(() => {
+		newChat();
+		setGreetingGif(null);
+		fetchSuggestions().then(setSuggestions).catch(() => {});
+		if (gregMode) fetchGreetingGif();
+	}, [gregMode, newChat, fetchGreetingGif]);
 
 	const handleSelectEndpoint = useCallback((ep: EndpointCard) => setDetail(ep, "endpoints"), [setDetail]);
 	const [input, setInput] = useState("");
@@ -959,7 +969,7 @@ export default function GregPage() {
 
 				{/* New chat */}
 				<button
-					onClick={newChat}
+					onClick={handleNewChat}
 					style={{
 						display: "flex",
 						alignItems: "center",
@@ -1011,7 +1021,7 @@ export default function GregPage() {
 				}}>
 					<div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
 						<span style={{ fontSize: 15, fontWeight: 600, color: C.text, flex: 1 }}>History</span>
-						<button onClick={newChat} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.accent, display: "flex", padding: 4 }} title="New chat">
+						<button onClick={handleNewChat} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.accent, display: "flex", padding: 4 }} title="New chat">
 							{Ic.plus(14)}
 						</button>
 						<button onClick={() => setSidebarOpen(false)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textDim, display: "flex", padding: 4 }}>
