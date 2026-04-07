@@ -1,6 +1,7 @@
 services:
   chromadb:
     image: chromadb/chroma:latest
+    container_name: chromadb
     volumes:
       - chroma_data:/chroma/chroma
     ports:
@@ -8,6 +9,7 @@ services:
 
   mcp-server:
     image: oven/bun:1-debian
+    container_name: mcp
     working_dir: /app
     command: sh -c "bun install && bun run --watch packages/mcp-server/main.ts serve --transport http --port 3000"
     environment:
@@ -32,8 +34,10 @@ services:
     depends_on:
       - chromadb
 
-  nextjs:
+  greg:
+    tty: true
     image: oven/bun:1-debian
+    container_name: greg
     working_dir: /app
     command: sh -c "bun install && cd packages/nextjs && bun run dev"
     environment:

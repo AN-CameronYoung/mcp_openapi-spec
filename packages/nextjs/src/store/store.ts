@@ -59,6 +59,13 @@ function applyTheme(pref: ThemePref) {
 // Apply on load immediately (before React renders, client-only)
 if (typeof window !== "undefined") applyTheme(getStoredTheme());
 
+const VALID_PAGES = new Set(["greg", "search", "docs", "settings"]);
+
+export function pageFromHash(hash = typeof window !== "undefined" ? window.location.hash : ""): AppState["page"] | null {
+	const seg = hash.replace(/^#\/?/, "").split("/")[0] || "greg";
+	return VALID_PAGES.has(seg) ? (seg as AppState["page"]) : null;
+}
+
 interface AppState {
 	// Theme
 	theme: ThemePref;
@@ -119,6 +126,15 @@ interface AppState {
 	removeIngestJob: (id: string) => void;
 	clearDoneJobs: () => void;
 
+	// Auto-ingest status
+	autoIngest: {
+		active: boolean;
+		specs: Array<{ name: string; status: "pending" | "running" | "done" | "error"; message: string; done?: number; total?: number }>;
+		currentIndex: number;
+	};
+	setAutoIngest: (u: Partial<AppState["autoIngest"]>) => void;
+	updateAutoIngestSpec: (name: string, u: Partial<AppState["autoIngest"]["specs"][0]>) => void;
+
 	// Code dropdown open states (persists across re-renders)
 	openCodeBlocks: Record<string, boolean>;
 	toggleCodeBlock: (key: string) => void;
@@ -141,7 +157,13 @@ export const useStore = create<AppState>()((set) => ({
 	setTheme: (t) => { applyTheme(t); set({ theme: t }); },
 
 	page: "greg",
-	setPage: (p) => set({ page: p, docsAnchor: p !== "docs" ? null : undefined }),
+	setPage: (p) => {
+		set({ page: p, docsAnchor: p !== "docs" ? null : undefined });
+		if (typeof window !== "undefined") {
+			const hash = p === "greg" ? "/" : `/${p}`;
+			window.history.pushState(null, "", `#${hash}`);
+		}
+	},
 
 	apis: [],
 	setApis: (apis) => set({ apis }),
@@ -149,7 +171,10 @@ export const useStore = create<AppState>()((set) => ({
 	docsApi: "",
 	docsAnchor: null,
 	setDocsApi: (api) => set({ docsApi: api, docsAnchor: null }),
-	viewDocs: (api, method, path, operationId, tag) => set({ page: "docs", docsApi: api, docsAnchor: { method, path, operationId, tag } }),
+	viewDocs: (api, method, path, operationId, tag) => {
+		set({ page: "docs", docsApi: api, docsAnchor: { method, path, operationId, tag } });
+		if (typeof window !== "undefined") window.history.pushState(null, "", "#/docs");
+	},
 
 	chatMessages: [],
 	personality: "greg" as "greg" | "verbose" | "curt",
@@ -232,6 +257,12 @@ export const useStore = create<AppState>()((set) => ({
 	removeIngestJob: (id) => set((s) => ({ ingestJobs: s.ingestJobs.filter((j) => j.id !== id) })),
 	clearDoneJobs: () => set((s) => ({ ingestJobs: s.ingestJobs.filter((j) => j.status === "queued" || j.status === "running") })),
 
+	autoIngest: { active: false, specs: [], currentIndex: 0 },
+	setAutoIngest: (u) => set((s) => ({ autoIngest: { ...s.autoIngest, ...u } })),
+	updateAutoIngestSpec: (name, u) => set((s) => ({
+		autoIngest: { ...s.autoIngest, specs: s.autoIngest.specs.map((sp) => sp.name === name ? { ...sp, ...u } : sp) },
+	})),
+
 	openCodeBlocks: {},
 	toggleCodeBlock: (key) => set((s) => ({
 		openCodeBlocks: { ...s.openCodeBlocks, [key]: !s.openCodeBlocks[key] },
@@ -254,8 +285,9 @@ export const useStore = create<AppState>()((set) => ({
 			const selectedProvider = localStorage.getItem("greg-provider") ?? "";
 			const chatHistory = JSON.parse(localStorage.getItem("greg-history") ?? "[]");
 			const doubleCheck = localStorage.getItem("greg-double-check") === "true";
+			const page = pageFromHash() ?? "greg";
 			applyTheme(theme);
-			set({ theme, personality: personality as "greg" | "verbose" | "curt", selectedModel, selectedProvider, chatHistory, doubleCheck });
+			set({ theme, personality: personality as "greg" | "verbose" | "curt", selectedModel, selectedProvider, chatHistory, doubleCheck, page });
 		} catch {}
 	},
 }));

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Ic } from "../lib/icons";
 import { useStore, nextJobId } from "../store/store";
@@ -75,13 +75,9 @@ async function runIngestStream(
 export default function SettingsPage() {
 	const {
 		apis, setApis,
-		customGregPrompt, customExplainerPrompt, customProPrompt,
-		setCustomGregPrompt, setCustomExplainerPrompt, setCustomProPrompt,
 		ingestJobs, addIngestJob, updateIngestJob, removeIngestJob, clearDoneJobs,
 	} = useStore(useShallow((s) => ({
 		apis: s.apis, setApis: s.setApis,
-		customGregPrompt: s.customGregPrompt, customExplainerPrompt: s.customExplainerPrompt, customProPrompt: s.customProPrompt,
-		setCustomGregPrompt: s.setCustomGregPrompt, setCustomExplainerPrompt: s.setCustomExplainerPrompt, setCustomProPrompt: s.setCustomProPrompt,
 		ingestJobs: s.ingestJobs, addIngestJob: s.addIngestJob, updateIngestJob: s.updateIngestJob, removeIngestJob: s.removeIngestJob, clearDoneJobs: s.clearDoneJobs,
 	})));
 
@@ -91,13 +87,6 @@ export default function SettingsPage() {
 	const [pasteContent, setPasteContent] = useState("");
 	const [pasteFormat, setPasteFormat] = useState<"yaml" | "json">("yaml");
 	const fileRef = useRef<HTMLInputElement>(null);
-	const [promptTab, setPromptTab] = useState<"greg" | "verbose" | "curt">("greg");
-	const [defaultPrompts, setDefaultPrompts] = useState<{ greg: string; explainer: string; professional: string }>({ greg: "", explainer: "", professional: "" });
-
-	useEffect(() => {
-		fetch("/api/prompts").then((r) => r.json()).then(setDefaultPrompts).catch(() => {});
-	}, []);
-
 	const refreshApis = async () => {
 		try {
 			const a = await listApis();
@@ -159,52 +148,8 @@ export default function SettingsPage() {
 	const hasActiveJobs = ingestJobs.some((j) => j.status === "running" || j.status === "queued");
 
 	return (
-		<div className="px-5 py-3.5 h-[calc(100%-3.5rem)] overflow-auto">
-			<div className="max-w-[37.5rem]">
-
-				{/* ── System Prompt ──────────────────────────── */}
-				<div className="mb-6">
-					<div className="settings-section-label">System Prompt</div>
-					<div className="flex gap-[0.1875rem] mb-[0.6875rem]">
-						{(["greg", "curt", "verbose"] as const).map((t) => (
-							<button
-								key={t}
-								onClick={() => setPromptTab(t)}
-								className={`settings-tab-btn${promptTab === t ? " active" : ""}`}
-							>
-								{t === "greg" ? "greg mode" : t}
-							</button>
-						))}
-					</div>
-					<textarea
-						value={promptTab === "greg" ? (customGregPrompt || defaultPrompts.greg) : promptTab === "verbose" ? (customExplainerPrompt || defaultPrompts.explainer) : (customProPrompt || defaultPrompts.professional)}
-						onChange={(e) => {
-							if (promptTab === "greg") setCustomGregPrompt(e.target.value);
-							else if (promptTab === "verbose") setCustomExplainerPrompt(e.target.value);
-							else setCustomProPrompt(e.target.value);
-						}}
-						className="g-input h-[11.25rem] py-[0.6875rem] font-mono text-[0.9375rem] resize-y leading-[1.5]"
-					/>
-					<div className="flex gap-2 mt-1.5">
-						<span className="text-sm text-[var(--g-text-dim)] flex-1">
-							{(promptTab === "greg" ? customGregPrompt : promptTab === "verbose" ? customExplainerPrompt : customProPrompt)
-								? "Using custom prompt"
-								: "Using default prompt"}
-						</span>
-						{(promptTab === "greg" ? customGregPrompt : promptTab === "verbose" ? customExplainerPrompt : customProPrompt) && (
-							<button
-								onClick={() => {
-									if (promptTab === "greg") setCustomGregPrompt("");
-									else if (promptTab === "verbose") setCustomExplainerPrompt("");
-									else setCustomProPrompt("");
-								}}
-								className="text-sm border-none cursor-pointer px-2 py-[0.1875rem] rounded bg-transparent text-[var(--g-text-dim)]"
-							>
-								Reset to default
-							</button>
-						)}
-					</div>
-				</div>
+		<div className="px-5 py-3.5">
+			<div>
 
 				{/* ── Ingest ──────────────────────────────────── */}
 				<div className="mb-6">

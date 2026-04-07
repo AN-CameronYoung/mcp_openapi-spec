@@ -1,19 +1,25 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { listApis } from "./lib/api";
-import { useStore } from "./store/store";
+import { useStore, pageFromHash } from "./store/store";
 import Header from "./components/Header";
 import GregPage from "./pages/GregPage";
 import SearchPage from "./pages/SearchPage";
 import DocsPage from "./pages/DocsPage";
 import SettingsPage from "./pages/SettingsPage";
 import IngestFloat from "./components/IngestFloat";
+import AutoIngestBanner from "./components/AutoIngestBanner";
 
 export default function App() {
-	const { page, setApis, setDocsApi, docsApi, theme, setTheme, hydrateFromStorage } = useStore(
-		useShallow((s) => ({ page: s.page, setApis: s.setApis, setDocsApi: s.setDocsApi, docsApi: s.docsApi, theme: s.theme, setTheme: s.setTheme, hydrateFromStorage: s.hydrateFromStorage }))
+	const { page, setPage, setApis, setDocsApi, docsApi, theme, setTheme, hydrateFromStorage } = useStore(
+		useShallow((s) => ({ page: s.page, setPage: s.setPage, setApis: s.setApis, setDocsApi: s.setDocsApi, docsApi: s.docsApi, theme: s.theme, setTheme: s.setTheme, hydrateFromStorage: s.hydrateFromStorage }))
 	);
+
+	// Track the last non-settings page so content stays visible behind the drawer
+	const lastPageRef = useRef<"greg" | "search" | "docs">("greg");
+	if (page !== "settings") lastPageRef.current = page;
+	const contentPage = lastPageRef.current;
 
 	useEffect(() => {
 		hydrateFromStorage();
@@ -30,6 +36,16 @@ export default function App() {
 			.catch(() => {});
 	}, []);
 
+	// Sync browser back/forward with page state
+	useEffect(() => {
+		const onPopState = () => {
+			const p = pageFromHash();
+			if (p) useStore.setState({ page: p });
+		};
+		window.addEventListener("popstate", onPopState);
+		return () => window.removeEventListener("popstate", onPopState);
+	}, []);
+
 	// Re-apply when system preference changes
 	useEffect(() => {
 		if (theme !== "system") return;
@@ -39,13 +55,40 @@ export default function App() {
 		return () => mq.removeEventListener("change", handler);
 	}, [theme]);
 
+	const showSettings = page === "settings";
+
 	return (
 		<div className="h-screen flex flex-col">
 			<Header />
-			{page === "greg" && <GregPage />}
-			{page === "search" && <SearchPage />}
-			{page === "docs" && <DocsPage />}
-			{page === "settings" && <SettingsPage />}
+			<AutoIngestBanner />
+			{/* Main content — stays visible behind settings drawer */}
+			{contentPage === "greg" && <GregPage />}
+			{contentPage === "search" && <SearchPage />}
+			{contentPage === "docs" && <DocsPage />}
+
+			{/* Settings drawer overlay */}
+			{showSettings && (
+				<>
+					<div
+						className="fixed inset-0 bg-black/40 z-[200] transition-opacity"
+						onClick={() => setPage(contentPage)}
+					/>
+					<div className="fixed top-0 right-0 h-full w-[28rem] max-w-[90vw] bg-[var(--g-bg)] border-l border-[var(--g-border)] z-[201] shadow-[-4px_0_24px_rgba(0,0,0,0.3)] animate-slide-in-right overflow-hidden flex flex-col">
+						<div className="flex items-center justify-between px-5 py-3 border-b border-[var(--g-border)] shrink-0">
+							<span className="text-base font-semibold text-[var(--g-text)]">Settings</span>
+							<button
+								onClick={() => setPage(contentPage)}
+								className="btn-icon p-1"
+							>
+								<svg width={14} height={14} viewBox="0 0 14 14" fill="none"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
+							</button>
+						</div>
+						<div className="flex-1 overflow-auto">
+							<SettingsPage />
+						</div>
+					</div>
+				</>
+			)}
 			<IngestFloat />
 		</div>
 	);

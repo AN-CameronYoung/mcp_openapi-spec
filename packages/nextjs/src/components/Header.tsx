@@ -37,7 +37,6 @@ const TABS = [
 	{ key: "greg" as const, label: "greg", icon: Ic.chat },
 	{ key: "search" as const, label: "Semantic search", icon: Ic.search },
 	{ key: "docs" as const, label: "API docs", icon: Ic.doc },
-	{ key: "settings" as const, label: "Settings", icon: Ic.server },
 ];
 
 export default function Header() {
@@ -83,6 +82,18 @@ export default function Header() {
 				</span>
 				<span className="text-sm text-[var(--g-text-dim)]">{totalEndpoints} endpoints</span>
 				<ThemeToggle />
+				<button
+					onClick={() => setPage("settings")}
+					className={[
+						"flex items-center justify-center w-8 h-8 rounded-md border-none cursor-pointer",
+						page === "settings"
+							? "bg-[var(--g-accent-muted)] text-[var(--g-accent)]"
+							: "bg-transparent text-[var(--g-text-dim)] hover:text-[var(--g-text)]",
+					].join(" ")}
+					title="Settings"
+				>
+					{Ic.gear(16)}
+				</button>
 			</div>
 		</div>
 	);

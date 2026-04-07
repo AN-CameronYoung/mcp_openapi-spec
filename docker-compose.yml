@@ -1,12 +1,14 @@
 services:
   chromadb:
     image: chromadb/chroma:latest
+    container_name: chromadb
     volumes:
       - chroma_data:/chroma/chroma
     ports:
       - "8000:8000"
 
   mcp-server:
+    container_name: mcp
     build:
       context: .
       dockerfile: packages/mcp-server/Dockerfile
@@ -31,6 +33,8 @@ services:
       - chromadb
 
   nextjs:
+    tty: true
+    container_name: greg
     build:
       context: .
       dockerfile: packages/nextjs/Dockerfile

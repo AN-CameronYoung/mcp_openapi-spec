@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect } from "react";
+import { use, useCallback, useEffect, useRef } from "react";
 import SwaggerUI from "swagger-ui-react";
 import "swagger-ui-react/swagger-ui.css";
 import "./swagger-theme.css";
@@ -10,9 +10,13 @@ interface Props {
 	searchParams: Promise<{ method?: string; path?: string; theme?: string }>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SwaggerSystem = any;
+
 export default function DocsPage({ params, searchParams }: Props) {
 	const { apiName } = use(params);
 	const { method, path, theme = "dark" } = use(searchParams);
+	const systemRef = useRef<SwaggerSystem>(null);
 
 	useEffect(() => {
 		if (theme === "light") {
@@ -22,60 +26,76 @@ export default function DocsPage({ params, searchParams }: Props) {
 		}
 	}, [theme]);
 
-	useEffect(() => {
-		if (!method || !path) return;
-		const tryScroll = (attempts = 0) => {
-			const m = method.toLowerCase();
-			// SwaggerUI IDs: operations-{tag}-{method}{path_with_slashes_and_braces_as_underscores}
-			// e.g. GET /ip/address/{id} → operations-ip-get_ip_address__id_
-			const pathSlug = path.replace(/[{}]/g, "_").replace(/\//g, "_");
-			const candidates = document.querySelectorAll<HTMLElement>(`[id^="operations-"]`);
-			let target: HTMLElement | null = null;
+	function expandAndScroll(m: string, p: string) {
+		const sys = systemRef.current;
+		if (!sys) return;
+
+		const mLower = m.toLowerCase();
+		const pathSlug = p.replace(/[{}]/g, "_").replace(/\//g, "_");
+
+		// Find the matching operation's tag and operationId from the DOM element IDs
+		const candidates = document.querySelectorAll<HTMLElement>(`[id^="operations-"]`);
+		let targetId = "";
+		let targetEl: HTMLElement | null = null;
+		for (const el of candidates) {
+			if (el.id.includes(`-${mLower}`) && el.id.endsWith(pathSlug)) {
+				targetId = el.id;
+				targetEl = el;
+				break;
+			}
+		}
+		// Fallback: looser match
+		if (!targetEl) {
 			for (const el of candidates) {
-				if (el.id.includes(`-${m}`) && el.id.endsWith(pathSlug)) {
-					target = el;
+				if (el.id.includes(`-${mLower}`) && el.id.includes(pathSlug.replace(/_+$/, ""))) {
+					targetId = el.id;
+					targetEl = el;
 					break;
 				}
 			}
-			// Fallback: looser match (path may have trailing underscores or slight variation)
-			if (!target) {
-				for (const el of candidates) {
-					if (el.id.includes(`-${m}`) && el.id.includes(pathSlug.replace(/_+$/, ""))) {
-						target = el;
-						break;
-					}
-				}
-			}
-			if (!target) {
-				if (attempts < 25) setTimeout(() => tryScroll(attempts + 1), 300);
-				return;
-			}
+		}
+		if (!targetId) return;
 
-			// Expand parent tag section if it's collapsed
-			const tagSection = target.closest<HTMLElement>(".opblock-tag-section");
-			if (tagSection) {
-				const isCollapsed = !tagSection.querySelector(".opblock-tag[data-is-open='true'], .opblock");
-				if (isCollapsed) {
-					tagSection.querySelector<HTMLElement>(".opblock-tag button, h4.opblock-tag")?.click();
-					// Re-run after expansion animation
-					setTimeout(() => tryScroll(attempts), 400);
-					return;
-				}
+		// Parse tag and operationId from the element ID: "operations-{tag}-{operationId}"
+		const withoutPrefix = targetId.replace("operations-", "");
+		const firstDash = withoutPrefix.indexOf("-");
+		const tag = withoutPrefix.substring(0, firstDash);
+		const operationId = withoutPrefix.substring(firstDash + 1);
+
+		// Use Swagger UI's internal layout actions to expand
+		sys.layoutActions.show(["operations-tag", tag], true);
+		sys.layoutActions.show(["operations", tag, operationId], true);
+
+		// Scroll after React re-renders
+		setTimeout(() => {
+			targetEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+		}, 100);
+	}
+
+	const onComplete = useCallback(
+		(system: SwaggerSystem) => {
+			systemRef.current = system;
+			// Expand initial endpoint from URL params
+			if (method && path) {
+				// Wait for Swagger UI to fully render
+				setTimeout(() => expandAndScroll(method, path), 1200);
 			}
+		},
+		[method, path],
+	);
 
-			target.scrollIntoView({ behavior: "smooth", block: "start" });
-
-			// Expand the operation if it's collapsed
-			const opblock = target.querySelector<HTMLElement>(".opblock");
-			if (opblock && !opblock.classList.contains("is-open")) {
-				opblock.querySelector<HTMLElement>(".opblock-summary")?.click();
+	// Listen for postMessage from parent to scroll to a different endpoint
+	useEffect(() => {
+		function handleMessage(event: MessageEvent) {
+			if (event.data?.type === "scrollToEndpoint" && event.data.method && event.data.path) {
+				expandAndScroll(event.data.method, event.data.path);
 			}
-		};
-		setTimeout(() => tryScroll(), 1200);
-	}, [method, path]);
+		}
+		window.addEventListener("message", handleMessage);
+		return () => window.removeEventListener("message", handleMessage);
+	}, []);
 
-	// Try yaml first, fall back to json
 	const specUrl = `/openapi/specs/${apiName}.yaml`;
 
-	return <SwaggerUI url={specUrl} tryItOutEnabled={false} />;
+	return <SwaggerUI url={specUrl} tryItOutEnabled={false} onComplete={onComplete} />;
 }
