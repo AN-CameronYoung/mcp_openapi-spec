@@ -1,11 +1,7 @@
 {
 	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
-		"outDir": "./dist",
-		"baseUrl": ".",
-		"paths": {
-			"#types/*": ["../shared/types/*"]
-		}
+		"outDir": "./dist"
 	},
-	"include": ["src", "main.ts", "scripts"]
+	"include": ["src", "main.ts"]
 }
