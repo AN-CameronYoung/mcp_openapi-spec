@@ -1088,7 +1088,55 @@ export default function GregPage() {
 	};
 
 	return (
-		<div className="px-6 py-5 h-[calc(100%-3.5rem)] flex flex-col">
+		<div className="h-[calc(100%-3.5rem)] flex">
+			{/* Chat history sidebar — full height */}
+			{sidebarOpen && (
+				<div className="w-[16.25rem] shrink-0 bg-[var(--g-surface)] border-r border-[var(--g-border)] overflow-auto flex flex-col px-2.5 py-3">
+					<div className="flex items-center mb-2.5">
+						<span className="text-[0.9375rem] font-semibold text-[var(--g-text)] flex-1">History</span>
+						<Button variant="ghost" size="icon-xs" onClick={handleNewChat} className="text-[var(--g-accent)]" title="New chat">
+							{Ic.plus(14)}
+						</Button>
+						<Button variant="ghost" size="icon-xs" onClick={() => setSidebarOpen(false)}>
+							{Ic.x(14)}
+						</Button>
+					</div>
+					{chatHistory.length === 0 && (
+						<span className="text-[0.8125rem] text-[var(--g-text-dim)]">No chats yet</span>
+					)}
+					{chatHistory.map((chat) => {
+						const isActive = chat.id === useStore.getState().activeChatId;
+						return (
+							<div
+								key={chat.id}
+								onClick={() => loadChat(chat.id)}
+								className="flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer mb-0.5 transition-colors duration-100"
+								style={{
+									background: isActive ? "var(--g-surface-active)" : "transparent",
+									borderLeft: isActive ? "2px solid var(--g-accent)" : "2px solid transparent",
+								}}
+								onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "var(--g-surface-hover)"; }}
+								onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+							>
+								<span className="text-[0.8125rem] text-[var(--g-text)] flex-1 truncate">
+									{chat.title}
+								</span>
+								<Button
+									variant="ghost"
+									size="icon-xs"
+									onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}
+									className="shrink-0 opacity-50"
+								>
+									{Ic.x(11)}
+								</Button>
+							</div>
+						);
+					})}
+				</div>
+			)}
+
+			{/* Right column */}
+			<div className="flex-1 min-w-0 flex flex-col px-6 py-5">
 			{/* Chat header */}
 			<div className="flex items-center gap-4 mb-5 shrink-0">
 				<div
@@ -1101,8 +1149,6 @@ export default function GregPage() {
 						<path d="M6.5 13.5h7" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
 					</svg>
 				</div>
-				<span className="text-[1.375rem] font-semibold transition-colors duration-150" style={{ color: PERSONALITY_COLOR[personality] }}>greg</span>
-				<span className="text-[0.8125rem] text-[var(--g-text-dim)]">{personality === "greg" ? "casual · finds endpoints fast" : personality === "curt" ? "minimal · straight answers" : "thorough · explains how & why"}</span>
 				<span className="flex-1" />
 
 				{/* Personality selector */}
@@ -1168,57 +1214,7 @@ export default function GregPage() {
 				</button>
 			</div>
 
-			{/* Main layout: sidebar + chat */}
-			<div className="flex flex-1 min-h-0">
-
-			{/* Chat history sidebar */}
-			{sidebarOpen && (
-				<div className="w-[16.25rem] shrink-0 bg-[var(--g-surface)] border-r border-[var(--g-border)] overflow-auto px-2.5 py-3">
-					<div className="flex items-center mb-2.5">
-						<span className="text-[0.9375rem] font-semibold text-[var(--g-text)] flex-1">History</span>
-						<Button variant="ghost" size="icon-xs" onClick={handleNewChat} className="text-[var(--g-accent)]" title="New chat">
-							{Ic.plus(14)}
-						</Button>
-						<Button variant="ghost" size="icon-xs" onClick={() => setSidebarOpen(false)}>
-							{Ic.x(14)}
-						</Button>
-					</div>
-					{chatHistory.length === 0 && (
-						<span className="text-[0.8125rem] text-[var(--g-text-dim)]">No chats yet</span>
-					)}
-					{chatHistory.map((chat) => {
-						const isActive = chat.id === useStore.getState().activeChatId;
-						return (
-							<div
-								key={chat.id}
-								onClick={() => loadChat(chat.id)}
-								className="flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer mb-0.5 transition-colors duration-100"
-								style={{
-									background: isActive ? "var(--g-surface-active)" : "transparent",
-									borderLeft: isActive ? "2px solid var(--g-accent)" : "2px solid transparent",
-								}}
-								onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "var(--g-surface-hover)"; }}
-								onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-							>
-								<span className="text-[0.8125rem] text-[var(--g-text)] flex-1 truncate">
-									{chat.title}
-								</span>
-								<Button
-									variant="ghost"
-									size="icon-xs"
-									onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}
-									className="shrink-0 opacity-50"
-								>
-									{Ic.x(11)}
-								</Button>
-							</div>
-						);
-					})}
-				</div>
-			)}
-
-			{/* Main area */}
-			<div className="flex-1 min-w-0 flex flex-col px-5">
+			{/* Messages + detail panel */}
 			<div className="flex gap-5 flex-1 min-h-0">
 				{/* Messages */}
 				<div className="flex-1 min-w-0 flex flex-col relative">
@@ -1277,6 +1273,9 @@ export default function GregPage() {
 
 					{/* Input */}
 					<div className="mt-3 shrink-0">
+						<div className="text-[0.75rem] text-[var(--g-text-dim)] mb-1.5 px-0.5">
+							{personality === "greg" ? "finds endpoints fast" : personality === "curt" ? "straight answers" : "explains how & why"}
+						</div>
 						<InputBoxWrapper personality={personality}>
 						<textarea
 							rows={1}
@@ -1316,12 +1315,11 @@ export default function GregPage() {
 			</div>
 			</div>
 
-			{/* Debug panel — sibling to main area, right edge of the top-level flex row */}
+			{/* Debug panel — sibling to right column */}
 			{debugMsgIdx !== null && (() => {
 				const msg = chatMessages[debugMsgIdx];
 				return msg ? <DebugPanel entries={msg.debug ?? []} model={msg.model} onClose={() => setDebugMsgIdx(null)} /> : null;
 			})()}
-			</div>
 		</div>
 	);
 }
