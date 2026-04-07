@@ -60,10 +60,10 @@ export default function App() {
 	return (
 		<div className="h-screen flex flex-col">
 			<Header />
-			{/* Main content — stays visible behind settings drawer */}
-			{contentPage === "greg" && <GregPage />}
-			{contentPage === "search" && <SearchPage />}
-			{contentPage === "docs" && <DocsPage />}
+			{/* Always mounted so DocsPage iframe survives tab switches */}
+			<div className={contentPage === "greg" ? "contents" : "hidden"}><GregPage /></div>
+			<div className={contentPage === "search" ? "contents" : "hidden"}><SearchPage /></div>
+			<div className={contentPage === "docs" ? "contents" : "hidden"}><DocsPage /></div>
 
 			{/* Settings drawer */}
 			<Sheet open={showSettings} onOpenChange={(open) => { if (!open) setPage(contentPage); }}>
