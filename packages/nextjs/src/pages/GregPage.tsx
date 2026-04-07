@@ -709,7 +709,7 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint, onShow
 					style={{
 						background: msg.role === "user" ? "var(--g-user-bg)" : bubbleStyle.bg,
 						border: `1px solid ${msg.role === "user" ? "var(--g-border-accent)" : bubbleStyle.border}`,
-						color: msg.role === "user" ? "var(--g-text)" : "var(--g-text-muted)",
+						color: "var(--g-text)",
 					}}
 				>
 					{msg.role === "user" ? (
