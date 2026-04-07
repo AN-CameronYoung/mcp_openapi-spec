@@ -286,7 +286,7 @@ function stableKey(s: string): string {
 	return String(h >>> 0);
 }
 
-const mdComponents = (msgKey: number, langMap: Record<string, string>) => ({
+const mdComponents = (msgKey: number | string, langMap: Record<string, string>) => ({
 	code({ className, children }: { className?: string; children?: React.ReactNode }) {
 		const match = /language-(\w+)/.exec(String(className ?? ""));
 		const code = String(children ?? "").replace(/\n$/, "");
@@ -353,7 +353,7 @@ function LiDropdown({ children, index }: { children?: React.ReactNode; index: nu
 	);
 }
 
-function SectionDropdown({ title, body, msgKey, langMap, defaultOpen }: { title: string; body: string; msgKey: number; langMap: Record<string, string>; defaultOpen: boolean }) {
+function SectionDropdown({ title, body, msgKey, langMap, defaultOpen }: { title: string; body: string; msgKey: number | string; langMap: Record<string, string>; defaultOpen: boolean }) {
 	const [open, setOpen] = useState(defaultOpen);
 	return (
 		<div style={{ marginBottom: 6 }}>
@@ -1066,8 +1066,8 @@ export default function GregPage() {
 						updateLastAssistant((m) => ({ ...m, text: accumulated }));
 						break;
 					case "debug":
-						debugLog.push(event);
-						if ((event as { event?: string }).event === "verification_start") {
+						debugLog.push(event as unknown as Record<string, unknown>);
+						if (event.event === "verification_start") {
 							// Greg is done, verification is starting — render Greg's markdown, show checking indicator
 							const eps = [...endpointMap.values()];
 							updateLastAssistant((m) => ({

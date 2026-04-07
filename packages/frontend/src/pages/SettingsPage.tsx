@@ -208,7 +208,7 @@ export default function SettingsPage() {
 						))}
 					</div>
 					<textarea
-						value={promptTab === "greg" ? (customGregPrompt || defaultPrompts.greg) : promptTab === "verbose" ? (customExplainerPrompt || defaultPrompts.verbose) : (customProPrompt || defaultPrompts.curt)}
+						value={promptTab === "greg" ? (customGregPrompt || defaultPrompts.greg) : promptTab === "verbose" ? (customExplainerPrompt || defaultPrompts.explainer) : (customProPrompt || defaultPrompts.professional)}
 						onChange={(e) => {
 							if (promptTab === "greg") setCustomGregPrompt(e.target.value);
 							else if (promptTab === "verbose") setCustomExplainerPrompt(e.target.value);
@@ -311,6 +311,7 @@ export default function SettingsPage() {
 								value={url}
 								onChange={(e) => setUrl(e.target.value)}
 								onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+								autoComplete="off"
 								style={inputStyle}
 							/>
 						</div>

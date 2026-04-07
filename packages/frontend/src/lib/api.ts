@@ -40,12 +40,13 @@ export interface EndpointCard {
 }
 
 export interface ChatSSEEvent {
-	type: "text" | "endpoints" | "done" | "error" | "verification_text" | "verification_done";
+	type: "text" | "endpoints" | "done" | "error" | "verification_text" | "verification_done" | "debug";
 	text?: string;
 	data?: EndpointCard[];
 	error?: string;
 	model?: string;
 	provider?: string;
+	event?: string;
 	usage?: { input: number; output: number };
 	verificationUsage?: { input: number; output: number };
 }

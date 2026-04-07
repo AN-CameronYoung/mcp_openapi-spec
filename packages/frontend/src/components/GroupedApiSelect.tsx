@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import { C } from "../lib/constants";
 import type { ApiInfo } from "../lib/api";
 
@@ -105,7 +105,7 @@ export default function GroupedApiSelect({
 		setHoveredGroup(null);
 	};
 
-	const triggerStyle = {
+	const triggerStyle: React.CSSProperties = {
 		display: "flex",
 		alignItems: "center",
 		gap: 6,
@@ -126,7 +126,7 @@ export default function GroupedApiSelect({
 		textOverflow: "ellipsis",
 	};
 
-	const dropdownStyle = {
+	const dropdownStyle: React.CSSProperties = {
 		position: "absolute",
 		top: "calc(100% + 3px)",
 		left: 0,
@@ -153,7 +153,7 @@ export default function GroupedApiSelect({
 		whiteSpace: "nowrap",
 	});
 
-	const flyoutStyle = {
+	const flyoutStyle: React.CSSProperties = {
 		position: "absolute",
 		left: "100%",
 		top: -1,

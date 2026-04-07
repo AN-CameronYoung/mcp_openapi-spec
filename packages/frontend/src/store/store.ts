@@ -131,7 +131,7 @@ interface AppState {
 	setDetail: (item: SearchResult | EndpointCard | null, type?: "endpoints" | "schemas") => void;
 }
 
-export const useStore = create<AppState>((set) => ({
+export const useStore = create<AppState>()((set) => ({
 	theme: getStoredTheme(),
 	setTheme: (t) => { applyTheme(t); set({ theme: t }); },
 
