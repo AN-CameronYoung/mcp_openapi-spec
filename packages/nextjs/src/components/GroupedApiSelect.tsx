@@ -63,28 +63,29 @@ function MenuItem({
 	selected,
 	onClick,
 	className,
-	children,
 }: {
 	label: string;
 	detail?: React.ReactNode;
 	selected?: boolean;
 	onClick?: () => void;
 	className?: string;
-	children?: React.ReactNode;
 }) {
 	return (
 		<div
 			onClick={onClick}
 			className={cn(
-				"flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-pointer hover:bg-muted",
-				selected && "bg-accent",
+				"flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-pointer",
+				"hover:bg-[var(--g-surface-hover)]",
+				selected && "bg-[var(--g-accent-dim)]",
 				className,
 			)}
 		>
 			<span className="flex-1 truncate">{label}</span>
 			{detail}
-			{selected && <Check className="size-3.5 shrink-0" />}
-			{children}
+			{/* spacer aligns with the chevron on group rows */}
+			<span className="size-3.5 shrink-0 flex items-center justify-center">
+				{selected && <Check className="size-3 text-[var(--g-accent)]" />}
+			</span>
 		</div>
 	);
 }
@@ -104,47 +105,44 @@ function FlyoutGroup({
 }) {
 	const [hovered, setHovered] = useState(false);
 	const rowRef = useRef<HTMLDivElement>(null);
-	const [flyoutStyle, setFlyoutStyle] = useState<React.CSSProperties>({});
+	const [flyoutPos, setFlyoutPos] = useState({ top: 0, left: 0 });
 	const hasSelected = entry.children.some((c) => c.name === value);
-
-	useEffect(() => {
-		if (hovered && rowRef.current) {
-			const rect = rowRef.current.getBoundingClientRect();
-			setFlyoutStyle({
-				position: "fixed",
-				top: rect.top,
-				left: rect.right + 6,
-				zIndex: 200,
-			});
-		}
-	}, [hovered]);
 
 	return (
 		<div
 			ref={rowRef}
-			onMouseEnter={() => setHovered(true)}
+			onMouseEnter={() => {
+				if (rowRef.current) {
+					const rect = rowRef.current.getBoundingClientRect();
+					setFlyoutPos({ top: rect.top, left: rect.right + 6 });
+				}
+				setHovered(true);
+			}}
 			onMouseLeave={() => setHovered(false)}
 		>
 			<div
 				className={cn(
-					"flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-pointer hover:bg-muted",
-					(hovered || hasSelected) && "bg-muted",
+					"flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-pointer",
+					"hover:bg-[var(--g-surface-hover)]",
+					(hovered || hasSelected) && "bg-[var(--g-surface-hover)]",
 				)}
 			>
-				<span className="flex-1 truncate font-medium">{entry.name}</span>
-				<span className="text-xs text-muted-foreground">{entry.children.length}</span>
+				<span className="flex-1 truncate">{entry.name}</span>
+				<span className="text-xs text-muted-foreground shrink-0">{entry.children.length}</span>
 				<ChevronRight className="size-3.5 opacity-50 shrink-0" />
 			</div>
 
 			{hovered && (
-				<div style={flyoutStyle} className="min-w-48 rounded-lg border border-border bg-popover p-1 shadow-md">
-					{/* Arrow */}
+				<div
+					style={{ position: "fixed", top: flyoutPos.top, left: flyoutPos.left, zIndex: 200 }}
+					className="min-w-44 rounded-lg border border-border bg-popover p-1 shadow-md"
+				>
 					<div className="absolute -left-[5px] top-2.5 size-2.5 rotate-45 border-l border-b border-border bg-popover" />
 					{entry.children.map((child) => (
 						<MenuItem
 							key={child.name}
 							label={child.name}
-							detail={<span className="text-xs text-muted-foreground">{child.endpoints}</span>}
+							detail={<span className="text-xs text-muted-foreground shrink-0">{child.endpoints}</span>}
 							selected={value === child.name}
 							onClick={() => onSelect(child.name)}
 						/>
@@ -231,7 +229,7 @@ export default function GroupedApiSelect({
 					<ChevronsUpDown className="opacity-50" />
 				</Button>
 			</PopoverTrigger>
-			<PopoverContent className="p-1" style={{ minWidth: Math.max(minWidth, 200) }} align="start">
+			<PopoverContent className="p-1 w-auto" style={{ minWidth: Math.max(minWidth, 180) }} align="start">
 				{/* Search filter */}
 				<div className="px-1 pb-1">
 					<input
