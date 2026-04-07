@@ -5,7 +5,7 @@ import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
 import json from "react-syntax-highlighter/dist/esm/languages/prism/json";
 SyntaxHighlighter.registerLanguage("bash", bash);
 SyntaxHighlighter.registerLanguage("json", json);
-import { C, METHOD_COLORS } from "../lib/constants";
+import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
 import ScoreBar from "./ScoreBar";
 import { useStore } from "../store/store";
@@ -24,21 +24,15 @@ interface DetailItem {
 }
 
 function PBadge({ type }: { type: string }) {
-	const c = type === "path"
-		? { bg: "rgba(251,191,36,0.08)", text: "#FBBF24" }
-		: { bg: "rgba(129,140,248,0.08)", text: "#818CF8" };
+	const isPath = type === "path";
 	return (
 		<span
-			style={{
-				fontSize: 11,
-				padding: "1px 7px",
-				borderRadius: 4,
-				background: c.bg,
-				color: c.text,
-				fontFamily: "monospace",
-				textTransform: "uppercase",
-				letterSpacing: "0.05em",
-			}}
+			className={[
+				"text-[0.6875rem] px-[0.4375rem] py-px rounded font-mono uppercase tracking-[0.05em]",
+				isPath
+					? "bg-[rgba(251,191,36,0.08)] text-[#FBBF24]"
+					: "bg-[rgba(129,140,248,0.08)] text-[#818CF8]",
+			].join(" ")}
 		>
 			{type}
 		</span>
@@ -47,18 +41,7 @@ function PBadge({ type }: { type: string }) {
 
 function CodeBlock({ lines, nameColor }: { lines: string[]; nameColor: string }) {
 	return (
-		<div
-			style={{
-				fontFamily: "monospace",
-				fontSize: 12,
-				color: C.textMuted,
-				background: C.bg,
-				borderRadius: 4,
-				padding: "8px 11px",
-				lineHeight: 1.7,
-				overflowX: "auto",
-			}}
-		>
+		<div className="font-mono text-xs text-[var(--g-text-muted)] bg-[var(--g-bg)] rounded p-2 py-[0.6875rem] leading-[1.7] overflow-x-auto">
 			{"{"}
 			<br />
 			{lines.map((f, i) => {
@@ -66,9 +49,9 @@ function CodeBlock({ lines, nameColor }: { lines: string[]; nameColor: string })
 				const name = colonIdx >= 0 ? f.slice(0, colonIdx) : f;
 				const type = colonIdx >= 0 ? f.slice(colonIdx) : "";
 				return (
-					<div key={i} style={{ paddingLeft: 20 }}>
+					<div key={i} className="pl-5">
 						<span style={{ color: nameColor }}>{name}</span>
-						<span style={{ color: C.textDim }}>{type}</span>
+						<span className="text-[var(--g-text-dim)]">{type}</span>
 						{i < lines.length - 1 ? "," : ""}
 					</div>
 				);
@@ -107,18 +90,18 @@ function CurlExample({ method, path, params }: {
 
 	return (
 		<div>
-			<div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-				<div style={{ fontSize: 12, fontWeight: 600, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+			<div className="flex items-center gap-1.5 mb-1.5">
+				<div className="text-xs font-semibold text-[var(--g-text-dim)] uppercase tracking-[0.06em]">
 					Example
 				</div>
 				<button
 					onClick={() => navigator.clipboard?.writeText(curl)}
-					style={{ display: "flex", border: "none", cursor: "pointer", padding: 2, background: "transparent", color: C.textDim, borderRadius: 4, marginLeft: "auto" }}
+					className="btn-icon ml-auto"
 				>
 					{Ic.copy()}
 				</button>
 			</div>
-			<SyntaxHighlighter style={oneDark} language="bash" PreTag="div" wrapLongLines customStyle={{ margin: 0, borderRadius: 4, fontSize: 11, background: C.bg }} codeTagProps={{ style: { background: C.bg } }}>
+			<SyntaxHighlighter style={oneDark} language="bash" PreTag="div" wrapLongLines customStyle={{ margin: 0, borderRadius: 4, fontSize: 11, background: "var(--g-bg)" }} codeTagProps={{ style: { background: "var(--g-bg)" } }}>
 				{curl}
 			</SyntaxHighlighter>
 		</div>
@@ -130,40 +113,27 @@ function ResponseDropdown({ content }: { content: string }) {
 	const isJson = content.trimStart().startsWith("{") || content.trimStart().startsWith("[");
 
 	return (
-		<div style={{ marginBottom: 14 }}>
+		<div className="mb-3.5">
 			<button
 				onClick={() => setOpen(!open)}
-				style={{
-					display: "flex",
-					alignItems: "center",
-					gap: 6,
-					fontSize: 12,
-					fontWeight: 600,
-					color: C.textDim,
-					background: "transparent",
-					border: "none",
-					cursor: "pointer",
-					padding: 0,
-					textTransform: "uppercase",
-					letterSpacing: "0.06em",
-				}}
+				className="flex items-center gap-1.5 text-xs font-semibold text-[var(--g-text-dim)] bg-transparent border-none cursor-pointer p-0 uppercase tracking-[0.06em]"
 			>
 				Response
-				<span style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s", display: "flex" }}>
+				<span className={open ? "rotate-180 flex transition-transform duration-150" : "rotate-0 flex transition-transform duration-150"}>
 					<svg width={10} height={10} viewBox="0 0 10 10" fill="none">
 						<path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
 					</svg>
 				</span>
 			</button>
 			{open && (
-				<div style={{ marginTop: 6 }}>
+				<div className="mt-1.5">
 					<SyntaxHighlighter
 						style={oneDark}
 						language={isJson ? "json" : "text"}
 						PreTag="div"
 						wrapLongLines
-						customStyle={{ margin: 0, borderRadius: 4, fontSize: 11, background: C.bg }}
-						codeTagProps={{ style: { background: C.bg } }}
+						customStyle={{ margin: 0, borderRadius: 4, fontSize: 11, background: "var(--g-bg)" }}
+						codeTagProps={{ style: { background: "var(--g-bg)" } }}
 					>
 						{content}
 					</SyntaxHighlighter>
@@ -268,131 +238,56 @@ export default function DetailPanel({
 	}
 
 	return (
-		<div style={{ background: C.surface, borderRadius: 6, border: `1px solid ${C.borderAccent}` }}>
+		<div className="bg-[var(--g-surface)] rounded-md border border-[var(--g-border-accent)]">
 			{/* Header */}
-			<div
-				style={{
-					padding: "11px 14px",
-					borderBottom: `1px solid ${C.border}`,
-					display: "flex",
-					alignItems: "center",
-					gap: 8,
-				}}
-			>
-				<span
-					style={{
-						fontSize: 12,
-						fontWeight: 600,
-						color: C.textDim,
-						textTransform: "uppercase",
-						letterSpacing: "0.05em",
-					}}
-				>
+			<div className="px-3.5 py-[0.6875rem] border-b border-[var(--g-border)] flex items-center gap-2">
+				<span className="text-xs font-semibold text-[var(--g-text-dim)] uppercase tracking-[0.05em]">
 					{isEp ? "Endpoint" : "Schema"}
 				</span>
-				<span style={{ flex: 1 }} />
+				<span className="flex-1" />
 				{isEp && (
 					<button
 						onClick={() => viewDocs(item.api, item.method ?? "GET", item.path ?? "", item.operation_id, item.tags?.split(",")[0]?.trim())}
-						style={{
-							display: "flex",
-							alignItems: "center",
-							gap: 4,
-							fontSize: 12,
-							fontWeight: 500,
-							border: "none",
-							cursor: "pointer",
-							padding: "4px 10px",
-							borderRadius: 4,
-							background: C.accentMuted,
-							color: C.accent,
-						}}
+						className="flex items-center gap-1 text-xs font-medium border-none cursor-pointer px-2.5 py-1 rounded bg-[var(--g-accent-muted)] text-[var(--g-accent)]"
 					>
 						{Ic.doc(14)} Docs {Ic.arr(13)}
 					</button>
 				)}
 				<button
 					onClick={onClose}
-					style={{
-						display: "flex",
-						border: "none",
-						cursor: "pointer",
-						padding: 3,
-						background: "transparent",
-						color: C.textDim,
-						borderRadius: 4,
-					}}
+					className="btn-icon p-[0.1875rem]"
 				>
 					{Ic.x()}
 				</button>
 			</div>
 
 			{/* Body */}
-			<div style={{ padding: 14 }}>
+			<div className="p-3.5">
 				{isEp ? (
 					<>
 						{/* Method + API + Score */}
-						<div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8, flexWrap: "wrap" }}>
+						<div className="flex items-center gap-[0.4375rem] mb-2 flex-wrap">
 							<span
-								style={{
-									fontSize: 12,
-									fontWeight: 600,
-									padding: "1px 8px",
-									borderRadius: 4,
-									fontFamily: "monospace",
-									background: m!.bg,
-									color: m!.text,
-									border: `1px solid ${m!.border}`,
-								}}
+								className="method-badge"
+								style={{ background: m!.bg, color: m!.text, border: `1px solid ${m!.border}` }}
 							>
 								{item.method}
 							</span>
-							<span
-								style={{
-									fontSize: 12,
-									padding: "1px 7px",
-									borderRadius: 4,
-									background: C.accentDim,
-									color: C.accent,
-									fontWeight: 500,
-									display: "flex",
-									alignItems: "center",
-									gap: 3,
-								}}
-							>
-								<span style={{ opacity: 0.5, display: "flex" }}>{Ic.tag()}</span>
+							<span className="api-badge">
+								<span className="opacity-50 flex">{Ic.tag()}</span>
 								{item.api}
 							</span>
 							{item.score != null && <ScoreBar score={item.score} />}
 						</div>
 
 						{/* Path */}
-						<div
-							style={{
-								background: C.bg,
-								borderRadius: 4,
-								padding: "7px 11px",
-								marginBottom: 11,
-								display: "flex",
-								alignItems: "center",
-								gap: 6,
-							}}
-						>
-							<code style={{ fontSize: 12, fontFamily: "monospace", color: C.text, flex: 1, wordBreak: "break-all" }}>
+						<div className="flex items-center gap-1.5 bg-[var(--g-bg)] rounded px-[0.6875rem] py-[0.4375rem] mb-[0.6875rem]">
+							<code className="text-xs font-mono text-[var(--g-text)] flex-1 break-all">
 								{item.path}
 							</code>
 							<button
 								onClick={() => navigator.clipboard?.writeText(item.path ?? "")}
-								style={{
-									display: "flex",
-									border: "none",
-									cursor: "pointer",
-									padding: 3,
-									background: "transparent",
-									color: C.textDim,
-									borderRadius: 4,
-									flexShrink: 0,
-								}}
+								className="btn-icon shrink-0"
 							>
 								{Ic.copy()}
 							</button>
@@ -400,44 +295,30 @@ export default function DetailPanel({
 
 						{/* Description */}
 						{fullDescription && (
-							<p style={{ fontSize: 12, color: C.textMuted, margin: "0 0 14px", lineHeight: 1.5 }}>
+							<p className="text-xs text-[var(--g-text-muted)] mb-3.5 leading-[1.5] m-0">
 								{fullDescription}
 							</p>
 						)}
 
 						{/* Parameters */}
 						{params.length > 0 && (
-							<div style={{ marginBottom: 14 }}>
-								<div
-									style={{
-										fontSize: 12,
-										fontWeight: 600,
-										color: C.textDim,
-										textTransform: "uppercase",
-										letterSpacing: "0.06em",
-										marginBottom: 6,
-									}}
-								>
+							<div className="mb-3.5">
+								<div className="text-xs font-semibold text-[var(--g-text-dim)] uppercase tracking-[0.06em] mb-1.5">
 									Parameters
 								</div>
 								{params.map((p, j) => (
 									<div
 										key={j}
-										style={{
-											display: "flex",
-											alignItems: "center",
-											gap: 7,
-											fontSize: 12,
-											padding: "6px 8px",
-											background: j % 2 === 0 ? C.bg : "transparent",
-											borderRadius: 4,
-										}}
+										className={[
+											"flex items-center gap-[0.4375rem] text-xs px-2 py-1.5 rounded",
+											j % 2 === 0 ? "bg-[var(--g-bg)]" : "bg-transparent",
+										].join(" ")}
 									>
 										<PBadge type={p.in} />
-										<code style={{ fontFamily: "monospace", color: C.text, fontWeight: 500 }}>{p.name}</code>
-										<span style={{ color: C.textDim, fontSize: 14 }}>{p.type}</span>
-										{p.required && <span style={{ fontSize: 11, color: "#F87171" }}>req</span>}
-										<span style={{ color: C.textDim, marginLeft: "auto", fontSize: 14 }}>{p.desc}</span>
+										<code className="font-mono text-[var(--g-text)] font-medium">{p.name}</code>
+										<span className="text-[var(--g-text-dim)] text-sm">{p.type}</span>
+										{p.required && <span className="text-[0.6875rem] text-[#F87171]">req</span>}
+										<span className="text-[var(--g-text-dim)] ml-auto text-sm">{p.desc}</span>
 									</div>
 								))}
 							</div>
@@ -450,51 +331,26 @@ export default function DetailPanel({
 				) : (
 					<>
 						{/* Schema header */}
-						<div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
-							<span style={{ display: "flex", color: C.accent, opacity: 0.5 }}>{Ic.cube(18)}</span>
-							<span style={{ fontSize: 14, fontWeight: 600, fontFamily: "monospace", color: C.text }}>
+						<div className="flex items-center gap-[0.4375rem] mb-2">
+							<span className="flex text-[var(--g-accent)] opacity-50">{Ic.cube(18)}</span>
+							<span className="text-sm font-semibold font-mono text-[var(--g-text)]">
 								{item.name}
 							</span>
-							<span
-								style={{
-									fontSize: 12,
-									padding: "1px 7px",
-									borderRadius: 4,
-									background: C.accentDim,
-									color: C.accent,
-									fontWeight: 500,
-									display: "flex",
-									alignItems: "center",
-									gap: 3,
-								}}
-							>
-								<span style={{ opacity: 0.5, display: "flex" }}>{Ic.tag()}</span>
+							<span className="api-badge">
+								<span className="opacity-50 flex">{Ic.tag()}</span>
 								{item.api}
 							</span>
 							{item.score != null && <ScoreBar score={item.score} />}
 						</div>
 
 						{/* Description */}
-						<p style={{ fontSize: 12, color: C.textMuted, margin: "0 0 14px", lineHeight: 1.5 }}>
+						<p className="text-xs text-[var(--g-text-muted)] mb-3.5 leading-[1.5] m-0">
 							{item.description}
 						</p>
 
 						{/* Full text */}
 						{item.full_text && (
-							<div
-								style={{
-									fontFamily: "monospace",
-									fontSize: 12,
-									color: C.textMuted,
-									background: C.bg,
-									borderRadius: 4,
-									padding: "11px 14px",
-									lineHeight: 1.7,
-									whiteSpace: "pre-wrap",
-									maxHeight: 300,
-									overflow: "auto",
-								}}
-							>
+							<div className="font-mono text-xs text-[var(--g-text-muted)] bg-[var(--g-bg)] rounded px-3.5 py-[0.6875rem] leading-[1.7] whitespace-pre-wrap max-h-[300px] overflow-auto">
 								{item.full_text}
 							</div>
 						)}

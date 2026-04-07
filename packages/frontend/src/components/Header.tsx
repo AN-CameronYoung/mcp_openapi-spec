@@ -1,4 +1,4 @@
-import { C } from "../lib/constants";
+import { useShallow } from "zustand/react/shallow";
 import { Ic } from "../lib/icons";
 import { useStore } from "../store/store";
 import type { ThemePref } from "../store/store";
@@ -10,24 +10,20 @@ const THEME_OPTS: { value: ThemePref; label: string }[] = [
 ];
 
 function ThemeToggle() {
-	const theme = useStore((s) => s.theme);
-	const setTheme = useStore((s) => s.setTheme);
+	const { theme, setTheme } = useStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme })));
 
 	return (
-		<div style={{ display: "flex", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden" }}>
+		<div className="flex bg-[var(--g-surface)] border border-[var(--g-border)] rounded-md overflow-hidden">
 			{THEME_OPTS.map((o) => (
 				<button
 					key={o.value}
 					onClick={() => setTheme(o.value)}
-					style={{
-						padding: "3px 8px",
-						fontSize: 12,
-						border: "none",
-						cursor: "pointer",
-						background: theme === o.value ? C.accentMuted : "transparent",
-						color: theme === o.value ? C.accent : C.textDim,
-						fontWeight: theme === o.value ? 600 : 400,
-					}}
+					className={[
+						"py-[0.1875rem] px-2 text-xs border-none cursor-pointer",
+						theme === o.value
+							? "bg-[var(--g-accent-muted)] text-[var(--g-accent)] font-semibold"
+							: "bg-transparent text-[var(--g-text-dim)] font-normal",
+					].join(" ")}
 				>
 					{o.label}
 				</button>
@@ -44,43 +40,22 @@ const TABS = [
 ];
 
 export default function Header() {
-	const page = useStore((s) => s.page);
-	const setPage = useStore((s) => s.setPage);
-	const apis = useStore((s) => s.apis);
+	const { page, setPage, apis } = useStore(useShallow((s) => ({ page: s.page, setPage: s.setPage, apis: s.apis })));
 
 	const totalEndpoints = apis.reduce((s, a) => s + a.endpoints, 0);
 
 	return (
-		<div
-			style={{
-				borderBottom: `1px solid ${C.border}`,
-				padding: "0 20px",
-				display: "flex",
-				alignItems: "stretch",
-				height: 56,
-				flexShrink: 0,
-			}}
-		>
+		<div className="border-b border-[var(--g-border)] px-5 flex items-stretch h-14 shrink-0">
 			{/* Logo */}
-			<div style={{ display: "flex", alignItems: "center", gap: 8, marginRight: 22 }}>
-				<div
-					style={{
-						width: 28,
-						height: 28,
-						borderRadius: 6,
-						background: C.green,
-						display: "flex",
-						alignItems: "center",
-						justifyContent: "center",
-					}}
-				>
+			<div className="flex items-center gap-2 mr-[1.375rem]">
+				<div className="w-7 h-7 rounded-md bg-[var(--g-green)] flex items-center justify-center">
 					<svg width={18} height={18} viewBox="0 0 20 20" fill="none">
 						<circle cx="7" cy="8" r="1.4" fill="white"/>
 						<circle cx="13" cy="8" r="1.4" fill="white"/>
 						<path d="M6.5 13.5h7" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
 					</svg>
 				</div>
-				<span style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.01em" }}>greg</span>
+				<span className="text-lg font-semibold tracking-[-0.01em]">greg</span>
 			</div>
 
 			{/* Tabs */}
@@ -88,20 +63,12 @@ export default function Header() {
 				<button
 					key={t.key}
 					onClick={() => setPage(t.key)}
-					style={{
-						display: "flex",
-						alignItems: "center",
-						gap: 6,
-						padding: "0 14px",
-						fontSize: 16,
-						fontWeight: 500,
-						border: "none",
-						cursor: "pointer",
-						background: "transparent",
-						color: page === t.key ? C.accent : C.textDim,
-						borderBottom: page === t.key ? `2px solid ${C.accent}` : "2px solid transparent",
-						marginBottom: -1,
-					}}
+					className={[
+						"flex items-center gap-1.5 px-3.5 text-base font-medium border-none cursor-pointer bg-transparent -mb-px border-b-2",
+						page === t.key
+							? "text-[var(--g-accent)] border-b-[var(--g-accent)]"
+							: "text-[var(--g-text-dim)] border-b-transparent",
+					].join(" ")}
 				>
 					{t.icon()}
 					{t.label}
@@ -109,11 +76,11 @@ export default function Header() {
 			))}
 
 			{/* Stats + theme toggle */}
-			<div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 11 }}>
-				<span style={{ fontSize: 14, color: C.textDim, display: "flex", alignItems: "center", gap: 4 }}>
+			<div className="ml-auto flex items-center gap-[0.6875rem]">
+				<span className="text-sm text-[var(--g-text-dim)] flex items-center gap-1">
 					{Ic.server()} {apis.length} APIs
 				</span>
-				<span style={{ fontSize: 14, color: C.textDim }}>{totalEndpoints} endpoints</span>
+				<span className="text-sm text-[var(--g-text-dim)]">{totalEndpoints} endpoints</span>
 				<ThemeToggle />
 			</div>
 		</div>

@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
-import { C, METHOD_COLORS } from "../lib/constants";
+import { useShallow } from "zustand/react/shallow";
+import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
 import { searchEndpoints, searchSchemas } from "../lib/api";
 import type { SearchResult } from "../lib/api";
@@ -9,10 +10,9 @@ import DetailPanel from "../components/DetailPanel";
 import GroupedApiSelect from "../components/GroupedApiSelect";
 
 export default function SearchPage() {
-	const apis = useStore((s) => s.apis);
-	const detailItem = useStore((s) => s.detailItem);
-	const detailType = useStore((s) => s.detailType);
-	const setDetail = useStore((s) => s.setDetail);
+	const { apis, detailItem, detailType, setDetail } = useStore(
+		useShallow((s) => ({ apis: s.apis, detailItem: s.detailItem, detailType: s.detailType, setDetail: s.setDetail }))
+	);
 
 	const [query, setQuery] = useState("");
 	const [apiFilter, setApiFilter] = useState("all");
@@ -52,11 +52,11 @@ export default function SearchPage() {
 	}, [results, apiFilter]);
 
 	return (
-		<div style={{ padding: "14px 16px", height: "calc(100% - 56px)", display: "flex", flexDirection: "column" }}>
+		<div className="px-4 py-3.5 h-[calc(100%-3.5rem)] flex flex-col">
 			{/* Search bar + filter */}
-			<div style={{ display: "flex", gap: 8, marginBottom: 11, flexShrink: 0 }}>
-				<div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-					<div style={{ position: "absolute", left: 10, color: C.textDim, display: "flex", pointerEvents: "none", zIndex: 1 }}>
+			<div className="flex gap-2 mb-[0.6875rem] shrink-0">
+				<div className="relative flex items-center">
+					<div className="absolute left-2.5 text-[var(--g-text-dim)] flex pointer-events-none z-[1]">
 						{Ic.server()}
 					</div>
 					<GroupedApiSelect
@@ -70,8 +70,8 @@ export default function SearchPage() {
 						withIcon
 					/>
 				</div>
-				<div style={{ flex: 1, position: "relative" }}>
-					<div style={{ position: "absolute", left: 13, top: 13, color: C.textDim, display: "flex" }}>
+				<div className="flex-1 relative">
+					<div className="absolute left-[0.8125rem] top-[0.8125rem] text-[var(--g-text-dim)] flex">
 						{Ic.search()}
 					</div>
 					<input
@@ -80,26 +80,13 @@ export default function SearchPage() {
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
 						onKeyDown={handleKeyDown}
-						style={{
-							width: "100%",
-							height: 44,
-							padding: "0 14px 0 38px",
-							background: C.surface,
-							border: `1px solid ${C.border}`,
-							borderRadius: 6,
-							fontSize: 16,
-							color: C.text,
-							outline: "none",
-							boxSizing: "border-box",
-						}}
-						onFocus={(e) => ((e.target as HTMLElement).style.borderColor = "rgba(129,140,248,0.4)")}
-						onBlur={(e) => ((e.target as HTMLElement).style.borderColor = C.border)}
+						className="g-input pl-[2.375rem] focus:border-[rgba(129,140,248,0.4)]"
 					/>
 				</div>
 			</div>
 
 			{/* Tab toggle */}
-			<div style={{ display: "flex", gap: 3, marginBottom: 8, flexShrink: 0 }}>
+			<div className="flex gap-[0.1875rem] mb-2 shrink-0">
 				{(
 					[
 						{ key: "endpoints" as const, icon: Ic.bolt, label: "Endpoints" },
@@ -113,32 +100,25 @@ export default function SearchPage() {
 							setDetail(null);
 							if (query.trim()) doSearch(query, t.key, apiFilter);
 						}}
-						style={{
-							padding: "4px 13px",
-							fontSize: 15,
-							fontWeight: 500,
-							border: "none",
-							cursor: "pointer",
-							borderRadius: 6,
-							display: "flex",
-							alignItems: "center",
-							gap: 4,
-							background: tab === t.key ? C.accentMuted : "transparent",
-							color: tab === t.key ? C.accent : C.textDim,
-						}}
+						className={[
+							"py-1 px-[0.8125rem] text-[0.9375rem] font-medium border-none cursor-pointer rounded-md flex items-center gap-1",
+							tab === t.key
+								? "bg-[var(--g-accent-muted)] text-[var(--g-accent)]"
+								: "bg-transparent text-[var(--g-text-dim)]",
+						].join(" ")}
 					>
 						{t.icon()}
 						{t.label}
 					</button>
 				))}
-				<span style={{ marginLeft: "auto", fontSize: 14, color: C.textDim, alignSelf: "center" }}>
+				<span className="ml-auto text-sm text-[var(--g-text-dim)] self-center">
 					{loading ? "searching..." : `${filtered.length} result${filtered.length !== 1 ? "s" : ""}`}
 				</span>
 			</div>
 
 			{/* Results + detail */}
-			<div style={{ display: "flex", gap: 14, flex: 1, minHeight: 0 }}>
-				<div style={{ flex: 1, minWidth: 0, overflow: "auto" }}>
+			<div className="flex gap-3.5 flex-1 min-h-0">
+				<div className="flex-1 min-w-0 overflow-auto">
 					{filtered.map((item) => {
 						const isSel = detailItem && "id" in detailItem && detailItem.id === item.id;
 						const isEp = tab === "endpoints";
@@ -148,100 +128,50 @@ export default function SearchPage() {
 							<div
 								key={item.id}
 								onClick={() => setDetail(isSel ? null : item, tab)}
-								style={{
-									padding: "8px 11px",
-									borderRadius: 6,
-									cursor: "pointer",
-									borderLeft: isSel ? `2px solid ${C.accent}` : "2px solid transparent",
-									background: isSel ? C.surfaceActive : "transparent",
-									marginBottom: 1,
-								}}
-								onMouseEnter={(e) => {
-									if (!isSel) (e.currentTarget as HTMLElement).style.background = C.surfaceHover;
-								}}
-								onMouseLeave={(e) => {
-									if (!isSel) (e.currentTarget as HTMLElement).style.background = "transparent";
-								}}
+								className={[
+									"py-2 px-[0.6875rem] rounded-md cursor-pointer border-l-2 mb-px",
+									isSel
+										? "border-l-[var(--g-accent)] bg-[var(--g-surface-active)]"
+										: "border-l-transparent bg-transparent hover:bg-[var(--g-surface-hover)]",
+								].join(" ")}
 							>
-								<div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+								<div className="flex items-center gap-[0.4375rem]">
 									{isEp ? (
 										<>
 											<span
+												className="method-badge"
 												style={{
-													fontSize: 13,
-													fontWeight: 600,
-													padding: "1px 7px",
-													borderRadius: 4,
-													fontFamily: "monospace",
 													background: m!.bg,
 													color: m!.text,
 													border: `1px solid ${m!.border}`,
 													minWidth: 46,
-													textAlign: "center",
-													flexShrink: 0,
 												}}
 											>
 												{item.method}
 											</span>
-											<code
-												style={{
-													fontSize: 15,
-													fontFamily: "monospace",
-													color: C.text,
-													overflow: "hidden",
-													textOverflow: "ellipsis",
-													whiteSpace: "nowrap",
-													flex: 1,
-												}}
-											>
+											<code className="text-[0.9375rem] font-mono text-[var(--g-text)] truncate flex-1">
 												{item.path}
 											</code>
 										</>
 									) : (
 										<>
-											<span style={{ display: "flex", color: C.accent, opacity: 0.35, flexShrink: 0 }}>
+											<span className="flex text-[var(--g-accent)] opacity-35 shrink-0">
 												{Ic.cube(15)}
 											</span>
-											<span style={{ fontSize: 15, fontWeight: 600, fontFamily: "monospace", color: C.text }}>
+											<span className="text-[0.9375rem] font-semibold font-mono text-[var(--g-text)]">
 												{item.name}
 											</span>
 										</>
 									)}
-									<span
-										style={{
-											marginLeft: "auto",
-											display: "flex",
-											gap: 7,
-											alignItems: "center",
-											flexShrink: 0,
-										}}
-									>
+									<span className="ml-auto flex gap-[0.4375rem] items-center shrink-0">
 										<ScoreBar score={item.score} />
-										<span
-											style={{
-												fontSize: 13,
-												padding: "1px 7px",
-												borderRadius: 4,
-												background: C.accentDim,
-												color: C.accent,
-												fontWeight: 500,
-											}}
-										>
+										<span className="api-badge">
 											{item.api}
 										</span>
 									</span>
 								</div>
 								<p
-									style={{
-										fontSize: 14,
-										color: C.textDim,
-										margin: "3px 0 0",
-										lineHeight: 1.4,
-										overflow: "hidden",
-										textOverflow: "ellipsis",
-										whiteSpace: "nowrap",
-										paddingLeft: isEp ? 56 : 24,
-									}}
+									className={`text-sm text-[var(--g-text-dim)] mt-[0.1875rem] leading-[1.4] truncate ${isEp ? "pl-14" : "pl-6"}`}
 								>
 									{item.description}
 								</p>
@@ -249,19 +179,19 @@ export default function SearchPage() {
 						);
 					})}
 					{!loading && filtered.length === 0 && query.trim() && (
-						<div style={{ padding: "2rem", textAlign: "center", color: C.textDim, fontSize: 16 }}>
+						<div className="p-8 text-center text-[var(--g-text-dim)] text-base">
 							No results
 						</div>
 					)}
 					{!query.trim() && (
-						<div style={{ padding: "2rem", textAlign: "center", color: C.textDim, fontSize: 16 }}>
+						<div className="p-8 text-center text-[var(--g-text-dim)] text-base">
 							Type a query and press Enter to search
 						</div>
 					)}
 				</div>
 
 				{detailItem && (
-					<div style={{ width: 430, flexShrink: 0 }}>
+					<div className="w-[26.875rem] shrink-0">
 						<DetailPanel item={detailItem as never} type={detailType} onClose={() => setDetail(null)} />
 					</div>
 				)}

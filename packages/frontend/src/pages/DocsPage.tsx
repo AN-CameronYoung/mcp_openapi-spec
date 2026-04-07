@@ -1,14 +1,14 @@
 import { useEffect, useRef } from "react";
-import { C, METHOD_COLORS } from "../lib/constants";
+import { useShallow } from "zustand/react/shallow";
+import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
 import { useStore } from "../store/store";
 import GroupedApiSelect from "../components/GroupedApiSelect";
 
 export default function DocsPage() {
-	const apis = useStore((s) => s.apis);
-	const docsApi = useStore((s) => s.docsApi);
-	const docsAnchor = useStore((s) => s.docsAnchor);
-	const setDocsApi = useStore((s) => s.setDocsApi);
+	const { apis, docsApi, docsAnchor, setDocsApi, theme } = useStore(
+		useShallow((s) => ({ apis: s.apis, docsApi: s.docsApi, docsAnchor: s.docsAnchor, setDocsApi: s.setDocsApi, theme: s.theme }))
+	);
 
 	const iframeRef = useRef<HTMLIFrameElement>(null);
 	const iframeKeyRef = useRef(0);
@@ -16,7 +16,6 @@ export default function DocsPage() {
 	const selectedApi = docsApi || (apis.length > 0 ? apis[0].name : "");
 	const apiInfo = apis.find((a) => a.name === selectedApi);
 
-	const theme = useStore((s) => s.theme);
 	const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
 	// Pass method+path+theme as query params
@@ -38,11 +37,11 @@ export default function DocsPage() {
 	}, [docsAnchor]);
 
 	return (
-		<div style={{ padding: "14px 20px", height: "calc(100% - 56px)", display: "flex", flexDirection: "column" }}>
+		<div className="px-5 py-3.5 h-[calc(100%-3.5rem)] flex flex-col">
 			{/* Header */}
-			<div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 11, flexShrink: 0 }}>
-				<div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-					<div style={{ position: "absolute", left: 10, color: C.textDim, display: "flex", pointerEvents: "none", zIndex: 1 }}>
+			<div className="flex items-center gap-3.5 mb-[0.6875rem] shrink-0">
+				<div className="relative flex items-center">
+					<div className="absolute left-2.5 text-[var(--g-text-dim)] flex pointer-events-none z-[1]">
 						{Ic.server()}
 					</div>
 					<GroupedApiSelect
@@ -52,26 +51,18 @@ export default function DocsPage() {
 						height={42}
 						fontSize={16}
 						minWidth={196}
-						color={C.text}
+						color="var(--g-text)"
 						withIcon
 					/>
 				</div>
 				{apiInfo && (
-					<span style={{ fontSize: 15, color: C.textDim }}>{apiInfo.endpoints} endpoints</span>
+					<span className="text-[0.9375rem] text-[var(--g-text-dim)]">{apiInfo.endpoints} endpoints</span>
 				)}
 				<a
 					href={iframeSrc}
 					target="_blank"
 					rel="noopener noreferrer"
-					style={{
-						marginLeft: "auto",
-						fontSize: 15,
-						color: C.accent,
-						textDecoration: "none",
-						display: "flex",
-						alignItems: "center",
-						gap: 4,
-					}}
+					className="ml-auto text-[0.9375rem] text-[var(--g-accent)] no-underline flex items-center gap-1"
 				>
 					{Ic.ext()} New tab
 				</a>
@@ -79,29 +70,12 @@ export default function DocsPage() {
 
 			{/* Navigation breadcrumb */}
 			{docsAnchor && (
-				<div
-					style={{
-						display: "flex",
-						alignItems: "center",
-						gap: 7,
-						marginBottom: 11,
-						padding: "7px 11px",
-						background: C.accentDim,
-						border: `1px solid ${C.borderAccent}`,
-						borderRadius: 6,
-						fontSize: 15,
-						flexShrink: 0,
-					}}
-				>
-					<span style={{ color: C.accent, display: "flex" }}>{Ic.arr()}</span>
-					<span style={{ color: C.textMuted }}>Navigated to</span>
+				<div className="flex items-center gap-[0.4375rem] mb-[0.6875rem] px-[0.6875rem] py-[0.4375rem] bg-[var(--g-accent-dim)] border border-[var(--g-border-accent)] rounded-md text-[0.9375rem] shrink-0">
+					<span className="text-[var(--g-accent)] flex">{Ic.arr()}</span>
+					<span className="text-[var(--g-text-muted)]">Navigated to</span>
 					<span
+						className="method-badge"
 						style={{
-							fontSize: 13,
-							fontWeight: 600,
-							padding: "1px 7px",
-							borderRadius: 4,
-							fontFamily: "monospace",
 							background: METHOD_COLORS[docsAnchor.method]?.bg,
 							color: METHOD_COLORS[docsAnchor.method]?.text,
 							border: `1px solid ${METHOD_COLORS[docsAnchor.method]?.border}`,
@@ -109,7 +83,7 @@ export default function DocsPage() {
 					>
 						{docsAnchor.method}
 					</span>
-					<code style={{ fontFamily: "monospace", color: C.text, fontSize: 15 }}>{docsAnchor.path}</code>
+					<code className="font-mono text-[var(--g-text)] text-[0.9375rem]">{docsAnchor.path}</code>
 				</div>
 			)}
 
@@ -119,31 +93,13 @@ export default function DocsPage() {
 					key={`${selectedApi}-${qs}-${iframeKeyRef.current}`}
 					ref={iframeRef}
 					src={iframeSrc}
-					style={{
-						flex: 1,
-						border: `1px solid ${C.border}`,
-						borderRadius: 6,
-						background: C.surface,
-						width: "100%",
-					}}
+					className="flex-1 border border-[var(--g-border)] rounded-md bg-[var(--g-surface)] w-full"
 					title={`${selectedApi} API docs`}
 				/>
 			) : (
-				<div
-					style={{
-						flex: 1,
-						border: `1px solid ${C.border}`,
-						borderRadius: 6,
-						background: C.surface,
-						display: "flex",
-						flexDirection: "column",
-						alignItems: "center",
-						justifyContent: "center",
-						gap: 14,
-					}}
-				>
-					<div style={{ color: C.textDim, display: "flex" }}>{Ic.doc(38)}</div>
-					<span style={{ fontSize: 16, color: C.textDim }}>No APIs ingested yet</span>
+				<div className="flex-1 border border-[var(--g-border)] rounded-md bg-[var(--g-surface)] flex flex-col items-center justify-center gap-3.5">
+					<div className="text-[var(--g-text-dim)] flex">{Ic.doc(38)}</div>
+					<span className="text-base text-[var(--g-text-dim)]">No APIs ingested yet</span>
 				</div>
 			)}
 		</div>

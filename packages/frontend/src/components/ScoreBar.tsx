@@ -1,13 +1,11 @@
-import { C } from "../lib/constants";
-
 export default function ScoreBar({ score }: { score: number }) {
 	const p = Math.round(score * 100);
 	return (
-		<div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-			<div style={{ width: 34, height: 4, background: C.border, borderRadius: 2, overflow: "hidden" }}>
-				<div style={{ width: `${p}%`, height: "100%", background: C.accent, borderRadius: 2 }} />
+		<div className="flex items-center gap-1.5">
+			<div className="w-[34px] h-1 bg-[var(--g-border)] rounded-[2px] overflow-hidden">
+				<div style={{ width: `${p}%` }} className="h-full bg-[var(--g-accent)] rounded-[2px]" />
 			</div>
-			<span style={{ fontSize: 13, color: C.textDim, fontFamily: "monospace" }}>{p}%</span>
+			<span className="text-[0.8125rem] text-[var(--g-text-dim)] font-mono">{p}%</span>
 		</div>
 	);
 }

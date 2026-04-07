@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { listApis } from "./lib/api";
 import { useStore } from "./store/store";
 import Header from "./components/Header";
@@ -9,13 +10,9 @@ import SettingsPage from "./pages/SettingsPage";
 import IngestFloat from "./components/IngestFloat";
 
 export default function App() {
-	const page = useStore((s) => s.page);
-	const setApis = useStore((s) => s.setApis);
-	const setDocsApi = useStore((s) => s.setDocsApi);
-	const docsApi = useStore((s) => s.docsApi);
-
-	const theme = useStore((s) => s.theme);
-	const setTheme = useStore((s) => s.setTheme);
+	const { page, setApis, setDocsApi, docsApi, theme, setTheme } = useStore(
+		useShallow((s) => ({ page: s.page, setApis: s.setApis, setDocsApi: s.setDocsApi, docsApi: s.docsApi, theme: s.theme, setTheme: s.setTheme }))
+	);
 
 	useEffect(() => {
 		listApis()
@@ -38,7 +35,7 @@ export default function App() {
 	}, [theme]);
 
 	return (
-		<div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+		<div className="h-screen flex flex-col">
 			<Header />
 			{page === "greg" && <GregPage />}
 			{page === "search" && <SearchPage />}

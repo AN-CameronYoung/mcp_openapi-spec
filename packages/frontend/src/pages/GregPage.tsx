@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, memo, useCallback } from "react";
+import { useShallow } from "zustand/react/shallow";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -8,19 +9,21 @@ import python from "react-syntax-highlighter/dist/esm/languages/prism/python";
 import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
 import json from "react-syntax-highlighter/dist/esm/languages/prism/json";
 import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
-SyntaxHighlighter.registerLanguage("typescript", typescript);
-SyntaxHighlighter.registerLanguage("javascript", typescript);
-SyntaxHighlighter.registerLanguage("python", python);
-SyntaxHighlighter.registerLanguage("bash", bash);
-SyntaxHighlighter.registerLanguage("json", json);
-SyntaxHighlighter.registerLanguage("yaml", yaml);
-import { C, METHOD_COLORS } from "../lib/constants";
+import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
 import { streamChat, listModels, fetchSuggestions } from "../lib/api";
 import type { EndpointCard } from "../lib/api";
 import { useStore } from "../store/store";
 import type { ChatMsg } from "../store/store";
 import EpCard from "../components/EpCard";
+import "./GregPage.css";
+
+SyntaxHighlighter.registerLanguage("typescript", typescript);
+SyntaxHighlighter.registerLanguage("javascript", typescript);
+SyntaxHighlighter.registerLanguage("python", python);
+SyntaxHighlighter.registerLanguage("bash", bash);
+SyntaxHighlighter.registerLanguage("json", json);
+SyntaxHighlighter.registerLanguage("yaml", yaml);
 
 
 // Per-million-token pricing for Anthropic models (input, output)
@@ -33,19 +36,29 @@ const ANTHROPIC_PRICING: Record<string, [number, number]> = {
 	"claude-3-opus": [15, 75],
 };
 
+/** Returns a formatted USD cost string for a Claude API call, or null if the model is unrecognised. */
 function estimateCost(model: string | undefined, usage: { input: number; output: number }): string | null {
 	if (!model || !model.startsWith("claude")) return null;
-	const key = Object.keys(ANTHROPIC_PRICING).sort((a, b) => b.length - a.length).find((k) => model.startsWith(k));
+
+	// Match longest key first so "claude-3-5-sonnet" beats "claude-3"
+	const key = Object.keys(ANTHROPIC_PRICING)
+		.sort((a, b) => b.length - a.length)
+		.find((k) => model.startsWith(k));
 	if (!key) return null;
-	const [inp, out] = ANTHROPIC_PRICING[key];
-	const cost = (usage.input * inp + usage.output * out) / 1_000_000;
+
+	const [inputRate, outputRate] = ANTHROPIC_PRICING[key];
+	const cost = (usage.input * inputRate + usage.output * outputRate) / 1_000_000;
+
 	if (cost === 0) return "0.000000";
-	// Show enough significant figures: always at least 4 sig figs after the leading zeros
+
+	// Show 4 significant figures after any leading zeros
 	const magnitude = Math.floor(Math.log10(cost));
-	const decimals = Math.max(2, 2 - magnitude + 3);
-	return cost.toFixed(Math.min(decimals, 8));
+	const decimals = Math.min(Math.max(2, 2 - magnitude + 3), 8);
+
+	return cost.toFixed(decimals);
 }
 
+/** Normalises raw LLM output: strips endpoint tags, unwraps markdown tables from code fences, and converts single newlines to paragraph breaks while preserving code blocks and list structure. */
 function cleanText(raw: string): string {
 	const text = raw
 		.replace(/<endpoint[^>]*\/?>/g, "")
@@ -81,6 +94,7 @@ function cleanText(raw: string): string {
 	}).join("");
 }
 
+/** Icon button that copies text to the clipboard and briefly shows a checkmark on success. */
 function CopyBtn({ text }: { text: string }) {
 	const [copied, setCopied] = useState(false);
 	const timer = useRef<ReturnType<typeof setTimeout>>();
@@ -105,22 +119,10 @@ function CopyBtn({ text }: { text: string }) {
 			onClick={handleClick}
 			onMouseEnter={handleEnter}
 			onMouseLeave={handleLeave}
-			style={{
-				display: "flex",
-				alignItems: "center",
-				justifyContent: "center",
-				border: "none",
-				cursor: "pointer",
-				padding: 8,
-				borderRadius: 6,
-				background: C.surfaceHover,
-				color: copied ? C.green : C.textDim,
-				opacity: copied ? 1 : 0.7,
-				flexShrink: 0,
-				transition: "color 0.15s, opacity 0.15s",
-				width: 34,
-				height: 34,
-			}}
+			className={[
+				"flex items-center justify-center border-none cursor-pointer p-2 rounded-md bg-[var(--g-surface-hover)] shrink-0 transition-[color,opacity] duration-150 w-[2.125rem] h-[2.125rem]",
+				copied ? "text-[var(--g-green)] opacity-100" : "text-[var(--g-text-dim)] opacity-70",
+			].join(" ")}
 		>
 			{copied ? (
 				<svg width={18} height={18} viewBox="0 0 12 12" fill="none">
@@ -134,27 +136,24 @@ function CopyBtn({ text }: { text: string }) {
 }
 
 const PERSONALITY_COLOR: Record<string, string> = {
-	greg: C.green,
+	greg: "var(--g-green)",
 	verbose: "#f59e0b",
 	curt: "#A1A1AA",
 };
 
+/** Styled container for the chat input area; border colour changes on focus and is tinted by the active personality. */
 function InputBoxWrapper({ children, personality }: { children: React.ReactNode; personality: "greg" | "verbose" | "curt" }) {
 	const [focused, setFocused] = useState(false);
 	const color = PERSONALITY_COLOR[personality];
+	const bg = personality === "greg" ? "var(--g-surface)" : personality === "verbose" ? "rgba(245,158,11,0.04)" : "rgba(161,161,170,0.04)";
 	return (
 		<div
 			onFocusCapture={() => setFocused(true)}
 			onBlurCapture={() => setFocused(false)}
+			className="flex items-center gap-2 rounded-[0.625rem] px-2.5 py-2 transition-[border-color,background] duration-150"
 			style={{
-				display: "flex",
-				alignItems: "center",
-				gap: 8,
-				background: personality === "greg" ? C.surface : personality === "verbose" ? "rgba(245,158,11,0.04)" : "rgba(161,161,170,0.04)",
-				border: `1px solid ${focused ? color : C.border}`,
-				borderRadius: 10,
-				padding: "8px 10px",
-				transition: "border-color 0.15s, background 0.15s",
+				background: bg,
+				border: `1px solid ${focused ? color : "var(--g-border)"}`,
 			}}
 		>
 			{children}
@@ -163,31 +162,17 @@ function InputBoxWrapper({ children, personality }: { children: React.ReactNode;
 }
 
 function CodeDropdown({ code, lang, lineCount, blockKey }: { code: string; lang: string; lineCount: number; blockKey: string }) {
-	const open = useStore((s) => !!s.openCodeBlocks[blockKey]);
-	const toggle = useStore((s) => s.toggleCodeBlock);
+	const { open, toggle } = useStore(useShallow((s) => ({ open: !!s.openCodeBlocks[blockKey], toggle: s.toggleCodeBlock })));
 
 	return (
-		<div style={{ margin: "6px 0" }}>
-			<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+		<div className="my-1.5">
+			<div className="flex items-center gap-2">
 				<button
 					onClick={() => toggle(blockKey)}
-					style={{
-						display: "flex",
-						alignItems: "center",
-						gap: 6,
-						fontSize: 14,
-						color: C.accent,
-						background: C.accentDim,
-						border: `1px solid ${C.borderAccent}`,
-						borderRadius: 6,
-						padding: "4px 12px",
-						cursor: "pointer",
-						flex: 1,
-						textAlign: "left",
-					}}
+					className="collapse-btn text-sm text-[var(--g-accent)] bg-[var(--g-accent-dim)] border border-[var(--g-border-accent)] rounded-md px-3 py-1 flex-1 text-left"
 				>
-					<span style={{ fontFamily: "monospace", fontWeight: 500 }}>code: {lineCount} lines</span>
-					<span style={{ marginLeft: "auto", transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s", display: "flex" }}>
+					<span className="font-mono font-medium">code: {lineCount} lines</span>
+					<span className={`ml-auto flex transition-transform duration-150 ${open ? "rotate-180" : "rotate-0"}`}>
 						<svg width={10} height={10} viewBox="0 0 10 10" fill="none">
 							<path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
 						</svg>
@@ -196,8 +181,8 @@ function CodeDropdown({ code, lang, lineCount, blockKey }: { code: string; lang:
 				<CopyBtn text={code} />
 			</div>
 			{open && (
-				<div style={{ marginTop: 4 }}>
-					<SyntaxHighlighter style={oneDark} language={lang} PreTag="div" customStyle={{ background: C.bg, borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto" }} codeTagProps={{ style: { background: C.bg, fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }}>
+				<div className="mt-1">
+					<SyntaxHighlighter style={oneDark} language={lang} PreTag="div" customStyle={{ background: "var(--g-bg)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }}>
 						{code}
 					</SyntaxHighlighter>
 				</div>
@@ -207,15 +192,13 @@ function CodeDropdown({ code, lang, lineCount, blockKey }: { code: string; lang:
 }
 
 function StreamingText({ text, personality }: { text: string; personality?: "greg" | "verbose" | "curt" }) {
-	const dotColor = PERSONALITY_COLOR[personality ?? "greg"] ?? C.green;
+	const dotColor = PERSONALITY_COLOR[personality ?? "greg"] ?? "var(--g-green)";
 	const cleaned = cleanText(text);
 	if (!cleaned) return (
-		<span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 0" }}>
+		<span className="inline-flex items-center gap-1 py-px">
 			{[0, 1, 2].map((i) => (
-				<span key={i} style={{
-					width: 6, height: 6, borderRadius: "50%",
+				<span key={i} className="w-1.5 h-1.5 rounded-full inline-block" style={{
 					background: dotColor,
-					display: "inline-block",
 					animation: `greg-bounce 1.2s ease-in-out ${i * 0.2}s infinite`,
 				}} />
 			))}
@@ -230,19 +213,17 @@ function StreamingText({ text, personality }: { text: string; personality?: "gre
 		const before = cleaned.slice(0, lastFence).trim();
 		return (
 			<>
-				{before && <span style={{ whiteSpace: "pre-wrap" }}>{before}</span>}
-				<div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", color: C.textDim }}>
-					<span style={{ animation: "spin 1s linear infinite", display: "inline-block", width: 14, height: 14 }}>
-						<svg width={14} height={14} viewBox="0 0 14 14" fill="none">
-							<circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="20 12" />
-						</svg>
-					</span>
-					<span style={{ fontSize: 14, fontStyle: "italic" }}>coding...</span>
+				{before && <span className="whitespace-pre-wrap">{before}</span>}
+				<div className="flex items-center gap-2 py-2 text-[var(--g-text-dim)]">
+					<svg className="animate-spin inline-block w-3.5 h-3.5" width={14} height={14} viewBox="0 0 14 14" fill="none">
+						<circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="20 12" />
+					</svg>
+					<span className="text-sm italic">coding...</span>
 				</div>
 			</>
 		);
 	}
-	return <span style={{ whiteSpace: "pre-wrap" }}>{cleaned}</span>;
+	return <span className="whitespace-pre-wrap">{cleaned}</span>;
 }
 
 const METHOD_RE = /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/\S*|$)/;
@@ -259,15 +240,15 @@ function ApiPathCode({ code }: { code: string }) {
 		const parts = p.split(PARAM_RE);
 		return parts.map((part, i) =>
 			PARAM_TEST.test(part)
-				? <span key={i} style={{ color: "#C084FC" }}>{part}</span>
-				: <span key={i} style={{ color: C.accent }}>{part}</span>
+				? <span key={i} className="text-[#C084FC]">{part}</span>
+				: <span key={i} className="text-[var(--g-accent)]">{part}</span>
 		);
 	};
 
 	return (
-		<code style={{ background: C.bg, padding: "1px 5px", borderRadius: 4, fontFamily: "monospace", fontSize: "0.9em" }}>
+		<code className="bg-[var(--g-bg)] py-px px-[0.3125rem] rounded font-mono text-[0.9em]">
 			{mc && (
-				<span style={{ color: mc.text, fontWeight: 700, marginRight: 5 }}>{method}</span>
+				<span className="font-bold mr-[0.3125rem]" style={{ color: mc.text }}>{method}</span>
 			)}
 			{renderPath(path)}
 		</code>
@@ -299,17 +280,17 @@ const mdComponents = (msgKey: number | string, langMap: Record<string, string>) 
 		}
 		if (isApiPath(code)) return <ApiPathCode code={code} />;
 		return (
-			<code style={{ background: C.bg, padding: "1px 5px", borderRadius: 4, fontFamily: "monospace", fontSize: "0.9em", color: C.accent }}>
+			<code className="bg-[var(--g-bg)] py-px px-[0.3125rem] rounded font-mono text-[0.9em] text-[var(--g-accent)]">
 				{children as React.ReactNode}
 			</code>
 		);
 	},
 	pre({ children }: { children?: React.ReactNode }) { return <>{children as React.ReactNode}</>; },
-	p({ children }: { children?: React.ReactNode }) { return <p style={{ margin: "10px 0" }}>{children as React.ReactNode}</p>; },
-	ul({ children }: { children?: React.ReactNode }) { return <ul style={{ margin: "4px 0", paddingLeft: 18 }}>{children as React.ReactNode}</ul>; },
+	p({ children }: { children?: React.ReactNode }) { return <p className="my-[0.625rem]">{children as React.ReactNode}</p>; },
+	ul({ children }: { children?: React.ReactNode }) { return <ul className="my-1 pl-[1.125rem]">{children as React.ReactNode}</ul>; },
 	ol({ children, node }: { children?: React.ReactNode; node?: { children?: unknown[] } }) {
 		const liCount = node?.children?.filter((c: unknown) => c && typeof c === "object" && (c as { tagName?: string }).tagName === "li").length ?? 0;
-		if (liCount < 3) return <ol style={{ margin: "4px 0", paddingLeft: 18 }}>{children as React.ReactNode}</ol>;
+		if (liCount < 3) return <ol className="my-1 pl-[1.125rem]">{children as React.ReactNode}</ol>;
 		// Wrap each li child in a LiDropdown
 		let idx = 0;
 		const wrapped = React.Children.map(children, (child) => {
@@ -318,14 +299,14 @@ const mdComponents = (msgKey: number | string, langMap: Record<string, string>) 
 			}
 			return child;
 		});
-		return <ol style={{ margin: "4px 0", paddingLeft: 0, listStyle: "none" }}>{wrapped}</ol>;
+		return <ol className="my-1 pl-0 list-none">{wrapped}</ol>;
 	},
-	a({ href, children }: { href?: string; children?: React.ReactNode }) { return <a href={String(href)} style={{ color: C.accent }} target="_blank" rel="noopener noreferrer">{children as React.ReactNode}</a>; },
-	img({ src, alt }: { src?: string; alt?: string }) { return <img src={String(src)} alt={String(alt ?? "")} style={{ maxWidth: "100%", maxHeight: 300, borderRadius: 10, marginTop: 6 }} />; },
-	table({ children }: { children?: React.ReactNode }) { return <div style={{ overflowX: "auto", margin: "6px 0" }}><table style={{ borderCollapse: "collapse", minWidth: "100%", fontSize: 14 }}>{children as React.ReactNode}</table></div>; },
-	thead({ children }: { children?: React.ReactNode }) { return <thead style={{ borderBottom: `1px solid ${C.border}` }}>{children as React.ReactNode}</thead>; },
-	th({ children }: { children?: React.ReactNode }) { return <th style={{ textAlign: "left", padding: "4px 8px", color: C.text, fontWeight: 600 }}>{children as React.ReactNode}</th>; },
-	td({ children }: { children?: React.ReactNode }) { return <td style={{ padding: "4px 8px", borderTop: `1px solid ${C.border}`, color: C.textMuted }}>{children as React.ReactNode}</td>; },
+	a({ href, children }: { href?: string; children?: React.ReactNode }) { return <a href={String(href)} className="text-[var(--g-accent)]" target="_blank" rel="noopener noreferrer">{children as React.ReactNode}</a>; },
+	img({ src, alt }: { src?: string; alt?: string }) { return <img src={String(src)} alt={String(alt ?? "")} className="max-w-full max-h-[18.75rem] rounded-[0.625rem] mt-1.5 block" />; },
+	table({ children }: { children?: React.ReactNode }) { return <div className="overflow-x-auto my-1.5"><table className="border-collapse min-w-full text-sm">{children as React.ReactNode}</table></div>; },
+	thead({ children }: { children?: React.ReactNode }) { return <thead className="border-b border-[var(--g-border)]">{children as React.ReactNode}</thead>; },
+	th({ children }: { children?: React.ReactNode }) { return <th className="text-left py-1 px-2 text-[var(--g-text)] font-semibold">{children as React.ReactNode}</th>; },
+	td({ children }: { children?: React.ReactNode }) { return <td className="py-1 px-2 border-t border-[var(--g-border)] text-[var(--g-text-muted)]">{children as React.ReactNode}</td>; },
 });
 
 function LiDropdown({ children, index }: { children?: React.ReactNode; index: number }) {
@@ -337,18 +318,15 @@ function LiDropdown({ children, index }: { children?: React.ReactNode; index: nu
 			: typeof children === "string" ? children : ""
 	).split("\n")[0].slice(0, 80) || `Step ${index + 1}`;
 	return (
-		<li style={{ listStyle: "none", marginBottom: 4 }}>
+		<li className="list-none mb-1">
 			<button
 				onClick={() => setOpen(!open)}
-				style={{
-					background: "none", border: "none", cursor: "pointer", padding: "2px 0",
-					display: "flex", alignItems: "center", gap: 6, textAlign: "left",
-				}}
+				className="collapse-btn bg-none border-none py-px text-left"
 			>
-				<span style={{ color: C.textDim, fontSize: 12, transition: "transform 0.15s", transform: open ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block" }}>▶</span>
-				<span style={{ color: C.text, fontSize: 15 }}><strong>{index + 1}.</strong> {text}</span>
+				<span className={`text-[var(--g-text-dim)] text-xs transition-transform duration-150 inline-block ${open ? "rotate-90" : "rotate-0"}`}>▶</span>
+				<span className="text-[var(--g-text)] text-[0.9375rem]"><strong>{index + 1}.</strong> {text}</span>
 			</button>
-			{open && <div style={{ paddingLeft: 22, fontSize: 14, color: C.textMuted }}>{children as React.ReactNode}</div>}
+			{open && <div className="pl-[1.375rem] text-sm text-[var(--g-text-muted)]">{children as React.ReactNode}</div>}
 		</li>
 	);
 }
@@ -356,19 +334,16 @@ function LiDropdown({ children, index }: { children?: React.ReactNode; index: nu
 function SectionDropdown({ title, body, msgKey, langMap, defaultOpen }: { title: string; body: string; msgKey: number | string; langMap: Record<string, string>; defaultOpen: boolean }) {
 	const [open, setOpen] = useState(defaultOpen);
 	return (
-		<div style={{ marginBottom: 6 }}>
+		<div className="mb-1.5">
 			<button
 				onClick={() => setOpen(!open)}
-				style={{
-					background: "none", border: "none", cursor: "pointer", padding: "4px 0",
-					display: "flex", alignItems: "center", gap: 6, width: "100%", textAlign: "left",
-				}}
+				className="collapse-btn bg-none border-none py-1 w-full text-left"
 			>
-				<span style={{ color: C.textDim, fontSize: 16, transition: "transform 0.15s", transform: open ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block" }}>▶</span>
-				<span style={{ color: C.text, fontWeight: 600, fontSize: 20 }}>{title}</span>
+				<span className={`text-[var(--g-text-dim)] text-base transition-transform duration-150 inline-block ${open ? "rotate-90" : "rotate-0"}`}>▶</span>
+				<span className="text-[var(--g-text)] font-semibold text-xl">{title}</span>
 			</button>
 			{open && (
-				<div style={{ paddingLeft: 18, fontSize: 14 }}>
+				<div className="pl-[1.125rem] text-sm">
 					<ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap) as never}>{body}</ReactMarkdown>
 				</div>
 			)}
@@ -419,34 +394,22 @@ function EndpointDropdown({ endpoints, onSelect }: { endpoints: EndpointCard[]; 
 	const [open, setOpen] = useState(false);
 
 	return (
-		<div style={{ marginTop: 6 }}>
+		<div className="mt-1.5">
 			<button
 				onClick={() => setOpen(!open)}
-				style={{
-					display: "flex",
-					alignItems: "center",
-					gap: 6,
-					fontSize: 13,
-					color: C.accent,
-					background: C.accentDim,
-					border: `1px solid ${C.borderAccent}`,
-					borderRadius: 4,
-					padding: "4px 10px",
-					cursor: "pointer",
-					width: "100%",
-				}}
+				className="collapse-btn text-[0.8125rem] text-[var(--g-accent)] bg-[var(--g-accent-dim)] border border-[var(--g-border-accent)] rounded px-2.5 py-1 w-full"
 			>
-				<span style={{ flex: 1, textAlign: "left" }}>
+				<span className="flex-1 text-left">
 					{`${endpoints.length} endpoint${endpoints.length !== 1 ? "s" : ""} found`}
 				</span>
-				<span style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s", display: "flex" }}>
+				<span className={`flex transition-transform duration-150 ${open ? "rotate-180" : "rotate-0"}`}>
 					<svg width={10} height={10} viewBox="0 0 10 10" fill="none">
 						<path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
 					</svg>
 				</span>
 			</button>
 			{open && (
-				<div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3, maxHeight: 300, overflow: "auto" }}>
+				<div className="mt-1 flex flex-col gap-[0.1875rem] max-h-[18.75rem] overflow-auto">
 					{[...endpoints].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).map((ep, j) => (
 						<EpCard
 							key={j}
@@ -487,18 +450,18 @@ function DebugPanel({ entries, model, onClose }: { entries: Record<string, unkno
 	const cost = totalCostNum > 0 ? totalCostNum.toFixed(Math.max(2, 6 - Math.floor(Math.log10(totalCostNum)))) : primaryCost;
 
 	return (
-		<div style={{ width: 300, flexShrink: 0, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", background: C.surface, minHeight: 0, overflow: "hidden" }}>
+		<div className="w-[18.75rem] shrink-0 border-l border-[var(--g-border)] flex flex-col bg-[var(--g-surface)] min-h-0 overflow-hidden">
 			{/* Header */}
-			<div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", background: C.bg, flexShrink: 0 }}>
-				<span style={{ fontSize: 12, fontWeight: 500, color: C.textMuted, flex: 1 }}>Debug trace</span>
-				<span style={{ fontSize: 10, color: C.textDim, marginRight: 8, fontFamily: "monospace" }}>{entries.length} events</span>
-				<button onClick={onClose} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textDim, display: "flex", padding: 2 }}>{Ic.x(12)}</button>
+			<div className="px-3.5 py-2.5 border-b border-[var(--g-border)] flex items-center bg-[var(--g-bg)] shrink-0">
+				<span className="text-xs font-medium text-[var(--g-text-muted)] flex-1">Debug trace</span>
+				<span className="debug-entry text-[var(--g-text-dim)] mr-2">{entries.length} events</span>
+				<button onClick={onClose} className="btn-icon p-0.5">{Ic.x(12)}</button>
 			</div>
 
 			{/* Scroll area */}
-			<div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "10px 12px", minHeight: 0 }}>
+			<div className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2.5 min-h-0">
 				{entries.length === 0 ? (
-					<div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.textDim, fontSize: 12 }}>
+					<div className="flex-1 flex items-center justify-center text-[var(--g-text-dim)] text-xs">
 						No debug data yet
 					</div>
 				) : (
@@ -507,26 +470,26 @@ function DebugPanel({ entries, model, onClose }: { entries: Record<string, unkno
 			</div>
 
 			{/* Token bar */}
-			<div style={{ padding: "7px 12px", borderTop: `1px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 4, background: C.bg, flexShrink: 0 }}>
-				<div style={{ display: "flex", gap: 14 }}>
-					<span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>
-						primary <span style={{ color: C.textMuted }}>{primaryTokens.toLocaleString()}</span>
+			<div className="px-3 py-[0.4375rem] border-t border-[var(--g-border)] flex flex-col gap-1 bg-[var(--g-bg)] shrink-0">
+				<div className="flex gap-3.5">
+					<span className="debug-entry text-[var(--g-text-dim)]">
+						primary <span className="text-[var(--g-text-muted)]">{primaryTokens.toLocaleString()}</span>
 					</span>
 					{verifyTokens > 0 && (
-						<span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>
-							double check <span style={{ color: "#10b981" }}>{verifyTokens.toLocaleString()}</span>
+						<span className="debug-entry text-[var(--g-text-dim)]">
+							double check <span className="text-[#10b981]">{verifyTokens.toLocaleString()}</span>
 						</span>
 					)}
-					<span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>
-						<span style={{ color: C.textMuted }}>{toolCallCount}</span> tools
+					<span className="debug-entry text-[var(--g-text-dim)]">
+						<span className="text-[var(--g-text-muted)]">{toolCallCount}</span> tools
 					</span>
 				</div>
-				<div style={{ display: "flex", gap: 14 }}>
-					<span style={{ fontSize: 10, fontFamily: "monospace", fontWeight: 600, color: C.text }}>
+				<div className="flex gap-3.5">
+					<span className="debug-entry font-semibold text-[var(--g-text)]">
 						total {grandTotal.toLocaleString()} tokens
 					</span>
 					{cost && (
-						<span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>
+						<span className="debug-entry text-[var(--g-text-dim)]">
 							${cost}
 						</span>
 					)}
@@ -561,7 +524,7 @@ function DebugPanelEntries({ entries }: { entries: Record<string, unknown>[] }) 
 			if (group !== currentGroup) {
 				currentGroup = group;
 				rows.push(
-					<div key={`grp-${i}`} style={{ fontSize: 10, color: C.textDim, padding: "8px 0 3px", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+					<div key={`grp-${i}`} className="debug-group-label">
 						{group}
 					</div>
 				);
@@ -570,7 +533,7 @@ function DebugPanelEntries({ entries }: { entries: Record<string, unknown>[] }) 
 			const outTok = (e.outputTokens as number ?? 0).toLocaleString();
 			const stop = e.stopReason as string ?? "";
 			rows.push(
-				<div key={`r-${i}`} style={{ fontFamily: "monospace", fontSize: 11, lineHeight: 1.65, color: C.accent, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+				<div key={`r-${i}`} className="debug-entry text-[var(--g-accent)] font-medium truncate">
 					in:{inTok} out:{outTok} stop:{stop}
 				</div>
 			);
@@ -585,11 +548,11 @@ function DebugPanelEntries({ entries }: { entries: Record<string, unknown>[] }) 
 			const preview = truncated ? full.slice(0, 80) + "…" : full;
 			const expanded = expandedIdx.has(i);
 			rows.push(
-				<div key={`tc-${i}`} style={{ fontFamily: "monospace", fontSize: 11, lineHeight: 1.65 }}>
-					<span style={{ color: C.accent }}>→ </span>
-					<span style={{ color: C.green }}>{expanded ? full : preview}</span>
+				<div key={`tc-${i}`} className="debug-entry">
+					<span className="text-[var(--g-accent)]">→ </span>
+					<span className="text-[var(--g-green)]">{expanded ? full : preview}</span>
 					{truncated && (
-						<button onClick={() => toggleExpand(i)} style={{ fontSize: 10, color: C.accent, background: "none", border: "none", cursor: "pointer", padding: "0 0 0 4px", fontFamily: "monospace" }}>
+						<button onClick={() => toggleExpand(i)} className="text-[0.625rem] text-[var(--g-accent)] bg-transparent border-none cursor-pointer pl-1 font-mono">
 							{expanded ? "less" : "more"}
 						</button>
 					)}
@@ -607,13 +570,13 @@ function DebugPanelEntries({ entries }: { entries: Record<string, unknown>[] }) 
 			const truncated = resultText.length > 200;
 			const expanded = expandedIdx.has(i);
 			rows.push(
-				<div key={`tr-${i}`} style={{ fontFamily: "monospace", fontSize: 11, lineHeight: 1.65, marginLeft: 8 }}>
-					<span style={{ color: C.textMuted }}>← {name}: {len} chars, {count} cards</span>
-					<div style={{ color: C.textDim, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 10, marginTop: 1 }}>
+				<div key={`tr-${i}`} className="debug-entry ml-2">
+					<span className="text-[var(--g-text-muted)]">← {name}: {len} chars, {count} cards</span>
+					<div className="text-[var(--g-text-dim)] whitespace-pre-wrap break-words text-[0.625rem] mt-px">
 						{expanded ? resultText : preview}{truncated && !expanded && "…"}
 					</div>
 					{truncated && (
-						<button onClick={() => toggleExpand(i)} style={{ fontSize: 10, color: C.accent, background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: "monospace" }}>
+						<button onClick={() => toggleExpand(i)} className="text-[0.625rem] text-[var(--g-accent)] bg-transparent border-none cursor-pointer pl-0 font-mono">
 							{expanded ? "show less" : `show all (${(e.resultLength as number ?? 0).toLocaleString()} chars)`}
 						</button>
 					)}
@@ -624,7 +587,7 @@ function DebugPanelEntries({ entries }: { entries: Record<string, unknown>[] }) 
 
 		// Fallback for other event types
 		rows.push(
-			<div key={`oth-${i}`} style={{ fontFamily: "monospace", fontSize: 11, lineHeight: 1.65, color: C.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+			<div key={`oth-${i}`} className="debug-entry text-[var(--g-text-dim)] truncate">
 				{JSON.stringify(e)}
 			</div>
 		);
@@ -647,12 +610,11 @@ function VerificationBadge({ text, usage, msgKey, streaming }: { text: string; u
 	// Still loading
 	if (streaming && !text.trim()) {
 		return (
-			<div style={{ marginTop: 10, padding: "6px 10px", display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.textDim, borderTop: `1px solid ${C.border}` }}>
-				<svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 1s linear infinite" }}>
+			<div className="mt-2.5 px-2.5 py-1.5 flex items-center gap-1.5 text-[0.6875rem] text-[var(--g-text-dim)] border-t border-[var(--g-border)]">
+				<svg className="animate-spin" width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
 					<path d="M21 12a9 9 0 1 1-6.219-8.56" />
 				</svg>
 				<span>double checking...</span>
-				<style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
 			</div>
 		);
 	}
@@ -662,38 +624,34 @@ function VerificationBadge({ text, usage, msgKey, streaming }: { text: string; u
 	// Verified — simple inline badge
 	if (isVerified) {
 		return (
-			<div style={{ marginTop: 10, padding: "6px 0", display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#10b981", borderTop: `1px solid ${C.border}` }}>
+			<div className="mt-2.5 py-1.5 flex items-center gap-[0.3125rem] text-[0.6875rem] text-[#10b981] border-t border-[var(--g-border)]">
 				<svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
 				<span>{text.trim()}</span>
-				{tokenCount > 0 && <span style={{ color: C.textDim, fontSize: 10 }}>({tokenCount.toLocaleString()} tok)</span>}
+				{tokenCount > 0 && <span className="text-[var(--g-text-dim)] text-[0.625rem]">({tokenCount.toLocaleString()} tok)</span>}
 			</div>
 		);
 	}
 
 	// Correction — clickable dropdown
 	return (
-		<div style={{ marginTop: 10, borderTop: `1px solid ${C.border}` }}>
+		<div className="mt-2.5 border-t border-[var(--g-border)]">
 			<button
 				onClick={() => setOpen(!open)}
-				style={{
-					display: "flex", alignItems: "center", gap: 5, width: "100%",
-					padding: "8px 0", border: "none", background: "none", cursor: "pointer",
-					fontSize: 11, fontWeight: 600, color: "#f59e0b", textTransform: "uppercase", letterSpacing: 0.5,
-				}}
+				className="flex items-center gap-[0.3125rem] w-full py-2 border-none bg-transparent cursor-pointer text-[0.6875rem] font-semibold text-[#f59e0b] uppercase tracking-[0.5px]"
 			>
 				<svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
 					<path d="M12 9v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
 				</svg>
 				<span>Corrected by Sonnet</span>
-				{tokenCount > 0 && <span style={{ fontWeight: 400, color: C.textDim }}>{tokenCount.toLocaleString()} tok</span>}
-				<span style={{ flex: 1 }} />
+				{tokenCount > 0 && <span className="font-normal text-[var(--g-text-dim)]">{tokenCount.toLocaleString()} tok</span>}
+				<span className="flex-1" />
 				<svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
-					style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>
+					className={`transition-transform duration-150 ${open ? "rotate-180" : "rotate-0"}`}>
 					<path d="M6 9l6 6 6-6" />
 				</svg>
 			</button>
 			{open && (
-				<div style={{ paddingBottom: 4, fontSize: 14, lineHeight: 1.6, color: C.textMuted }}>
+				<div className="pb-1 text-sm leading-[1.6] text-[var(--g-text-muted)]">
 					<GregMarkdown text={cleanText(text)} msgKey={`${msgKey}-verify`} />
 				</div>
 			)}
@@ -711,21 +669,19 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint, onShow
 	const p = msg.personality ?? "greg";
 	const bubbleStyle = BUBBLE_STYLES[p] ?? BUBBLE_STYLES.greg;
 	return (
-		<div style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
-			<div style={{ maxWidth: "85%" }}>
+		<div className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+			<div className="max-w-[85%]">
 				{msg.role === "assistant" && (
-					<div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-						<span style={{ fontSize: 13, fontWeight: 500, color: PERSONALITY_COLOR[p] }}>greg</span>
+					<div className="flex items-center gap-2 mb-1.5">
+						<span className="text-[0.8125rem] font-medium" style={{ color: PERSONALITY_COLOR[p] }}>greg</span>
 						{msg.model && (
-							<span style={{ fontSize: 11, color: C.textDim, fontFamily: "monospace" }}>{msg.model}</span>
+							<span className="text-[0.6875rem] text-[var(--g-text-dim)] font-mono">{msg.model}</span>
 						)}
 						{msg.debug && msg.debug.length > 0 && !msg.streaming && (
 							<button
 								onClick={() => onShowDebug(i)}
 								title="Debug trace"
-								style={{ display: "flex", alignItems: "center", border: "none", background: "none", cursor: "pointer", color: C.textDim, padding: "1px 3px", borderRadius: 4, marginLeft: 2, opacity: 0.6 }}
-								onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; (e.currentTarget as HTMLElement).style.color = C.accent; }}
-								onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = "0.6"; (e.currentTarget as HTMLElement).style.color = C.textDim; }}
+								className="btn-icon p-[0.1875rem] ml-0.5 opacity-60 hover:opacity-100 hover:text-[var(--g-accent)]"
 							>
 								{Ic.bug(12)}
 							</button>
@@ -733,14 +689,11 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint, onShow
 					</div>
 				)}
 				<div
+					className={`px-3.5 py-3 text-sm leading-[1.6] ${msg.role === "user" ? "rounded-[12px_12px_2px_12px]" : "rounded-[0.625rem]"}`}
 					style={{
-						padding: "12px 14px",
-						borderRadius: msg.role === "user" ? "12px 12px 2px 12px" : 10,
-						fontSize: 14,
-						lineHeight: 1.6,
-						background: msg.role === "user" ? C.userBg : bubbleStyle.bg,
-						border: `1px solid ${msg.role === "user" ? C.borderAccent : bubbleStyle.border}`,
-						color: msg.role === "user" ? C.text : C.textMuted,
+						background: msg.role === "user" ? "var(--g-user-bg)" : bubbleStyle.bg,
+						border: `1px solid ${msg.role === "user" ? "var(--g-border-accent)" : bubbleStyle.border}`,
+						color: msg.role === "user" ? "var(--g-text)" : "var(--g-text-muted)",
 					}}
 				>
 					{msg.role === "user" ? (
@@ -748,7 +701,7 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint, onShow
 					) : msg.streaming ? (
 						<>
 							{loadingGif && !msg.text && (
-								<img src={loadingGif} alt="greg thinking" style={{ maxHeight: 180, maxWidth: "100%", borderRadius: 8, marginBottom: 6, display: "block" }} />
+								<img src={loadingGif} alt="greg thinking" className="max-h-[180px] max-w-full rounded-lg mb-1.5 block" />
 							)}
 							<StreamingText text={msg.text} personality={msg.personality} />
 						</>
@@ -787,7 +740,7 @@ function SwaggerPanel({ item, type, onClose }: { item: { method?: string; path?:
 		const overlay = document.createElement("div");
 		overlay.style.cssText = "position:fixed;inset:0;z-index:9999;cursor:col-resize;";
 		document.body.appendChild(overlay);
-		if (handle) { handle.style.background = C.accent; handle.style.opacity = "1"; }
+		if (handle) { handle.style.background = "var(--g-accent)"; handle.style.opacity = "1"; }
 
 		const onMove = (ev: MouseEvent) => {
 			const delta = startX - ev.clientX;
@@ -842,41 +795,25 @@ function SwaggerPanel({ item, type, onClose }: { item: { method?: string; path?:
 	}, [item.api]);
 
 	return (
-		<div ref={containerRef} style={{ width: initWidth, flexShrink: 0, display: "flex", position: "relative", height: "100%" }}>
+		<div ref={containerRef} className="shrink-0 flex relative h-full" style={{ width: initWidth }}>
 			{/* Drag handle */}
 			<div
 				onMouseDown={onMouseDown}
-				style={{
-					width: 8,
-					cursor: "col-resize",
-					flexShrink: 0,
-					display: "flex",
-					alignItems: "center",
-					justifyContent: "center",
-				}}
+				className="w-2 cursor-col-resize shrink-0 flex items-center justify-center"
 			>
-				<div ref={handleRef} style={{
-					width: 3,
-					height: 36,
-					borderRadius: 2,
-					background: C.textDim,
-					opacity: 0.5,
-				}} />
+				<div ref={handleRef} className="w-[0.1875rem] h-9 rounded-[0.125rem] bg-[var(--g-text-dim)] opacity-50" />
 			</div>
 			{/* Panel content */}
-			<div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+			<div className="flex-1 flex flex-col min-w-0">
 				{/* Header */}
-				<div style={{
-					display: "flex", alignItems: "center", gap: 8, padding: "8px 10px",
-					background: C.surface, borderBottom: `1px solid ${C.border}`, borderRadius: "6px 6px 0 0",
-				}}>
-					<span style={{ fontSize: 12, fontWeight: 600, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+				<div className="flex items-center gap-2 px-2.5 py-2 bg-[var(--g-surface)] border-b border-[var(--g-border)] rounded-t-md">
+					<span className="text-xs font-semibold text-[var(--g-text-dim)] uppercase tracking-[0.05em]">
 						{isEp ? "Endpoint" : "Schema"} — {item.api}
 					</span>
-					<span style={{ flex: 1 }} />
+					<span className="flex-1" />
 					<button
 						onClick={onClose}
-						style={{ display: "flex", border: "none", cursor: "pointer", padding: 3, background: "transparent", color: C.textDim, borderRadius: 4 }}
+						className="btn-icon p-[0.1875rem]"
 					>
 						{Ic.x()}
 					</button>
@@ -886,14 +823,7 @@ function SwaggerPanel({ item, type, onClose }: { item: { method?: string; path?:
 					ref={iframeRef}
 					src={baseSrc}
 					onLoad={onIframeLoad}
-					style={{
-						flex: 1,
-						border: `1px solid ${C.border}`,
-						borderTop: "none",
-						borderRadius: "0 0 6px 6px",
-						background: C.surface,
-						width: "100%",
-					}}
+					className="flex-1 border border-[var(--g-border)] border-t-0 rounded-b-md bg-[var(--g-surface)] w-full"
 					title={`${item.api} docs`}
 				/>
 			</div>
@@ -941,7 +871,30 @@ export default function GregPage() {
 		deleteChat,
 		saveChat,
 		setDoubleCheck,
-	} = useStore();
+	} = useStore(useShallow((s) => ({
+		chatMessages: s.chatMessages,
+		personality: s.personality,
+		chatLoading: s.chatLoading,
+		addChatMessage: s.addChatMessage,
+		updateLastAssistant: s.updateLastAssistant,
+		setPersonality: s.setPersonality,
+		setChatLoading: s.setChatLoading,
+		detailItem: s.detailItem,
+		detailType: s.detailType,
+		setDetail: s.setDetail,
+		customGregPrompt: s.customGregPrompt,
+		customExplainerPrompt: s.customExplainerPrompt,
+		customProPrompt: s.customProPrompt,
+		selectedModel: s.selectedModel,
+		selectedProvider: s.selectedProvider,
+		setModel: s.setModel,
+		chatHistory: s.chatHistory,
+		newChat: s.newChat,
+		loadChat: s.loadChat,
+		deleteChat: s.deleteChat,
+		saveChat: s.saveChat,
+		setDoubleCheck: s.setDoubleCheck,
+	})));
 	const doubleCheck = false; // disabled
 
 	const isGregLike = personality === "greg";
@@ -1118,21 +1071,12 @@ export default function GregPage() {
 	};
 
 	return (
-		<div style={{ padding: "20px 24px", height: "calc(100% - 56px)", display: "flex", flexDirection: "column" }}>
+		<div className="px-6 py-5 h-[calc(100%-3.5rem)] flex flex-col">
 			{/* Chat header */}
-			<div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20, flexShrink: 0 }}>
+			<div className="flex items-center gap-4 mb-5 shrink-0">
 				<div
-					style={{
-						width: 42,
-						height: 42,
-						borderRadius: 10,
-						background: PERSONALITY_COLOR[personality],
-						display: "flex",
-						alignItems: "center",
-						justifyContent: "center",
-						flexShrink: 0,
-						transition: "background 0.15s",
-					}}
+					className="w-[2.625rem] h-[2.625rem] rounded-[0.625rem] flex items-center justify-center shrink-0 transition-[background] duration-150"
+					style={{ background: PERSONALITY_COLOR[personality] }}
 				>
 					<svg width={26} height={26} viewBox="0 0 20 20" fill="none">
 						<circle cx="7" cy="8" r="1.4" fill="white"/>
@@ -1140,38 +1084,22 @@ export default function GregPage() {
 						<path d="M6.5 13.5h7" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
 					</svg>
 				</div>
-				<span style={{ fontSize: 22, fontWeight: 600, color: PERSONALITY_COLOR[personality], transition: "color 0.15s" }}>greg</span>
-				<span style={{ fontSize: 13, color: C.textDim }}>{personality === "greg" ? "casual · finds endpoints fast" : personality === "curt" ? "minimal · straight answers" : "thorough · explains how & why"}</span>
-				<span style={{ flex: 1 }} />
+				<span className="text-[1.375rem] font-semibold transition-colors duration-150" style={{ color: PERSONALITY_COLOR[personality] }}>greg</span>
+				<span className="text-[0.8125rem] text-[var(--g-text-dim)]">{personality === "greg" ? "casual · finds endpoints fast" : personality === "curt" ? "minimal · straight answers" : "thorough · explains how & why"}</span>
+				<span className="flex-1" />
 
 				{/* Personality selector */}
-				<div
-					style={{
-						display: "flex",
-						alignItems: "center",
-						fontSize: 14,
-						height: 36,
-						borderRadius: 8,
-						background: C.surface,
-						border: `1px solid ${C.border}`,
-						overflow: "hidden",
-					}}
-				>
+				<div className="flex items-center text-sm h-9 rounded-lg bg-[var(--g-surface)] border border-[var(--g-border)] overflow-hidden">
 					{(["greg", "curt", "verbose"] as const).map((p) => (
 						<div
 							key={p}
 							onClick={() => setPersonality(p)}
+							className="px-3 h-full flex items-center cursor-pointer transition-all duration-150"
 							style={{
-								padding: "0 12px",
-								height: "100%",
-								display: "flex",
-								alignItems: "center",
-								cursor: "pointer",
-								color: personality === p ? (p === "greg" ? C.green : p === "verbose" ? "#f59e0b" : C.accent) : C.textDim,
+								color: personality === p ? (p === "greg" ? "var(--g-green)" : p === "verbose" ? "#f59e0b" : "var(--g-accent)") : "var(--g-text-dim)",
 								background: personality === p ? (p === "greg" ? "rgba(52,211,153,0.1)" : p === "verbose" ? "rgba(245,158,11,0.1)" : "rgba(161,161,170,0.1)") : "transparent",
 								fontWeight: personality === p ? 600 : 400,
-								transition: "all 0.15s",
-								borderRight: p !== "verbose" ? `1px solid ${C.border}` : "none",
+								borderRight: p !== "verbose" ? "1px solid var(--g-border)" : "none",
 							}}
 						>
 							{p}
@@ -1186,15 +1114,7 @@ export default function GregPage() {
 						const m = models.find((x) => x.id === e.target.value);
 						if (m) setModel(m.id, m.provider);
 					}}
-					style={{
-						height: 36,
-						padding: "0 10px",
-						background: C.surface,
-						border: `1px solid ${C.border}`,
-						borderRadius: 8,
-						fontSize: 14,
-						color: C.textMuted,
-					}}
+					className="h-9 px-2.5 bg-[var(--g-surface)] border border-[var(--g-border)] rounded-lg text-sm text-[var(--g-text-muted)]"
 				>
 					<option value="">Default model</option>
 					{models.filter((m) => m.provider === "anthropic").length > 0 && (
@@ -1219,19 +1139,12 @@ export default function GregPage() {
 				<button
 					onClick={() => setSidebarOpen(!sidebarOpen)}
 					title="Chat history"
-					style={{
-						display: "flex",
-						alignItems: "center",
-						gap: 5,
-						border: `1px solid ${sidebarOpen ? C.borderAccent : C.border}`,
-						cursor: "pointer",
-						padding: "6px 10px",
-						borderRadius: 8,
-						background: sidebarOpen ? C.accentDim : C.surface,
-						color: sidebarOpen ? C.accent : C.textDim,
-						fontSize: 11,
-						fontWeight: 500,
-					}}
+					className={[
+						"flex items-center gap-[0.3125rem] cursor-pointer px-2.5 py-1.5 rounded-lg text-[0.6875rem] font-medium",
+						sidebarOpen
+							? "border border-[var(--g-border-accent)] bg-[var(--g-accent-dim)] text-[var(--g-accent)]"
+							: "border border-[var(--g-border)] bg-[var(--g-surface)] text-[var(--g-text-dim)]",
+					].join(" ")}
 				>
 					<svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
 					<span>History</span>
@@ -1239,25 +1152,22 @@ export default function GregPage() {
 			</div>
 
 			{/* Main layout: sidebar + chat */}
-			<div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+			<div className="flex flex-1 min-h-0">
 
 			{/* Chat history sidebar */}
 			{sidebarOpen && (
-				<div style={{
-					width: 260, flexShrink: 0, background: C.surface,
-					borderRight: `1px solid ${C.border}`, overflow: "auto", padding: "12px 10px",
-				}}>
-					<div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
-						<span style={{ fontSize: 15, fontWeight: 600, color: C.text, flex: 1 }}>History</span>
-						<button onClick={handleNewChat} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.accent, display: "flex", padding: 4 }} title="New chat">
+				<div className="w-[16.25rem] shrink-0 bg-[var(--g-surface)] border-r border-[var(--g-border)] overflow-auto px-2.5 py-3">
+					<div className="flex items-center mb-2.5">
+						<span className="text-[0.9375rem] font-semibold text-[var(--g-text)] flex-1">History</span>
+						<button onClick={handleNewChat} className="btn-icon p-1 text-[var(--g-accent)]" title="New chat">
 							{Ic.plus(14)}
 						</button>
-						<button onClick={() => setSidebarOpen(false)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textDim, display: "flex", padding: 4 }}>
+						<button onClick={() => setSidebarOpen(false)} className="btn-icon p-1">
 							{Ic.x(14)}
 						</button>
 					</div>
 					{chatHistory.length === 0 && (
-						<span style={{ fontSize: 13, color: C.textDim }}>No chats yet</span>
+						<span className="text-[0.8125rem] text-[var(--g-text-dim)]">No chats yet</span>
 					)}
 					{chatHistory.map((chat) => {
 						const isActive = chat.id === useStore.getState().activeChatId;
@@ -1265,21 +1175,20 @@ export default function GregPage() {
 							<div
 								key={chat.id}
 								onClick={() => loadChat(chat.id)}
+								className="flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer mb-0.5 transition-colors duration-100"
 								style={{
-									display: "flex", alignItems: "center", gap: 6, padding: "6px 8px",
-									borderRadius: 6, cursor: "pointer", marginBottom: 2,
-									background: isActive ? C.surfaceActive : "transparent",
-									borderLeft: isActive ? `2px solid ${C.accent}` : "2px solid transparent",
+									background: isActive ? "var(--g-surface-active)" : "transparent",
+									borderLeft: isActive ? "2px solid var(--g-accent)" : "2px solid transparent",
 								}}
-								onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = C.surfaceHover; }}
+								onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "var(--g-surface-hover)"; }}
 								onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
 							>
-								<span style={{ fontSize: 13, color: C.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+								<span className="text-[0.8125rem] text-[var(--g-text)] flex-1 truncate">
 									{chat.title}
 								</span>
 								<button
 									onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}
-									style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textDim, display: "flex", flexShrink: 0, padding: 2, opacity: 0.5 }}
+									className="btn-icon p-0.5 shrink-0 opacity-50"
 								>
 									{Ic.x(11)}
 								</button>
@@ -1290,34 +1199,16 @@ export default function GregPage() {
 			)}
 
 			{/* Main area */}
-			<div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", padding: "0 20px" }}>
-			<div style={{ display: "flex", gap: 20, flex: 1, minHeight: 0 }}>
+			<div className="flex-1 min-w-0 flex flex-col px-5">
+			<div className="flex gap-5 flex-1 min-h-0">
 				{/* Messages */}
-				<div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", position: "relative" }}>
-					<div ref={scrollContainerRef} onScroll={handleScroll} style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 12, position: "relative" }}>
+				<div className="flex-1 min-w-0 flex flex-col relative">
+					<div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-auto flex flex-col gap-3 relative">
 						{chatMessages.length === 0 && (
-							<div
-								style={{
-									flex: 1,
-									display: "flex",
-									alignItems: "center",
-									justifyContent: "center",
-									flexDirection: "column",
-									gap: 16,
-									color: C.textDim,
-								}}
-							>
+							<div className="flex-1 flex items-center justify-center flex-col gap-4 text-[var(--g-text-dim)]">
 								<div
-									style={{
-										width: 80,
-										height: 80,
-										borderRadius: 16,
-										background: PERSONALITY_COLOR[personality],
-										transition: "background 0.15s",
-										display: "flex",
-										alignItems: "center",
-										justifyContent: "center",
-									}}
+									className="w-20 h-20 rounded-2xl flex items-center justify-center transition-[background] duration-150"
+									style={{ background: PERSONALITY_COLOR[personality] }}
 								>
 									<svg width={50} height={50} viewBox="0 0 20 20" fill="none">
 										<circle cx="7" cy="8" r="1.4" fill="white"/>
@@ -1326,29 +1217,18 @@ export default function GregPage() {
 									</svg>
 								</div>
 								{isGregLike && (
-									<img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" style={{ maxHeight: 720, borderRadius: 12 }} />
+									<img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
 								)}
-								<span style={{ fontSize: 24 }}>
+								<span className="text-2xl">
 									{greeting}
 								</span>
 								{suggestions.length > 0 && (
-									<div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", maxWidth: 560 }}>
+									<div className="flex flex-wrap gap-2 justify-center max-w-[35rem]">
 										{suggestions.map((s, i) => (
 											<button
 												key={i}
 												onClick={() => handleSuggestion(s)}
-												style={{
-													fontSize: 13,
-													color: C.textMuted,
-													background: C.surface,
-													border: `1px solid ${C.border}`,
-													borderRadius: 20,
-													padding: "6px 14px",
-													cursor: "pointer",
-													transition: "border-color 0.15s, color 0.15s",
-												}}
-												onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.borderAccent; (e.currentTarget as HTMLElement).style.color = C.text; }}
-												onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.border; (e.currentTarget as HTMLElement).style.color = C.textMuted; }}
+												className="text-[0.8125rem] text-[var(--g-text-muted)] bg-[var(--g-surface)] border border-[var(--g-border)] rounded-[1.25rem] px-3.5 py-1.5 cursor-pointer transition-[border-color,color] duration-150 hover:border-[var(--g-border-accent)] hover:text-[var(--g-text)]"
 											>
 												{s}
 											</button>
@@ -1367,24 +1247,7 @@ export default function GregPage() {
 					{userScrolled && (
 						<button
 							onClick={scrollToBottom}
-							style={{
-								position: "absolute",
-								bottom: 90,
-								left: "50%",
-								transform: "translateX(-50%)",
-								display: "flex",
-								alignItems: "center",
-								gap: 6,
-								padding: "8px 16px",
-								borderRadius: 20,
-								border: `1px solid ${C.borderAccent}`,
-								background: C.surface,
-								color: C.accent,
-								cursor: "pointer",
-								fontSize: 14,
-								boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
-								zIndex: 10,
-							}}
+							className="absolute bottom-[5.625rem] left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-4 py-2 rounded-[1.25rem] border border-[var(--g-border-accent)] bg-[var(--g-surface)] text-[var(--g-accent)] cursor-pointer text-sm shadow-[0_4px_16px_rgba(0,0,0,0.3)] z-10"
 						>
 							<svg width={14} height={14} viewBox="0 0 14 14" fill="none">
 								<path d="M3 5.5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -1394,7 +1257,7 @@ export default function GregPage() {
 					)}
 
 					{/* Input */}
-					<div style={{ marginTop: 12, flexShrink: 0 }}>
+					<div className="mt-3 shrink-0">
 						<InputBoxWrapper personality={personality}>
 						<textarea
 							rows={1}
@@ -1402,55 +1265,19 @@ export default function GregPage() {
 							value={input}
 							onChange={(e) => { setInput(e.target.value); const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; }}
 							onKeyDown={handleKeyDown}
-							style={{
-								flex: 1,
-								background: "none",
-								border: "none",
-								outline: "none",
-								fontSize: 13,
-								color: C.text,
-								resize: "none",
-								fontFamily: "inherit",
-								lineHeight: 1.5,
-								minHeight: 20,
-								padding: 0,
-							}}
+							className="flex-1 bg-transparent border-none outline-none text-[0.8125rem] text-[var(--g-text)] resize-none font-[inherit] leading-[1.5] min-h-5 p-0"
 						/>
 						{chatLoading ? (
 							<button
 								onClick={() => { abortRef.current?.abort(); abortRef.current = null; setChatLoading(false); updateLastAssistant((m) => ({ ...m, streaming: false })); saveChat(); }}
-								style={{
-									width: 28,
-									height: 28,
-									display: "flex",
-									alignItems: "center",
-									justifyContent: "center",
-									background: "rgba(248,113,113,0.1)",
-									border: "none",
-									borderRadius: 7,
-									cursor: "pointer",
-									color: "#F87171",
-									flexShrink: 0,
-								}}
+								className="chat-action-btn bg-[rgba(248,113,113,0.1)] text-[#F87171]"
 							>
 								<svg width={14} height={14} viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2" /></svg>
 							</button>
 						) : (
 							<button
 								onClick={() => handleSend()}
-								style={{
-									width: 28,
-									height: 28,
-									display: "flex",
-									alignItems: "center",
-									justifyContent: "center",
-									background: C.accentMuted,
-									border: "none",
-									borderRadius: 7,
-									cursor: "pointer",
-									color: C.accent,
-									flexShrink: 0,
-								}}
+								className="chat-action-btn bg-[var(--g-accent-muted)] text-[var(--g-accent)]"
 							>
 								{Ic.send(14)}
 							</button>

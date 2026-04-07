@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from "react";
-import { C } from "../lib/constants";
+import { useShallow } from "zustand/react/shallow";
 import { Ic } from "../lib/icons";
 import { useStore, nextJobId } from "../store/store";
 import type { IngestJob } from "../store/store";
 import { listApis } from "../lib/api";
+import "./SettingsPage.css";
 
 type IngestMode = "url" | "file" | "paste";
 
@@ -71,19 +72,17 @@ async function runIngestStream(
 // ---------------------------------------------------------------------------
 
 export default function SettingsPage() {
-	const apis = useStore((s) => s.apis);
-	const setApis = useStore((s) => s.setApis);
-	const customGregPrompt = useStore((s) => s.customGregPrompt);
-	const customExplainerPrompt = useStore((s) => s.customExplainerPrompt);
-	const customProPrompt = useStore((s) => s.customProPrompt);
-	const setCustomGregPrompt = useStore((s) => s.setCustomGregPrompt);
-	const setCustomExplainerPrompt = useStore((s) => s.setCustomExplainerPrompt);
-	const setCustomProPrompt = useStore((s) => s.setCustomProPrompt);
-	const ingestJobs = useStore((s) => s.ingestJobs);
-	const addIngestJob = useStore((s) => s.addIngestJob);
-	const updateIngestJob = useStore((s) => s.updateIngestJob);
-	const removeIngestJob = useStore((s) => s.removeIngestJob);
-	const clearDoneJobs = useStore((s) => s.clearDoneJobs);
+	const {
+		apis, setApis,
+		customGregPrompt, customExplainerPrompt, customProPrompt,
+		setCustomGregPrompt, setCustomExplainerPrompt, setCustomProPrompt,
+		ingestJobs, addIngestJob, updateIngestJob, removeIngestJob, clearDoneJobs,
+	} = useStore(useShallow((s) => ({
+		apis: s.apis, setApis: s.setApis,
+		customGregPrompt: s.customGregPrompt, customExplainerPrompt: s.customExplainerPrompt, customProPrompt: s.customProPrompt,
+		setCustomGregPrompt: s.setCustomGregPrompt, setCustomExplainerPrompt: s.setCustomExplainerPrompt, setCustomProPrompt: s.setCustomProPrompt,
+		ingestJobs: s.ingestJobs, addIngestJob: s.addIngestJob, updateIngestJob: s.updateIngestJob, removeIngestJob: s.removeIngestJob, clearDoneJobs: s.clearDoneJobs,
+	})));
 
 	const [mode, setMode] = useState<IngestMode>("url");
 	const [url, setUrl] = useState("");
@@ -156,52 +155,21 @@ export default function SettingsPage() {
 		} catch {}
 	};
 
-	const inputStyle = {
-		width: "100%",
-		height: 44,
-		padding: "0 14px",
-		background: C.surface,
-		border: `1px solid ${C.border}`,
-		borderRadius: 6,
-		fontSize: 16,
-		color: C.text,
-		outline: "none",
-		boxSizing: "border-box" as const,
-	};
-
-	const sectionHeader = {
-		fontSize: 15,
-		fontWeight: 600 as const,
-		color: C.textDim,
-		textTransform: "uppercase" as const,
-		letterSpacing: "0.06em",
-		marginBottom: 8,
-	};
-
 	const hasActiveJobs = ingestJobs.some((j) => j.status === "running" || j.status === "queued");
 
 	return (
-		<div style={{ padding: "14px 20px", height: "calc(100% - 56px)", overflow: "auto" }}>
-			<div style={{ maxWidth: 600 }}>
+		<div className="px-5 py-3.5 h-[calc(100%-3.5rem)] overflow-auto">
+			<div className="max-w-[37.5rem]">
 
 				{/* ── System Prompt ──────────────────────────── */}
-				<div style={{ marginBottom: 24 }}>
-					<div style={sectionHeader}>System Prompt</div>
-					<div style={{ display: "flex", gap: 3, marginBottom: 11 }}>
+				<div className="mb-6">
+					<div className="settings-section-label">System Prompt</div>
+					<div className="flex gap-[0.1875rem] mb-[0.6875rem]">
 						{(["greg", "curt", "verbose"] as const).map((t) => (
 							<button
 								key={t}
 								onClick={() => setPromptTab(t)}
-								style={{
-									padding: "4px 13px",
-									fontSize: 15,
-									fontWeight: 500,
-									border: "none",
-									cursor: "pointer",
-									borderRadius: 6,
-									background: promptTab === t ? C.accentMuted : "transparent",
-									color: promptTab === t ? C.accent : C.textDim,
-								}}
+								className={`settings-tab-btn${promptTab === t ? " active" : ""}`}
 							>
 								{t === "greg" ? "greg mode" : t}
 							</button>
@@ -214,24 +182,10 @@ export default function SettingsPage() {
 							else if (promptTab === "verbose") setCustomExplainerPrompt(e.target.value);
 							else setCustomProPrompt(e.target.value);
 						}}
-						style={{
-							width: "100%",
-							height: 180,
-							padding: "11px 14px",
-							background: C.surface,
-							border: `1px solid ${C.border}`,
-							borderRadius: 6,
-							fontSize: 15,
-							fontFamily: "monospace",
-							color: C.text,
-							outline: "none",
-							resize: "vertical",
-							lineHeight: 1.5,
-							boxSizing: "border-box",
-						}}
+						className="g-input h-[11.25rem] py-[0.6875rem] font-mono text-[0.9375rem] resize-y leading-[1.5]"
 					/>
-					<div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-						<span style={{ fontSize: 14, color: C.textDim, flex: 1 }}>
+					<div className="flex gap-2 mt-1.5">
+						<span className="text-sm text-[var(--g-text-dim)] flex-1">
 							{(promptTab === "greg" ? customGregPrompt : promptTab === "verbose" ? customExplainerPrompt : customProPrompt)
 								? "Using custom prompt"
 								: "Using default prompt"}
@@ -243,15 +197,7 @@ export default function SettingsPage() {
 									else if (promptTab === "verbose") setCustomExplainerPrompt("");
 									else setCustomProPrompt("");
 								}}
-								style={{
-									fontSize: 14,
-									border: "none",
-									cursor: "pointer",
-									padding: "3px 8px",
-									borderRadius: 4,
-									background: "transparent",
-									color: C.textDim,
-								}}
+								className="text-sm border-none cursor-pointer px-2 py-[0.1875rem] rounded bg-transparent text-[var(--g-text-dim)]"
 							>
 								Reset to default
 							</button>
@@ -260,24 +206,15 @@ export default function SettingsPage() {
 				</div>
 
 				{/* ── Ingest ──────────────────────────────────── */}
-				<div style={{ marginBottom: 24 }}>
-					<div style={sectionHeader}>Ingest API Spec</div>
+				<div className="mb-6">
+					<div className="settings-section-label">Ingest API Spec</div>
 
-					<div style={{ display: "flex", gap: 3, marginBottom: 14 }}>
+					<div className="flex gap-[0.1875rem] mb-3.5">
 						{(["url", "file", "paste"] as IngestMode[]).map((m) => (
 							<button
 								key={m}
 								onClick={() => setMode(m)}
-								style={{
-									padding: "6px 14px",
-									fontSize: 15,
-									fontWeight: 500,
-									border: "none",
-									cursor: "pointer",
-									borderRadius: 6,
-									background: mode === m ? C.accentMuted : "transparent",
-									color: mode === m ? C.accent : C.textDim,
-								}}
+								className={`settings-mode-btn${mode === m ? " active" : ""}`}
 							>
 								{m === "url" ? "From URL" : m === "file" ? "Upload Files" : "Paste"}
 							</button>
@@ -286,8 +223,8 @@ export default function SettingsPage() {
 
 					{/* API name — only for URL and paste modes */}
 					{mode !== "file" && (
-						<div style={{ marginBottom: 11 }}>
-							<label style={{ fontSize: 14, color: C.textDim, display: "block", marginBottom: 4 }}>
+						<div className="mb-[0.6875rem]">
+							<label className="text-sm text-[var(--g-text-dim)] block mb-1">
 								API Name
 							</label>
 							<input
@@ -295,14 +232,14 @@ export default function SettingsPage() {
 								placeholder="my-api"
 								value={apiName}
 								onChange={(e) => setApiName(e.target.value)}
-								style={inputStyle}
+								className="g-input"
 							/>
 						</div>
 					)}
 
 					{mode === "url" && (
-						<div style={{ marginBottom: 11 }}>
-							<label style={{ fontSize: 14, color: C.textDim, display: "block", marginBottom: 4 }}>
+						<div className="mb-[0.6875rem]">
+							<label className="text-sm text-[var(--g-text-dim)] block mb-1">
 								Spec URL or file path
 							</label>
 							<input
@@ -312,28 +249,19 @@ export default function SettingsPage() {
 								onChange={(e) => setUrl(e.target.value)}
 								onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
 								autoComplete="off"
-								style={inputStyle}
+								className="g-input"
 							/>
 						</div>
 					)}
 
 					{mode === "file" && (
-						<div style={{ marginBottom: 11 }}>
-							<label style={{ fontSize: 14, color: C.textDim, display: "block", marginBottom: 4 }}>
+						<div className="mb-[0.6875rem]">
+							<label className="text-sm text-[var(--g-text-dim)] block mb-1">
 								OpenAPI spec files (YAML or JSON) — select multiple
 							</label>
 							<div
 								onClick={() => fileRef.current?.click()}
-								style={{
-									padding: "17px",
-									background: C.surface,
-									border: `1px dashed ${C.border}`,
-									borderRadius: 6,
-									cursor: "pointer",
-									textAlign: "center",
-									fontSize: 15,
-									color: C.textDim,
-								}}
+								className="p-[1.0625rem] bg-[var(--g-surface)] border border-dashed border-[var(--g-border)] rounded-md cursor-pointer text-center text-[0.9375rem] text-[var(--g-text-dim)]"
 							>
 								Click to select files
 							</div>
@@ -342,27 +270,20 @@ export default function SettingsPage() {
 								type="file"
 								accept=".yaml,.yml,.json"
 								multiple
-								style={{ display: "none" }}
+								className="hidden"
 								onChange={() => handleFiles()}
 							/>
 						</div>
 					)}
 
 					{mode === "paste" && (
-						<div style={{ marginBottom: 11 }}>
-							<div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-								<label style={{ fontSize: 14, color: C.textDim }}>Paste spec content</label>
+						<div className="mb-[0.6875rem]">
+							<div className="flex items-center gap-2 mb-1">
+								<label className="text-sm text-[var(--g-text-dim)]">Paste spec content</label>
 								<select
 									value={pasteFormat}
 									onChange={(e) => setPasteFormat(e.target.value as "yaml" | "json")}
-									style={{
-										fontSize: 14,
-										padding: "1px 6px",
-										background: C.surface,
-										border: `1px solid ${C.border}`,
-										borderRadius: 4,
-										color: C.textMuted,
-									}}
+									className="text-sm px-1.5 py-px bg-[var(--g-surface)] border border-[var(--g-border)] rounded text-[var(--g-text-muted)]"
 								>
 									<option value="yaml">YAML</option>
 									<option value="json">JSON</option>
@@ -372,14 +293,7 @@ export default function SettingsPage() {
 								placeholder="openapi: '3.0.0'..."
 								value={pasteContent}
 								onChange={(e) => setPasteContent(e.target.value)}
-								style={{
-									...inputStyle,
-									height: 168,
-									padding: "11px 14px",
-									fontFamily: "monospace",
-									fontSize: 15,
-									resize: "vertical",
-								}}
+								className="g-input h-[10.5rem] py-[0.6875rem] font-mono text-[0.9375rem] resize-y"
 							/>
 						</div>
 					)}
@@ -387,16 +301,7 @@ export default function SettingsPage() {
 					{mode !== "file" && (
 						<button
 							onClick={handleSubmit}
-							style={{
-								padding: "8px 20px",
-								fontSize: 15,
-								fontWeight: 600,
-								border: "none",
-								borderRadius: 6,
-								cursor: "pointer",
-								background: C.accent,
-								color: "#0D0D10",
-							}}
+							className="px-5 py-2 text-[0.9375rem] font-semibold border-none rounded-md cursor-pointer bg-[var(--g-accent)] text-[#0D0D10]"
 						>
 							Ingest
 						</button>
@@ -405,25 +310,13 @@ export default function SettingsPage() {
 
 				{/* ── Active Jobs ──────────────────────────────── */}
 				{ingestJobs.length > 0 && (
-					<div style={{ marginBottom: 24 }}>
-						<div style={{ ...sectionHeader, display: "flex", alignItems: "center" }}>
+					<div className="mb-6">
+						<div className="settings-section-label flex items-center">
 							<span>Ingest Jobs</span>
 							{!hasActiveJobs && ingestJobs.length > 0 && (
 								<button
 									onClick={clearDoneJobs}
-									style={{
-										marginLeft: "auto",
-										fontSize: 13,
-										border: "none",
-										cursor: "pointer",
-										padding: "2px 8px",
-										borderRadius: 4,
-										background: "transparent",
-										color: C.textDim,
-										textTransform: "none",
-										letterSpacing: "normal",
-										fontWeight: 400,
-									}}
+									className="ml-auto text-[0.8125rem] border-none cursor-pointer px-2 py-[0.125rem] rounded bg-transparent text-[var(--g-text-dim)] normal-case tracking-normal font-normal"
 								>
 									Clear
 								</button>
@@ -432,52 +325,42 @@ export default function SettingsPage() {
 						{ingestJobs.map((job) => (
 							<div
 								key={job.id}
+								className="g-card px-[0.6875rem] py-2 mb-1"
 								style={{
-									padding: "8px 11px",
-									borderRadius: 6,
-									background: C.surface,
-									border: `1px solid ${job.status === "error" ? "rgba(248,113,113,0.18)" : job.status === "done" ? "rgba(52,211,153,0.18)" : C.border}`,
-									marginBottom: 4,
+									borderColor:
+										job.status === "error" ? "rgba(248,113,113,0.18)" :
+										job.status === "done" ? "rgba(52,211,153,0.18)" :
+										undefined,
 								}}
 							>
-								<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-									<span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{job.apiName}</span>
+								<div className="flex items-center gap-2">
+									<span className="text-sm font-semibold text-[var(--g-text)]">{job.apiName}</span>
 									<span
-										style={{
-											fontSize: 12,
-											padding: "1px 6px",
-											borderRadius: 4,
-											fontWeight: 500,
-											background:
-												job.status === "running" ? C.accentMuted :
-												job.status === "done" ? "rgba(52,211,153,0.08)" :
-												job.status === "error" ? "rgba(248,113,113,0.08)" : C.bg,
-											color:
-												job.status === "running" ? C.accent :
-												job.status === "done" ? C.green :
-												job.status === "error" ? "#F87171" : C.textDim,
-										}}
+										className={`text-xs px-1.5 py-px rounded font-medium${
+											job.status === "running" ? " bg-[var(--g-accent-muted)] text-[var(--g-accent)]" :
+											job.status === "done" ? " bg-[rgba(52,211,153,0.08)] text-[var(--g-green)]" :
+											job.status === "error" ? " bg-[rgba(248,113,113,0.08)] text-[#F87171]" :
+											" bg-[var(--g-bg)] text-[var(--g-text-dim)]"
+										}`}
 									>
 										{job.status}
 									</span>
 									{(job.status === "done" || job.status === "error") && (
 										<button
 											onClick={() => removeIngestJob(job.id)}
-											style={{ marginLeft: "auto", display: "flex", border: "none", cursor: "pointer", padding: 2, background: "transparent", color: C.textDim, borderRadius: 4 }}
+											className="btn-icon ml-auto p-0.5"
 										>
 											{Ic.x(13)}
 										</button>
 									)}
 								</div>
-								<div style={{ fontSize: 13, color: C.textDim, marginTop: 3 }}>{job.message}</div>
+								<div className="text-[0.8125rem] text-[var(--g-text-dim)] mt-[0.1875rem]">{job.message}</div>
 								{job.status === "running" && job.total != null && job.total > 0 && (
-									<div style={{ height: 4, background: C.border, borderRadius: 4, overflow: "hidden", marginTop: 6 }}>
+									<div className="h-1 bg-[var(--g-border)] rounded overflow-hidden mt-1.5">
 										<div
+											className="h-full bg-[var(--g-accent)] rounded"
 											style={{
-												height: "100%",
 												width: `${Math.round(((job.done ?? 0) / job.total) * 100)}%`,
-												background: C.accent,
-												borderRadius: 4,
 												transition: "width 0.15s",
 											}}
 										/>
@@ -490,39 +373,21 @@ export default function SettingsPage() {
 
 				{/* ── Ingested APIs ────────────────────────────── */}
 				<div>
-					<div style={sectionHeader}>Ingested APIs</div>
+					<div className="settings-section-label">Ingested APIs</div>
 					{apis.length === 0 && (
-						<div style={{ fontSize: 15, color: C.textDim }}>No APIs ingested yet</div>
+						<div className="text-[0.9375rem] text-[var(--g-text-dim)]">No APIs ingested yet</div>
 					)}
 					{apis.map((a) => (
 						<div
 							key={a.name}
-							style={{
-								display: "flex",
-								alignItems: "center",
-								gap: 11,
-								padding: "7px 11px",
-								borderRadius: 6,
-								background: C.surface,
-								border: `1px solid ${C.border}`,
-								marginBottom: 4,
-							}}
+							className="g-card flex items-center gap-[0.6875rem] px-[0.6875rem] py-[0.4375rem] mb-1"
 						>
-							<span style={{ display: "flex", color: C.accent, opacity: 0.5 }}>{Ic.server()}</span>
-							<span style={{ fontSize: 16, fontWeight: 500, color: C.text }}>{a.name}</span>
-							<span style={{ fontSize: 14, color: C.textDim }}>{a.endpoints} endpoints</span>
+							<span className="flex text-[var(--g-accent)] opacity-50">{Ic.server()}</span>
+							<span className="text-base font-medium text-[var(--g-text)]">{a.name}</span>
+							<span className="text-sm text-[var(--g-text-dim)]">{a.endpoints} endpoints</span>
 							<button
 								onClick={() => handleDelete(a.name)}
-								style={{
-									marginLeft: "auto",
-									display: "flex",
-									border: "none",
-									cursor: "pointer",
-									padding: 3,
-									background: "transparent",
-									color: C.textDim,
-									borderRadius: 4,
-								}}
+								className="btn-icon ml-auto p-[0.1875rem]"
 							>
 								{Ic.x()}
 							</button>

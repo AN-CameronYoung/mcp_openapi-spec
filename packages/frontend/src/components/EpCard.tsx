@@ -1,4 +1,4 @@
-import { C, METHOD_COLORS } from "../lib/constants";
+import { METHOD_COLORS } from "../lib/constants";
 
 interface EpCardProps {
 	method: string;
@@ -16,91 +16,41 @@ export default function EpCard({ method, path, api, description, warnings, compa
 	return (
 		<div
 			onClick={onClick}
-			style={{
-				background: C.surface,
-				border: `1px solid ${C.border}`,
-				borderRadius: 4,
-				padding: compact ? "3px 6px" : "4px 8px",
-				cursor: onClick ? "pointer" : "default",
-				transition: "all 0.1s",
-			}}
-			onMouseEnter={(e) => {
-				if (onClick) (e.currentTarget as HTMLElement).style.borderColor = C.borderHover;
-			}}
-			onMouseLeave={(e) => {
-				(e.currentTarget as HTMLElement).style.borderColor = C.border;
-			}}
+			className={`g-card ${compact ? "px-1.5 py-[0.1875rem]" : "px-2 py-1"} ${onClick ? "cursor-pointer hover:border-[var(--g-border-hover)]" : "cursor-default"} transition-all duration-100`}
 		>
-			<div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+			<div className="flex items-center gap-[0.3125rem]">
 				<span
+					className="method-badge text-center"
 					style={{
-						fontSize: 10,
-						fontWeight: 600,
-						padding: "0px 4px",
-						borderRadius: 3,
-						fontFamily: "monospace",
 						background: m.bg,
 						color: m.text,
 						border: `1px solid ${m.border}`,
 						minWidth: compact ? 30 : 34,
-						textAlign: "center",
 					}}
 				>
 					{method}
 				</span>
 				<code
-					style={{
-						fontSize: compact ? 11 : 12,
-						fontFamily: "monospace",
-						color: C.text,
-						overflow: "hidden",
-						textOverflow: "ellipsis",
-						whiteSpace: "nowrap",
-						flex: 1,
-					}}
+					className={`${compact ? "text-[0.6875rem]" : "text-xs"} font-mono text-[var(--g-text)] truncate flex-1`}
 				>
 					{path}
 				</code>
-				<span
-					style={{
-						fontSize: 10,
-						padding: "0px 4px",
-						borderRadius: 3,
-						background: C.accentDim,
-						color: C.accent,
-						fontWeight: 500,
-						flexShrink: 0,
-					}}
-				>
+				<span className="api-badge flex-shrink-0">
 					{api}
 				</span>
 			</div>
 			<p
-				style={{
-					fontSize: compact ? 10 : 11,
-					color: C.textDim,
-					margin: "2px 0 0",
-					lineHeight: 1.3,
-					paddingLeft: compact ? 35 : 40,
-					overflow: "hidden",
-					textOverflow: "ellipsis",
-					whiteSpace: "nowrap",
-				}}
+				className={`${compact ? "text-[0.625rem] pl-[2.1875rem]" : "text-[0.6875rem] pl-10"} text-[var(--g-text-dim)] mt-0.5 leading-[1.3] truncate`}
 			>
 				{description}
 			</p>
 			{!compact && warningList.length > 0 && (
-				<div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 4, paddingLeft: 40 }}>
+				<div className="flex flex-wrap gap-[0.1875rem] mt-1 pl-10">
 					{warningList.map((w, i) => (
-						<span key={i} style={{
-							fontSize: 12,
-							padding: "3px 8px",
-							borderRadius: 4,
-							background: "rgba(251,191,36,0.15)",
-							color: "#FCD34D",
-							border: "1px solid rgba(251,191,36,0.35)",
-							lineHeight: 1.5,
-						}}>
+						<span
+							key={i}
+							className="text-xs px-2 py-[0.1875rem] rounded bg-[rgba(251,191,36,0.15)] text-[#FCD34D] border border-[rgba(251,191,36,0.35)] leading-[1.5]"
+						>
 							⚠ {w}
 						</span>
 					))}

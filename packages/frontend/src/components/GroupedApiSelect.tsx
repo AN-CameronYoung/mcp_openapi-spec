@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { C } from "../lib/constants";
 import type { ApiInfo } from "../lib/api";
 
 // ---------------------------------------------------------------------------
@@ -105,84 +104,33 @@ export default function GroupedApiSelect({
 		setHoveredGroup(null);
 	};
 
-	const triggerStyle: React.CSSProperties = {
-		display: "flex",
-		alignItems: "center",
-		gap: 6,
-		height,
-		padding: withIcon ? `0 28px 0 30px` : `0 28px 0 11px`,
-		background: C.surface,
-		border: `1px solid ${C.border}`,
-		borderRadius: 6,
-		fontSize,
-		color: color ?? C.textMuted,
-		cursor: "pointer",
-		minWidth,
-		userSelect: "none",
-		position: "relative",
-		boxSizing: "border-box",
-		whiteSpace: "nowrap",
-		overflow: "hidden",
-		textOverflow: "ellipsis",
-	};
-
-	const dropdownStyle: React.CSSProperties = {
-		position: "absolute",
-		top: "calc(100% + 3px)",
-		left: 0,
-		zIndex: 200,
-		minWidth: Math.max(minWidth, 160),
-		background: C.surface,
-		border: `1px solid ${C.border}`,
-		borderRadius: 6,
-		boxShadow: "0 6px 20px rgba(0,0,0,0.28)",
-		overflow: "visible",
-		paddingTop: 4,
-		paddingBottom: 4,
-	};
-
-	const itemStyle = (selected: boolean, hovered?: boolean) => ({
-		display: "flex",
-		alignItems: "center",
-		justifyContent: "space-between",
-		padding: "7px 11px",
-		fontSize: fontSize - 1,
-		color: selected ? C.accent : C.text,
-		background: selected ? C.accentDim : hovered ? C.surfaceHover : "transparent",
-		cursor: "pointer",
-		whiteSpace: "nowrap",
-	});
-
-	const flyoutStyle: React.CSSProperties = {
-		position: "absolute",
-		left: "100%",
-		top: -1,
-		zIndex: 201,
-		minWidth: 180,
-		background: C.surface,
-		border: `1px solid ${C.border}`,
-		borderRadius: 6,
-		boxShadow: "0 6px 20px rgba(0,0,0,0.28)",
-		overflow: "hidden",
-	};
+	const itemClassName = (selected: boolean, hovered?: boolean) =>
+		`flex items-center justify-between px-[0.6875rem] py-[0.4375rem] cursor-pointer whitespace-nowrap ${
+			selected
+				? "text-[var(--g-accent)] bg-[var(--g-accent-dim)]"
+				: hovered
+				? "text-[var(--g-text)] bg-[var(--g-surface-hover)]"
+				: "text-[var(--g-text)] bg-transparent"
+		}`;
 
 	return (
-		<div ref={rootRef} style={{ position: "relative", display: "inline-block" }}>
+		<div ref={rootRef} className="relative inline-block">
 			{/* Trigger */}
 			<div
-				style={triggerStyle}
+				className="flex items-center gap-1.5 bg-[var(--g-surface)] border border-[var(--g-border)] rounded-md cursor-pointer select-none relative box-border whitespace-nowrap overflow-hidden text-ellipsis"
+				style={{
+					height,
+					padding: withIcon ? `0 28px 0 30px` : `0 28px 0 11px`,
+					fontSize,
+					color: color ?? "var(--g-text-muted)",
+					minWidth,
+				}}
 				onClick={() => {
 					setOpen((o) => !o);
 					if (open) setHoveredGroup(null);
 				}}
 			>
-				<span
-					style={{
-						flex: 1,
-						overflow: "hidden",
-						textOverflow: "ellipsis",
-					}}
-				>
+				<span className="flex-1 overflow-hidden text-ellipsis">
 					{displayLabel}
 				</span>
 				{/* Chevron */}
@@ -191,15 +139,7 @@ export default function GroupedApiSelect({
 					height="12"
 					viewBox="0 0 12 12"
 					fill="none"
-					style={{
-						position: "absolute",
-						right: 9,
-						top: "50%",
-						transform: open ? "translateY(-50%) rotate(180deg)" : "translateY(-50%)",
-						transition: "transform 0.15s",
-						flexShrink: 0,
-						color: C.textDim,
-					}}
+					className={`absolute right-[0.5625rem] top-1/2 -translate-y-1/2 transition-transform duration-150 flex-shrink-0 text-[var(--g-text-dim)] ${open ? "rotate-180" : ""}`}
 				>
 					<path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
 				</svg>
@@ -207,11 +147,14 @@ export default function GroupedApiSelect({
 
 			{/* Dropdown */}
 			{open && (
-				<div style={dropdownStyle}>
+				<div
+					className="absolute top-[calc(100%+3px)] left-0 z-[200] bg-[var(--g-surface)] border border-[var(--g-border)] rounded-md shadow-[0_6px_20px_rgba(0,0,0,0.28)] overflow-visible py-1"
+					style={{ minWidth: Math.max(minWidth, 160) }}
+				>
 					{/* "All" option */}
 					{allLabel && (
 						<div
-							style={itemStyle(value === "all", hoveredItem === "__all__")}
+							className={itemClassName(value === "all", hoveredItem === "__all__")}
 							onMouseEnter={() => { setHoveredGroup(null); setHoveredItem("__all__"); }}
 							onMouseLeave={() => setHoveredItem(null)}
 							onClick={() => select("all")}
@@ -222,7 +165,7 @@ export default function GroupedApiSelect({
 
 					{/* Divider after all option */}
 					{allLabel && entries.length > 0 && (
-						<div style={{ height: 1, background: C.border, margin: "2px 0" }} />
+						<div className="h-px bg-[var(--g-border)] my-[0.125rem]" />
 					)}
 
 					{entries.map((entry) => {
@@ -230,13 +173,13 @@ export default function GroupedApiSelect({
 							return (
 								<div
 									key={entry.api.name}
-									style={itemStyle(value === entry.api.name, hoveredItem === entry.api.name)}
+									className={itemClassName(value === entry.api.name, hoveredItem === entry.api.name)}
 									onMouseEnter={() => { setHoveredGroup(null); setHoveredItem(entry.api.name); }}
 									onMouseLeave={() => setHoveredItem(null)}
 									onClick={() => select(entry.api.name)}
 								>
 									<span>{entry.api.name}</span>
-									<span style={{ fontSize: 12, color: C.textDim, marginLeft: 8 }}>
+									<span className="text-xs text-[var(--g-text-dim)] ml-2">
 										{entry.api.endpoints}
 									</span>
 								</div>
@@ -249,15 +192,15 @@ export default function GroupedApiSelect({
 						return (
 							<div
 								key={entry.name}
-								style={{ position: "relative" }}
+								className="relative"
 								onMouseEnter={() => setHoveredGroup(entry.name)}
 								onMouseLeave={() => setHoveredGroup(null)}
 								onClick={(e) => { e.stopPropagation(); setHoveredGroup(isHovered ? null : entry.name); }}
 							>
-								<div style={itemStyle(hasSelectedChild, isHovered)}>
+								<div className={itemClassName(hasSelectedChild, isHovered)}>
 									<span>{entry.name}</span>
-									<div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-										<span style={{ fontSize: 12, color: C.textDim }}>
+									<div className="flex items-center gap-1.5">
+										<span className="text-xs text-[var(--g-text-dim)]">
 											{entry.children.reduce((s, c) => s + c.endpoints, 0)}
 										</span>
 										{/* Right arrow indicator */}
@@ -266,7 +209,7 @@ export default function GroupedApiSelect({
 											height="10"
 											viewBox="0 0 10 10"
 											fill="none"
-											style={{ color: C.textDim, flexShrink: 0 }}
+											className="text-[var(--g-text-dim)] flex-shrink-0"
 										>
 											<path d="M3 2l4 3-4 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
 										</svg>
@@ -275,17 +218,20 @@ export default function GroupedApiSelect({
 
 								{/* Flyout */}
 								{isHovered && (
-									<div style={flyoutStyle} onMouseEnter={() => setHoveredGroup(entry.name)}>
+									<div
+										className="absolute left-full top-[-1px] z-[201] min-w-[180px] bg-[var(--g-surface)] border border-[var(--g-border)] rounded-md shadow-[0_6px_20px_rgba(0,0,0,0.28)] overflow-hidden"
+										onMouseEnter={() => setHoveredGroup(entry.name)}
+									>
 										{entry.children.map((child) => (
 											<div
 												key={child.name}
-												style={itemStyle(value === child.name, hoveredItem === child.name)}
+												className={itemClassName(value === child.name, hoveredItem === child.name)}
 												onMouseEnter={() => setHoveredItem(child.name)}
 												onMouseLeave={() => setHoveredItem(null)}
 												onClick={() => select(child.name)}
 											>
 												<span>{child.name}</span>
-												<span style={{ fontSize: 12, color: C.textDim, marginLeft: 8 }}>
+												<span className="text-xs text-[var(--g-text-dim)] ml-2">
 													{child.endpoints}
 												</span>
 											</div>

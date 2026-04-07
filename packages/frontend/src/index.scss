@@ -92,7 +92,7 @@ html, body, #root {
 	background: var(--g-bg);
 	color: var(--g-text);
 	font-family: "Poppins", -apple-system, "Segoe UI", sans-serif;
-	font-size: 16px;
+	font-size: 1rem;
 	line-height: 1.5;
 	transition: background 0.15s, color 0.15s;
 }
@@ -123,22 +123,49 @@ pre, code {
 
 @keyframes greg-bounce {
 	0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
-	40%            { transform: translateY(-6px); opacity: 1; }
+	40%            { transform: translateY(-0.375rem); opacity: 1; }
 }
 
 // Scrollbar
 ::-webkit-scrollbar {
-	width: 6px;
-	height: 6px;
+	width: 0.375rem;
+	height: 0.375rem;
 }
 ::-webkit-scrollbar-track {
 	background: transparent;
 }
 ::-webkit-scrollbar-thumb {
 	background: var(--g-border-hover);
-	border-radius: 3px;
+	border-radius: 0.1875rem;
 
 	&:hover {
 		background: var(--g-text-dim);
 	}
+}
+
+// ===== Shared component patterns =====
+
+// HTTP method badge — colors (bg/text/border) are set inline per method
+.method-badge {
+	@apply inline-flex items-center justify-center font-mono text-xs font-semibold py-[0.0625rem] px-[0.4375rem] rounded shrink-0 text-center whitespace-nowrap;
+}
+
+// API/tag badge (accent-tinted)
+.api-badge {
+	@apply inline-flex items-center gap-[0.1875rem] text-xs font-medium py-[0.0625rem] px-[0.4375rem] rounded whitespace-nowrap shrink-0 bg-[var(--g-accent-dim)] text-[var(--g-accent)];
+}
+
+// Ghost icon button
+.btn-icon {
+	@apply flex items-center justify-center border-0 cursor-pointer p-[0.1875rem] bg-transparent text-[var(--g-text-dim)] rounded shrink-0;
+}
+
+// Standard text input
+.g-input {
+	@apply w-full h-11 px-3.5 bg-[var(--g-surface)] border border-solid border-[var(--g-border)] rounded-md text-base text-[var(--g-text)] outline-none box-border;
+}
+
+// Surface card container
+.g-card {
+	@apply bg-[var(--g-surface)] border border-solid border-[var(--g-border)] rounded-md;
 }
