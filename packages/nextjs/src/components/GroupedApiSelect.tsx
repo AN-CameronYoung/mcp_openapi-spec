@@ -1,5 +1,9 @@
 "use client";
-import React, { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { cn } from "../lib/utils";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { Button } from "./ui/button";
+import { ChevronsUpDown, Check, ChevronRight } from "lucide-react";
 import type { ApiInfo } from "../lib/api";
 
 // ---------------------------------------------------------------------------
@@ -50,6 +54,108 @@ function groupApis(apis: ApiInfo[]): GroupedEntry[] {
 }
 
 // ---------------------------------------------------------------------------
+// Menu item (shared)
+// ---------------------------------------------------------------------------
+
+function MenuItem({
+	label,
+	detail,
+	selected,
+	onClick,
+	className,
+	children,
+}: {
+	label: string;
+	detail?: React.ReactNode;
+	selected?: boolean;
+	onClick?: () => void;
+	className?: string;
+	children?: React.ReactNode;
+}) {
+	return (
+		<div
+			onClick={onClick}
+			className={cn(
+				"flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-pointer hover:bg-muted",
+				selected && "bg-accent",
+				className,
+			)}
+		>
+			<span className="flex-1 truncate">{label}</span>
+			{detail}
+			{selected && <Check className="size-3.5 shrink-0" />}
+			{children}
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Flyout group — sub-menu rendered via fixed positioning to escape scroll clip
+// ---------------------------------------------------------------------------
+
+function FlyoutGroup({
+	entry,
+	value,
+	onSelect,
+}: {
+	entry: ApiGroup;
+	value: string;
+	onSelect: (v: string) => void;
+}) {
+	const [hovered, setHovered] = useState(false);
+	const rowRef = useRef<HTMLDivElement>(null);
+	const [flyoutStyle, setFlyoutStyle] = useState<React.CSSProperties>({});
+	const hasSelected = entry.children.some((c) => c.name === value);
+
+	useEffect(() => {
+		if (hovered && rowRef.current) {
+			const rect = rowRef.current.getBoundingClientRect();
+			setFlyoutStyle({
+				position: "fixed",
+				top: rect.top,
+				left: rect.right + 6,
+				zIndex: 200,
+			});
+		}
+	}, [hovered]);
+
+	return (
+		<div
+			ref={rowRef}
+			onMouseEnter={() => setHovered(true)}
+			onMouseLeave={() => setHovered(false)}
+		>
+			<div
+				className={cn(
+					"flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-pointer hover:bg-muted",
+					(hovered || hasSelected) && "bg-muted",
+				)}
+			>
+				<span className="flex-1 truncate font-medium">{entry.name}</span>
+				<span className="text-xs text-muted-foreground">{entry.children.length}</span>
+				<ChevronRight className="size-3.5 opacity-50 shrink-0" />
+			</div>
+
+			{hovered && (
+				<div style={flyoutStyle} className="min-w-48 rounded-lg border border-border bg-popover p-1 shadow-md">
+					{/* Arrow */}
+					<div className="absolute -left-[5px] top-2.5 size-2.5 rotate-45 border-l border-b border-border bg-popover" />
+					{entry.children.map((child) => (
+						<MenuItem
+							key={child.name}
+							label={child.name}
+							detail={<span className="text-xs text-muted-foreground">{child.endpoints}</span>}
+							selected={value === child.name}
+							onClick={() => onSelect(child.name)}
+						/>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -57,7 +163,6 @@ interface GroupedApiSelectProps {
 	apis: ApiInfo[];
 	value: string;
 	onChange: (value: string) => void;
-	/** If provided, prepends an "all" option with this label */
 	allLabel?: string;
 	height?: number;
 	fontSize?: number;
@@ -78,172 +183,102 @@ export default function GroupedApiSelect({
 	withIcon = false,
 }: GroupedApiSelectProps) {
 	const [open, setOpen] = useState(false);
-	const [hoveredGroup, setHoveredGroup] = useState<string | null>(null);
-	const [hoveredItem, setHoveredItem] = useState<string | null>(null);
-	const rootRef = useRef<HTMLDivElement>(null);
-
+	const [filter, setFilter] = useState("");
+	const filterRef = useRef<HTMLInputElement>(null);
 	const entries = useMemo(() => groupApis(apis), [apis]);
-
-	// Close on outside click
-	useEffect(() => {
-		if (!open) return;
-		const handler = (e: MouseEvent) => {
-			if (!rootRef.current?.contains(e.target as Node)) {
-				setOpen(false);
-				setHoveredGroup(null);
-			}
-		};
-		document.addEventListener("mousedown", handler);
-		return () => document.removeEventListener("mousedown", handler);
-	}, [open]);
 
 	const displayLabel = value === "all" ? (allLabel ?? "All APIs") : value;
 
 	const select = (v: string) => {
 		onChange(v);
 		setOpen(false);
-		setHoveredGroup(null);
 	};
 
-	const itemClassName = (selected: boolean, hovered?: boolean) =>
-		`flex items-center justify-between px-[0.6875rem] py-[0.4375rem] cursor-pointer whitespace-nowrap ${
-			selected
-				? "text-[var(--g-accent)] bg-[var(--g-accent-dim)]"
-				: hovered
-				? "text-[var(--g-text)] bg-[var(--g-surface-hover)]"
-				: "text-[var(--g-text)] bg-transparent"
-		}`;
+	// Reset filter and focus input when popover opens
+	useEffect(() => {
+		if (open) {
+			setFilter("");
+			requestAnimationFrame(() => filterRef.current?.focus());
+		}
+	}, [open]);
+
+	// Filter entries
+	const q = filter.toLowerCase();
+	const filtered = q
+		? entries.reduce<GroupedEntry[]>((acc, entry) => {
+				if (entry.type === "single") {
+					if (entry.api.name.toLowerCase().includes(q)) acc.push(entry);
+				} else {
+					const kids = entry.children.filter((c) => c.name.toLowerCase().includes(q));
+					if (entry.name.toLowerCase().includes(q)) acc.push(entry);
+					else if (kids.length > 0) acc.push({ ...entry, children: kids });
+				}
+				return acc;
+			}, [])
+		: entries;
 
 	return (
-		<div ref={rootRef} className="relative inline-block">
-			{/* Trigger */}
-			<div
-				className="flex items-center gap-1.5 bg-[var(--g-surface)] border border-[var(--g-border)] rounded-md cursor-pointer select-none relative box-border whitespace-nowrap overflow-hidden text-ellipsis"
-				style={{
-					height,
-					padding: withIcon ? `0 28px 0 30px` : `0 28px 0 11px`,
-					fontSize,
-					color: color ?? "var(--g-text-muted)",
-					minWidth,
-				}}
-				onClick={() => {
-					setOpen((o) => !o);
-					if (open) setHoveredGroup(null);
-				}}
-			>
-				<span className="flex-1 overflow-hidden text-ellipsis">
-					{displayLabel}
-				</span>
-				{/* Chevron */}
-				<svg
-					width="12"
-					height="12"
-					viewBox="0 0 12 12"
-					fill="none"
-					className={`absolute right-[0.5625rem] top-1/2 -translate-y-1/2 transition-transform duration-150 flex-shrink-0 text-[var(--g-text-dim)] ${open ? "rotate-180" : ""}`}
+		<Popover open={open} onOpenChange={setOpen}>
+			<PopoverTrigger asChild>
+				<Button
+					variant="outline"
+					role="combobox"
+					aria-expanded={open}
+					className="justify-between gap-1.5 font-normal"
+					style={{ height, fontSize, minWidth, color: color ?? undefined }}
 				>
-					<path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-				</svg>
-			</div>
-
-			{/* Dropdown */}
-			{open && (
-				<div
-					className="absolute top-[calc(100%+3px)] left-0 z-[200] bg-[var(--g-surface)] border border-[var(--g-border)] rounded-md shadow-[0_6px_20px_rgba(0,0,0,0.28)] overflow-visible py-1"
-					style={{ minWidth: Math.max(minWidth, 160) }}
-				>
-					{/* "All" option */}
+					<span className="truncate">{displayLabel}</span>
+					<ChevronsUpDown className="opacity-50" />
+				</Button>
+			</PopoverTrigger>
+			<PopoverContent className="p-1" style={{ minWidth: Math.max(minWidth, 200) }} align="start">
+				{/* Search filter */}
+				<div className="px-1 pb-1">
+					<input
+						ref={filterRef}
+						value={filter}
+						onChange={(e) => setFilter(e.target.value)}
+						placeholder="Search APIs..."
+						className="w-full px-2 py-1.5 text-sm bg-transparent border-b border-border outline-none placeholder:text-muted-foreground"
+					/>
+				</div>
+				<div className="max-h-64 overflow-y-auto">
 					{allLabel && (
-						<div
-							className={itemClassName(value === "all", hoveredItem === "__all__")}
-							onMouseEnter={() => { setHoveredGroup(null); setHoveredItem("__all__"); }}
-							onMouseLeave={() => setHoveredItem(null)}
-							onClick={() => select("all")}
-						>
-							<span>{allLabel}</span>
-						</div>
+						<>
+							<MenuItem
+								label={allLabel}
+								selected={value === "all"}
+								onClick={() => select("all")}
+							/>
+							<div className="my-1 h-px bg-border" />
+						</>
 					)}
-
-					{/* Divider after all option */}
-					{allLabel && entries.length > 0 && (
-						<div className="h-px bg-[var(--g-border)] my-[0.125rem]" />
+					{filtered.length === 0 && (
+						<div className="px-2 py-3 text-sm text-muted-foreground text-center">No APIs found.</div>
 					)}
-
-					{entries.map((entry) => {
+					{filtered.map((entry) => {
 						if (entry.type === "single") {
 							return (
-								<div
+								<MenuItem
 									key={entry.api.name}
-									className={itemClassName(value === entry.api.name, hoveredItem === entry.api.name)}
-									onMouseEnter={() => { setHoveredGroup(null); setHoveredItem(entry.api.name); }}
-									onMouseLeave={() => setHoveredItem(null)}
+									label={entry.api.name}
+									detail={<span className="text-xs text-muted-foreground">{entry.api.endpoints}</span>}
+									selected={value === entry.api.name}
 									onClick={() => select(entry.api.name)}
-								>
-									<span>{entry.api.name}</span>
-									<span className="text-xs text-[var(--g-text-dim)] ml-2">
-										{entry.api.endpoints}
-									</span>
-								</div>
+								/>
 							);
 						}
-
-						// Group entry
-						const isHovered = hoveredGroup === entry.name;
-						const hasSelectedChild = entry.children.some((c) => c.name === value);
 						return (
-							<div
+							<FlyoutGroup
 								key={entry.name}
-								className="relative"
-								onMouseEnter={() => setHoveredGroup(entry.name)}
-								onMouseLeave={() => setHoveredGroup(null)}
-								onClick={(e) => { e.stopPropagation(); setHoveredGroup(isHovered ? null : entry.name); }}
-							>
-								<div className={itemClassName(hasSelectedChild, isHovered)}>
-									<span>{entry.name}</span>
-									<div className="flex items-center gap-1.5">
-										<span className="text-xs text-[var(--g-text-dim)]">
-											{entry.children.reduce((s, c) => s + c.endpoints, 0)}
-										</span>
-										{/* Right arrow indicator */}
-										<svg
-											width="10"
-											height="10"
-											viewBox="0 0 10 10"
-											fill="none"
-											className="text-[var(--g-text-dim)] flex-shrink-0"
-										>
-											<path d="M3 2l4 3-4 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-										</svg>
-									</div>
-								</div>
-
-								{/* Flyout */}
-								{isHovered && (
-									<div
-										className="absolute left-full top-[-1px] z-[201] min-w-[180px] bg-[var(--g-surface)] border border-[var(--g-border)] rounded-md shadow-[0_6px_20px_rgba(0,0,0,0.28)] overflow-hidden"
-										onMouseEnter={() => setHoveredGroup(entry.name)}
-									>
-										{entry.children.map((child) => (
-											<div
-												key={child.name}
-												className={itemClassName(value === child.name, hoveredItem === child.name)}
-												onMouseEnter={() => setHoveredItem(child.name)}
-												onMouseLeave={() => setHoveredItem(null)}
-												onClick={() => select(child.name)}
-											>
-												<span>{child.name}</span>
-												<span className="text-xs text-[var(--g-text-dim)] ml-2">
-													{child.endpoints}
-												</span>
-											</div>
-										))}
-									</div>
-								)}
-							</div>
+								entry={entry}
+								value={value}
+								onSelect={select}
+							/>
 						);
 					})}
 				</div>
-			)}
-		</div>
+			</PopoverContent>
+		</Popover>
 	);
 }

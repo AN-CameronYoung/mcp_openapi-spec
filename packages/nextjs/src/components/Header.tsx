@@ -1,8 +1,11 @@
 "use client";
 import { useShallow } from "zustand/react/shallow";
+import { cn } from "../lib/utils";
 import { Ic } from "../lib/icons";
 import { useStore } from "../store/store";
 import type { ThemePref } from "../store/store";
+import AutoIngestIndicator from "./AutoIngestBanner";
+import { Button } from "./ui/button";
 
 const THEME_OPTS: { value: ThemePref; label: string }[] = [
 	{ value: "system", label: "Auto" },
@@ -14,20 +17,22 @@ function ThemeToggle() {
 	const { theme, setTheme } = useStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme })));
 
 	return (
-		<div className="flex bg-[var(--g-surface)] border border-[var(--g-border)] rounded-md overflow-hidden">
+		<div className="flex bg-muted border border-border rounded-md overflow-hidden">
 			{THEME_OPTS.map((o) => (
-				<button
+				<Button
 					key={o.value}
+					variant="ghost"
+					size="xs"
 					onClick={() => setTheme(o.value)}
-					className={[
-						"py-[0.1875rem] px-2 text-xs border-none cursor-pointer",
+					className={cn(
+						"rounded-none px-2",
 						theme === o.value
-							? "bg-[var(--g-accent-muted)] text-[var(--g-accent)] font-semibold"
-							: "bg-transparent text-[var(--g-text-dim)] font-normal",
-					].join(" ")}
+							? "bg-accent text-primary font-semibold"
+							: "text-muted-foreground font-normal",
+					)}
 				>
 					{o.label}
-				</button>
+				</Button>
 			))}
 		</div>
 	);
@@ -45,10 +50,10 @@ export default function Header() {
 	const totalEndpoints = apis.reduce((s, a) => s + a.endpoints, 0);
 
 	return (
-		<div className="border-b border-[var(--g-border)] px-5 flex items-stretch h-14 shrink-0">
+		<div className="border-b border-border px-5 flex items-stretch h-14 shrink-0">
 			{/* Logo */}
 			<div className="flex items-center gap-2 mr-[1.375rem]">
-				<div className="w-7 h-7 rounded-md bg-[var(--g-green)] flex items-center justify-center">
+				<div className="w-7 h-7 rounded-md bg-[var(--g-green)] flex items-center justify-center" >
 					<svg width={18} height={18} viewBox="0 0 20 20" fill="none">
 						<circle cx="7" cy="8" r="1.4" fill="white"/>
 						<circle cx="13" cy="8" r="1.4" fill="white"/>
@@ -60,40 +65,43 @@ export default function Header() {
 
 			{/* Tabs */}
 			{TABS.map((t) => (
-				<button
+				<Button
 					key={t.key}
+					variant="ghost"
 					onClick={() => setPage(t.key)}
-					className={[
-						"flex items-center gap-1.5 px-3.5 text-base font-medium border-none cursor-pointer bg-transparent -mb-px border-b-2",
+					className={cn(
+						"h-full gap-1.5 px-3.5 text-base font-medium rounded-none -mb-px border-b-2",
 						page === t.key
-							? "text-[var(--g-accent)] border-b-[var(--g-accent)]"
-							: "text-[var(--g-text-dim)] border-b-transparent",
-					].join(" ")}
+							? "text-primary border-b-primary"
+							: "text-muted-foreground border-b-transparent",
+					)}
 				>
 					{t.icon()}
 					{t.label}
-				</button>
+				</Button>
 			))}
 
 			{/* Stats + theme toggle */}
 			<div className="ml-auto flex items-center gap-[0.6875rem]">
-				<span className="text-sm text-[var(--g-text-dim)] flex items-center gap-1">
+				<span className="text-sm text-muted-foreground flex items-center gap-1">
 					{Ic.server()} {apis.length} APIs
 				</span>
-				<span className="text-sm text-[var(--g-text-dim)]">{totalEndpoints} endpoints</span>
+				<span className="text-sm text-muted-foreground">{totalEndpoints} endpoints</span>
+				<AutoIngestIndicator />
 				<ThemeToggle />
-				<button
+				<Button
+					variant="ghost"
+					size="icon"
 					onClick={() => setPage("settings")}
-					className={[
-						"flex items-center justify-center w-8 h-8 rounded-md border-none cursor-pointer",
+					className={cn(
 						page === "settings"
-							? "bg-[var(--g-accent-muted)] text-[var(--g-accent)]"
-							: "bg-transparent text-[var(--g-text-dim)] hover:text-[var(--g-text)]",
-					].join(" ")}
+							? "bg-accent text-primary"
+							: "text-muted-foreground hover:text-foreground",
+					)}
 					title="Settings"
 				>
 					{Ic.gear(16)}
-				</button>
+				</Button>
 			</div>
 		</div>
 	);

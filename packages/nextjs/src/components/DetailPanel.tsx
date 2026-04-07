@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { cn } from "../lib/utils";
 import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
@@ -28,12 +29,12 @@ function PBadge({ type }: { type: string }) {
 	const isPath = type === "path";
 	return (
 		<span
-			className={[
+			className={cn(
 				"text-[0.6875rem] px-[0.4375rem] py-px rounded font-mono uppercase tracking-[0.05em]",
 				isPath
-					? "bg-[rgba(251,191,36,0.08)] text-[#FBBF24]"
-					: "bg-[rgba(129,140,248,0.08)] text-[#818CF8]",
-			].join(" ")}
+					? "bg-[var(--g-method-put-bg)] text-[var(--g-method-put-text)]"
+					: "bg-[var(--g-accent-muted)] text-[var(--g-accent)]",
+			)}
 		>
 			{type}
 		</span>
@@ -310,15 +311,15 @@ export default function DetailPanel({
 								{params.map((p, j) => (
 									<div
 										key={j}
-										className={[
+										className={cn(
 											"flex items-center gap-[0.4375rem] text-xs px-2 py-1.5 rounded",
 											j % 2 === 0 ? "bg-[var(--g-bg)]" : "bg-transparent",
-										].join(" ")}
+										)}
 									>
 										<PBadge type={p.in} />
 										<code className="font-mono text-[var(--g-text)] font-medium">{p.name}</code>
 										<span className="text-[var(--g-text-dim)] text-sm">{p.type}</span>
-										{p.required && <span className="text-[0.6875rem] text-[#F87171]">req</span>}
+										{p.required && <span className="text-[0.6875rem] text-[var(--g-danger)]">req</span>}
 										<span className="text-[var(--g-text-dim)] ml-auto text-sm">{p.desc}</span>
 									</div>
 								))}

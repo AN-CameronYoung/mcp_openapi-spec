@@ -1,6 +1,7 @@
 "use client";
 import { useState, useMemo, useCallback } from "react";
 import { useShallow } from "zustand/react/shallow";
+import { cn } from "../lib/utils";
 import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
 import { searchEndpoints, searchSchemas } from "../lib/api";
@@ -9,6 +10,8 @@ import { useStore } from "../store/store";
 import ScoreBar from "../components/ScoreBar";
 import DetailPanel from "../components/DetailPanel";
 import GroupedApiSelect from "../components/GroupedApiSelect";
+import { Badge } from "../components/ui/badge";
+import { Input } from "../components/ui/input";
 
 export default function SearchPage() {
 	const { apis, detailItem, detailType, setDetail } = useStore(
@@ -75,13 +78,13 @@ export default function SearchPage() {
 					<div className="absolute left-[0.8125rem] top-[0.8125rem] text-[var(--g-text-dim)] flex">
 						{Ic.search()}
 					</div>
-					<input
+					<Input
 						type="text"
 						placeholder="Search endpoints and schemas..."
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
 						onKeyDown={handleKeyDown}
-						className="g-input pl-[2.375rem] focus:border-[rgba(129,140,248,0.4)]"
+						className="pl-[2.375rem]"
 					/>
 				</div>
 			</div>
@@ -101,12 +104,12 @@ export default function SearchPage() {
 							setDetail(null);
 							if (query.trim()) doSearch(query, t.key, apiFilter);
 						}}
-						className={[
+						className={cn(
 							"py-1 px-[0.8125rem] text-[0.9375rem] font-medium border-none cursor-pointer rounded-md flex items-center gap-1",
 							tab === t.key
 								? "bg-[var(--g-accent-muted)] text-[var(--g-accent)]"
 								: "bg-transparent text-[var(--g-text-dim)]",
-						].join(" ")}
+						)}
 					>
 						{t.icon()}
 						{t.label}
@@ -129,18 +132,18 @@ export default function SearchPage() {
 							<div
 								key={item.id}
 								onClick={() => setDetail(isSel ? null : item, tab)}
-								className={[
+								className={cn(
 									"py-2 px-[0.6875rem] rounded-md cursor-pointer border-l-2 mb-px",
 									isSel
 										? "border-l-[var(--g-accent)] bg-[var(--g-surface-active)]"
 										: "border-l-transparent bg-transparent hover:bg-[var(--g-surface-hover)]",
-								].join(" ")}
+								)}
 							>
 								<div className="flex items-center gap-[0.4375rem]">
 									{isEp ? (
 										<>
-											<span
-												className="method-badge"
+											<Badge
+												variant="method"
 												style={{
 													background: m!.bg,
 													color: m!.text,
@@ -149,7 +152,7 @@ export default function SearchPage() {
 												}}
 											>
 												{item.method}
-											</span>
+											</Badge>
 											<code className="text-[0.9375rem] font-mono text-[var(--g-text)] truncate flex-1">
 												{item.path}
 											</code>
@@ -166,13 +169,13 @@ export default function SearchPage() {
 									)}
 									<span className="ml-auto flex gap-[0.4375rem] items-center shrink-0">
 										<ScoreBar score={item.score} />
-										<span className="api-badge">
+										<Badge variant="api">
 											{item.api}
-										</span>
+										</Badge>
 									</span>
 								</div>
 								<p
-									className={`text-sm text-[var(--g-text-dim)] mt-[0.1875rem] leading-[1.4] truncate ${isEp ? "pl-14" : "pl-6"}`}
+									className={cn("text-sm text-[var(--g-text-dim)] mt-[0.1875rem] leading-[1.4] truncate", isEp ? "pl-14" : "pl-6")}
 								>
 									{item.description}
 								</p>

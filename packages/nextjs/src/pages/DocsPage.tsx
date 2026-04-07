@@ -42,7 +42,7 @@ export default function DocsPage() {
 			{/* Header */}
 			<div className="flex items-center gap-3.5 mb-[0.6875rem] shrink-0">
 				<div className="relative flex items-center">
-					<div className="absolute left-2.5 text-[var(--g-text-dim)] flex pointer-events-none z-[1]">
+					<div className="absolute left-2.5 text-(--g-text-dim) flex pointer-events-none z-[1]">
 						{Ic.server()}
 					</div>
 					<GroupedApiSelect

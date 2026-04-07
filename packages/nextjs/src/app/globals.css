@@ -1,89 +1,169 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-/* ===== Dark theme (default) ===== */
+@custom-variant dark (&:is(.dark *));
+
+/* =============================================================================
+   Theme tokens
+   8 core values per theme. Everything else is derived via color-mix().
+   :root = light (shadcn convention), .dark = dark overrides.
+   shadcn tokens point at --g-* bridge vars so both systems stay in sync.
+   ============================================================================= */
+
+/* ── Light (default) ─────────────────────────────────────────────────────── */
 :root {
-	--g-bg: #0D0D10;
-	--g-surface: #131317;
-	--g-surface-hover: #19191F;
-	--g-surface-active: #1E1E26;
-	--g-border: rgba(255, 255, 255, 0.06);
-	--g-border-hover: rgba(255, 255, 255, 0.12);
-	--g-border-accent: rgba(129, 140, 248, 0.25);
-	--g-text: #E4E4E7;
-	--g-text-muted: #B0B0BA;
-	--g-text-dim: #4E4E58;
-	--g-accent: #818CF8;
-	--g-accent-muted: rgba(129, 140, 248, 0.1);
-	--g-accent-dim: rgba(129, 140, 248, 0.06);
-	--g-green: #34D399;
-	--g-user-bg: rgba(129, 140, 248, 0.08);
-	--g-greg-bg: #161619;
-	--g-code-bg: #0D0D10;
-	--g-logo-text: #0D0D10;
+	/* Core */
+	--g-bg:           #FFFFFF;
+	--g-text:         #18181B;
+	--g-accent:       #6366F1;
+	--g-green:        #059669;
+	--g-danger:       #DC2626;
+	--g-method-post:  #2563EB;
+	--g-method-put:   #D97706;
+	--g-method-patch: #9333EA;
 
-	/* method badges */
-	--g-method-get-bg: rgba(52, 211, 153, 0.08);
-	--g-method-get-text: #34D399;
-	--g-method-get-border: rgba(52, 211, 153, 0.18);
-	--g-method-post-bg: rgba(96, 165, 250, 0.08);
-	--g-method-post-text: #60A5FA;
-	--g-method-post-border: rgba(96, 165, 250, 0.18);
-	--g-method-put-bg: rgba(251, 191, 36, 0.08);
-	--g-method-put-text: #FBBF24;
-	--g-method-put-border: rgba(251, 191, 36, 0.18);
-	--g-method-del-bg: rgba(248, 113, 113, 0.08);
-	--g-method-del-text: #F87171;
-	--g-method-del-border: rgba(248, 113, 113, 0.18);
-	--g-method-patch-bg: rgba(192, 132, 252, 0.08);
-	--g-method-patch-text: #C084FC;
-	--g-method-patch-border: rgba(192, 132, 252, 0.18);
+	/* Derived — surfaces & borders */
+	--g-surface:        color-mix(in srgb, var(--g-text) 5%, var(--g-bg));
+	--g-surface-hover:  color-mix(in srgb, var(--g-text) 8%, var(--g-bg));
+	--g-surface-active: color-mix(in srgb, var(--g-text) 11%, var(--g-bg));
+	--g-border:         color-mix(in srgb, var(--g-text) 6%, transparent);
+	--g-border-hover:   color-mix(in srgb, var(--g-text) 12%, transparent);
+	--g-border-accent:  color-mix(in srgb, var(--g-accent) 25%, transparent);
+
+	/* Derived — text shades */
+	--g-text-muted: color-mix(in srgb, var(--g-text) 70%, var(--g-bg));
+	--g-text-dim:   color-mix(in srgb, var(--g-text) 30%, var(--g-bg));
+
+	/* Derived — accent shades */
+	--g-accent-muted: color-mix(in srgb, var(--g-accent) 10%, transparent);
+	--g-accent-dim:   color-mix(in srgb, var(--g-accent) 6%, transparent);
+
+	/* Derived — semantic areas */
+	--g-user-bg:   color-mix(in srgb, var(--g-accent) 8%, transparent);
+	--g-greg-bg:   color-mix(in srgb, var(--g-text) 4%, var(--g-bg));
+	--g-code-bg:   var(--g-bg);
+	--g-logo-text: #FFFFFF;
+
+	/* Derived — method badges */
+	--g-method-get-text:    var(--g-green);
+	--g-method-get-bg:      color-mix(in srgb, var(--g-green) 8%, transparent);
+	--g-method-get-border:  color-mix(in srgb, var(--g-green) 18%, transparent);
+	--g-method-post-text:   var(--g-method-post);
+	--g-method-post-bg:     color-mix(in srgb, var(--g-method-post) 8%, transparent);
+	--g-method-post-border: color-mix(in srgb, var(--g-method-post) 18%, transparent);
+	--g-method-put-text:    var(--g-method-put);
+	--g-method-put-bg:      color-mix(in srgb, var(--g-method-put) 8%, transparent);
+	--g-method-put-border:  color-mix(in srgb, var(--g-method-put) 18%, transparent);
+	--g-green-muted:        color-mix(in srgb, var(--g-green) 8%, transparent);
+	--g-danger-muted:       color-mix(in srgb, var(--g-danger) 8%, transparent);
+	--g-method-del-text:    var(--g-danger);
+	--g-method-del-bg:      var(--g-danger-muted);
+	--g-method-del-border:  color-mix(in srgb, var(--g-danger) 18%, transparent);
+	--g-method-patch-text:   var(--g-method-patch);
+	--g-method-patch-bg:     color-mix(in srgb, var(--g-method-patch) 8%, transparent);
+	--g-method-patch-border: color-mix(in srgb, var(--g-method-patch) 18%, transparent);
+
+	color-scheme: light;
+
+	/* ── shadcn tokens → mapped to g-* bridge ── */
+	--background:           var(--g-bg);
+	--foreground:           var(--g-text);
+	--card:                 var(--g-surface);
+	--card-foreground:      var(--g-text);
+	--popover:              var(--g-surface);
+	--popover-foreground:   var(--g-text);
+	--primary:              var(--g-accent);
+	--primary-foreground:   #FFFFFF;
+	--secondary:            var(--g-surface);
+	--secondary-foreground: var(--g-text-muted);
+	--muted:                var(--g-surface);
+	--muted-foreground:     var(--g-text-muted);
+	--accent:               var(--g-accent-muted);
+	--accent-foreground:    var(--g-text);
+	--destructive:          var(--g-danger);
+	--border:               var(--g-border);
+	--input:                var(--g-border);
+	--ring:                 var(--g-accent);
+	--radius:               0.375rem;
+
+	--chart-1: oklch(0.646 0.222 41.116);
+	--chart-2: oklch(0.6 0.118 184.714);
+	--chart-3: oklch(0.398 0.07 227.392);
+	--chart-4: oklch(0.828 0.189 84.429);
+	--chart-5: oklch(0.769 0.188 70.08);
+
+	--sidebar:                    var(--g-bg);
+	--sidebar-foreground:         var(--g-text);
+	--sidebar-primary:            var(--g-accent);
+	--sidebar-primary-foreground: #FFFFFF;
+	--sidebar-accent:             var(--g-accent-muted);
+	--sidebar-accent-foreground:  var(--g-text);
+	--sidebar-border:             var(--g-border);
+	--sidebar-ring:               var(--g-accent);
+}
+
+/* ── Dark ────────────────────────────────────────────────────────────────── */
+.dark {
+	--g-bg:           #0D0D10;
+	--g-text:         #E4E4E7;
+	--g-accent:       #818CF8;
+	--g-green:        #34D399;
+	--g-danger:       #F87171;
+	--g-method-post:  #60A5FA;
+	--g-method-put:   #FBBF24;
+	--g-method-patch: #C084FC;
+
+	--g-logo-text: var(--g-bg);
 
 	color-scheme: dark;
 }
 
-/* ===== Light theme ===== */
-:root.light {
-	--g-bg: #FFFFFF;
-	--g-surface: #F4F4F5;
-	--g-surface-hover: #E8E8EC;
-	--g-surface-active: #DCDCE2;
-	--g-border: rgba(0, 0, 0, 0.08);
-	--g-border-hover: rgba(0, 0, 0, 0.15);
-	--g-border-accent: rgba(99, 102, 241, 0.25);
-	--g-text: #18181B;
-	--g-text-muted: #52525B;
-	--g-text-dim: #A1A1AA;
-	--g-accent: #6366F1;
-	--g-accent-muted: rgba(99, 102, 241, 0.1);
-	--g-accent-dim: rgba(99, 102, 241, 0.06);
-	--g-green: #059669;
-	--g-user-bg: rgba(99, 102, 241, 0.08);
-	--g-greg-bg: #F0F0F3;
-	--g-code-bg: #F4F4F5;
-	--g-logo-text: #FFFFFF;
-
-	--g-method-get-bg: rgba(5, 150, 105, 0.08);
-	--g-method-get-text: #059669;
-	--g-method-get-border: rgba(5, 150, 105, 0.2);
-	--g-method-post-bg: rgba(37, 99, 235, 0.08);
-	--g-method-post-text: #2563EB;
-	--g-method-post-border: rgba(37, 99, 235, 0.2);
-	--g-method-put-bg: rgba(217, 119, 6, 0.08);
-	--g-method-put-text: #D97706;
-	--g-method-put-border: rgba(217, 119, 6, 0.2);
-	--g-method-del-bg: rgba(220, 38, 38, 0.08);
-	--g-method-del-text: #DC2626;
-	--g-method-del-border: rgba(220, 38, 38, 0.2);
-	--g-method-patch-bg: rgba(147, 51, 234, 0.08);
-	--g-method-patch-text: #9333EA;
-	--g-method-patch-border: rgba(147, 51, 234, 0.2);
-
-	color-scheme: light;
+@theme inline {
+	--font-heading:       var(--font-sans);
+	--font-sans:          var(--font-sans);
+	--font-mono:          var(--font-mono), ui-monospace, monospace;
+	--color-sidebar-ring:                var(--sidebar-ring);
+	--color-sidebar-border:              var(--sidebar-border);
+	--color-sidebar-accent-foreground:   var(--sidebar-accent-foreground);
+	--color-sidebar-accent:              var(--sidebar-accent);
+	--color-sidebar-primary-foreground:  var(--sidebar-primary-foreground);
+	--color-sidebar-primary:             var(--sidebar-primary);
+	--color-sidebar-foreground:          var(--sidebar-foreground);
+	--color-sidebar:                     var(--sidebar);
+	--color-chart-5:             var(--chart-5);
+	--color-chart-4:             var(--chart-4);
+	--color-chart-3:             var(--chart-3);
+	--color-chart-2:             var(--chart-2);
+	--color-chart-1:             var(--chart-1);
+	--color-ring:                var(--ring);
+	--color-input:               var(--input);
+	--color-border:              var(--border);
+	--color-destructive:         var(--destructive);
+	--color-accent-foreground:   var(--accent-foreground);
+	--color-accent:              var(--accent);
+	--color-muted-foreground:    var(--muted-foreground);
+	--color-muted:               var(--muted);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-secondary:           var(--secondary);
+	--color-primary-foreground:  var(--primary-foreground);
+	--color-primary:             var(--primary);
+	--color-popover-foreground:  var(--popover-foreground);
+	--color-popover:             var(--popover);
+	--color-card-foreground:     var(--card-foreground);
+	--color-card:                var(--card);
+	--color-foreground:          var(--foreground);
+	--color-background:          var(--background);
+	--radius-sm:    calc(var(--radius) * 0.6);
+	--radius-md:    calc(var(--radius) * 0.8);
+	--radius-lg:    var(--radius);
+	--radius-xl:    calc(var(--radius) * 1.4);
+	--radius-2xl:   calc(var(--radius) * 1.8);
+	--radius-3xl:   calc(var(--radius) * 2.2);
+	--radius-4xl:   calc(var(--radius) * 2.6);
 }
 
-@theme {
-	--font-mono: "JetBrains Mono", ui-monospace, monospace;
-}
+/* ── Global resets ───────────────────────────────────────────────────────── */
 
 html, body {
 	margin: 0;
@@ -91,7 +171,7 @@ html, body {
 	height: 100%;
 	background: var(--g-bg);
 	color: var(--g-text);
-	font-family: "Poppins", -apple-system, "Segoe UI", sans-serif;
+	font-family: var(--font-sans), -apple-system, "Segoe UI", sans-serif;
 	font-size: 1rem;
 	line-height: 1.5;
 	transition: background 0.15s, color 0.15s;
@@ -142,7 +222,7 @@ code[class*="language-"] span {
 	background: var(--g-text-dim);
 }
 
-/* ===== Shared component patterns ===== */
+/* ── Legacy patterns (kept for GregPage/DocsPage until migrated) ───────── */
 
 .method-badge {
 	display: inline-flex;
@@ -158,20 +238,6 @@ code[class*="language-"] span {
 	white-space: nowrap;
 }
 
-.api-badge {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.1875rem;
-	font-size: 0.75rem;
-	font-weight: 500;
-	padding: 0.0625rem 0.4375rem;
-	border-radius: 0.25rem;
-	white-space: nowrap;
-	flex-shrink: 0;
-	background: var(--g-accent-dim);
-	color: var(--g-accent);
-}
-
 .btn-icon {
 	display: flex;
 	align-items: center;
@@ -185,30 +251,12 @@ code[class*="language-"] span {
 	flex-shrink: 0;
 }
 
-.g-input {
-	width: 100%;
-	height: 2.75rem;
-	padding: 0 0.875rem;
-	background: var(--g-surface);
-	border: 1px solid var(--g-border);
-	border-radius: 0.375rem;
-	font-size: 1rem;
-	color: var(--g-text);
-	outline: none;
-	box-sizing: border-box;
-}
 
-.g-card {
-	background: var(--g-surface);
-	border: 1px solid var(--g-border);
-	border-radius: 0.375rem;
-}
-
-@keyframes slide-in-right {
-	from { transform: translateX(100%); }
-	to { transform: translateX(0); }
-}
-
-.animate-slide-in-right {
-	animation: slide-in-right 0.2s ease-out;
+@layer base {
+	* {
+		@apply border-border outline-ring/50;
+	}
+	body {
+		@apply bg-background text-foreground;
+	}
 }

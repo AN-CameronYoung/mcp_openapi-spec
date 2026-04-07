@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { cn } from "../lib/utils";
 import { useShallow } from "zustand/react/shallow";
 import { useStore } from "../store/store";
 import { listApis } from "../lib/api";
+import { Button } from "./ui/button";
 
 interface SpecStatus {
 	name: string;
@@ -12,7 +14,7 @@ interface SpecStatus {
 	total?: number;
 }
 
-export default function AutoIngestBanner() {
+export default function AutoIngestIndicator() {
 	const { autoIngest, setAutoIngest, updateAutoIngestSpec, setApis } = useStore(
 		useShallow((s) => ({
 			autoIngest: s.autoIngest,
@@ -22,7 +24,8 @@ export default function AutoIngestBanner() {
 		})),
 	);
 	const evtSourceRef = useRef<EventSource | null>(null);
-	const [dismissed, setDismissed] = useState(false);
+	const [open, setOpen] = useState(false);
+	const containerRef = useRef<HTMLDivElement>(null);
 
 	// Connect to SSE endpoint
 	useEffect(() => {
@@ -83,94 +86,105 @@ export default function AutoIngestBanner() {
 		};
 	}, []);
 
+	useEffect(() => {
+		if (!open) return;
+		const handler = (e: MouseEvent) => {
+			if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+		};
+		document.addEventListener("mousedown", handler);
+		return () => document.removeEventListener("mousedown", handler);
+	}, [open]);
+
 	const { active, specs } = autoIngest;
 	const allDone = !active && specs.length > 0 && specs.every((s) => s.status === "done" || s.status === "error");
 
-	// Auto-dismiss after completion
+	// Auto-hide 5s after completion
 	useEffect(() => {
 		if (!allDone) return;
-		const t = setTimeout(() => {
-			setDismissed(true);
-			setAutoIngest({ specs: [] });
-		}, 8000);
+		const t = setTimeout(() => setAutoIngest({ specs: [] }), 5000);
 		return () => clearTimeout(t);
 	}, [allDone]);
 
-	// Nothing to show
-	if (specs.length === 0 || dismissed) return null;
+	if (specs.length === 0) return null;
 
 	const doneCount = specs.filter((s) => s.status === "done").length;
 	const errorCount = specs.filter((s) => s.status === "error").length;
+	const finishedCount = doneCount + errorCount;
 	const running = specs.find((s) => s.status === "running");
 	const pct = running?.total ? Math.round(((running.done ?? 0) / running.total) * 100) : 0;
-	const overallPct = specs.length > 0 ? Math.round(((doneCount + errorCount) / specs.length) * 100) : 0;
+	const overallPct = specs.length > 0 ? Math.round((finishedCount / specs.length) * 100) : 0;
 
 	return (
-		<div className="mx-5 mt-2 mb-0 rounded-lg border border-[var(--g-border)] bg-[var(--g-surface)] overflow-hidden shrink-0">
-			{/* Header bar */}
-			<div className="flex items-center gap-2 px-3 py-2">
-				<div className="relative w-5 h-5 shrink-0">
-					{active ? (
-						<svg className="animate-spin" width={20} height={20} viewBox="0 0 20 20">
-							<circle cx="10" cy="10" r="8" fill="none" stroke="var(--g-border)" strokeWidth="2" />
-							<path d="M10 2a8 8 0 0 1 8 8" fill="none" stroke="var(--g-accent)" strokeWidth="2" strokeLinecap="round" />
-						</svg>
-					) : (
-						<svg width={20} height={20} viewBox="0 0 20 20">
-							<circle cx="10" cy="10" r="8" fill="none" stroke="var(--g-green)" strokeWidth="2" />
-							<path d="M6 10l3 3 5-6" fill="none" stroke="var(--g-green)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-						</svg>
-					)}
-				</div>
-				<span className="text-sm font-semibold text-[var(--g-text)]">
-					{active ? "Auto-ingesting specs..." : "Auto-ingest complete"}
-				</span>
-				<span className="text-xs text-[var(--g-text-dim)] ml-auto">
-					{doneCount + errorCount}/{specs.length}
-				</span>
-				{!active && (
-					<button
-						onClick={() => { setDismissed(true); setAutoIngest({ specs: [] }); }}
-						className="text-[var(--g-text-dim)] bg-transparent border-none cursor-pointer p-0 ml-1 leading-none"
-					>
-						<svg width={14} height={14} viewBox="0 0 14 14" fill="none"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
-					</button>
+		<div ref={containerRef} className="relative">
+			{/* Pill button */}
+			<Button
+				variant="outline"
+				size="xs"
+				onClick={() => setOpen(!open)}
+				className="gap-1.5"
+			>
+				{active ? (
+					<svg className="animate-spin" width={12} height={12} viewBox="0 0 20 20">
+						<circle cx="10" cy="10" r="8" fill="none" stroke="var(--g-border)" strokeWidth="2.5" />
+						<path d="M10 2a8 8 0 0 1 8 8" fill="none" stroke="var(--g-accent)" strokeWidth="2.5" strokeLinecap="round" />
+					</svg>
+				) : (
+					<svg width={12} height={12} viewBox="0 0 20 20">
+						<circle cx="10" cy="10" r="8" fill="none" stroke="var(--g-green)" strokeWidth="2.5" />
+						<path d="M6 10l3 3 5-6" fill="none" stroke="var(--g-green)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+					</svg>
 				)}
-			</div>
+				<span className="text-secondary-foreground font-medium">
+					{active ? `Ingesting ${finishedCount}/${specs.length}` : "Ingested"}
+				</span>
+			</Button>
 
-			{/* Overall progress bar */}
-			<div className="h-0.5 bg-[var(--g-border)]">
-				<div
-					className="h-full bg-[var(--g-accent)] transition-all duration-300"
-					style={{ width: `${active && running ? overallPct + (pct / specs.length) : overallPct}%` }}
-				/>
-			</div>
-
-			{/* Spec list */}
-			<div className="max-h-40 overflow-y-auto">
-				{specs.map((sp) => (
-					<div key={sp.name} className="flex items-center gap-2 px-3 py-1.5 text-[0.8125rem] border-t border-[var(--g-border)]">
-						<span className="w-1.5 h-1.5 rounded-full shrink-0" style={{
-							backgroundColor:
-								sp.status === "done" ? "var(--g-green)" :
-								sp.status === "error" ? "#F87171" :
-								sp.status === "running" ? "var(--g-accent)" :
-								"var(--g-text-dim)",
-							opacity: sp.status === "pending" ? 0.4 : 1,
-						}} />
-						<span className={`font-medium truncate min-w-0 ${sp.status === "pending" ? "text-[var(--g-text-dim)]" : "text-[var(--g-text)]"}`}>
-							{sp.name}
-						</span>
-						<span className="ml-auto text-xs text-[var(--g-text-dim)] whitespace-nowrap shrink-0">
-							{sp.status === "running" && sp.total
-								? `${sp.done ?? 0}/${sp.total}`
-								: sp.status === "done" || sp.status === "error"
-								? sp.message
-								: ""}
+			{/* Dropdown */}
+			{open && (
+				<div className="absolute top-full right-0 mt-1.5 w-80 max-h-72 rounded-lg border border-[var(--g-border)] bg-[var(--g-surface)] shadow-[0_8px_30px_rgba(0,0,0,0.4)] z-[150] overflow-hidden">
+					{/* Header */}
+					<div className="flex items-center gap-2 px-3 py-2 text-sm font-semibold text-[var(--g-text)]">
+						{active ? "Auto-ingesting specs..." : "Auto-ingest complete"}
+						<span className="ml-auto text-xs font-normal text-[var(--g-text-dim)]">
+							{finishedCount}/{specs.length}
 						</span>
 					</div>
-				))}
-			</div>
+
+					{/* Progress bar */}
+					<div className="h-0.5 bg-[var(--g-border)]">
+						<div
+							className="h-full bg-[var(--g-accent)] transition-all duration-300"
+							style={{ width: `${active && running ? overallPct + (pct / specs.length) : overallPct}%` }}
+						/>
+					</div>
+
+					{/* Spec list */}
+					<div className="max-h-56 overflow-y-auto">
+						{specs.map((sp) => (
+							<div key={sp.name} className="flex items-center gap-2 px-3 py-1.5 text-[0.8125rem] border-t border-[var(--g-border)]">
+								<span className="w-1.5 h-1.5 rounded-full shrink-0" style={{
+									backgroundColor:
+										sp.status === "done" ? "var(--g-green)" :
+										sp.status === "error" ? "var(--g-danger)" :
+										sp.status === "running" ? "var(--g-accent)" :
+										"var(--g-text-dim)",
+									opacity: sp.status === "pending" ? 0.4 : 1,
+								}} />
+								<span className={cn("font-medium truncate min-w-0", sp.status === "pending" ? "text-[var(--g-text-dim)]" : "text-[var(--g-text)]")}>
+									{sp.name}
+								</span>
+								<span className="ml-auto text-xs text-[var(--g-text-dim)] whitespace-nowrap shrink-0">
+									{sp.status === "running" && sp.total
+										? `${sp.done ?? 0}/${sp.total}`
+										: sp.status === "done" || sp.status === "error"
+										? sp.message
+										: ""}
+								</span>
+							</div>
+						))}
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

@@ -2,10 +2,17 @@
 import { useState, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Ic } from "../lib/icons";
+import { cn } from "../lib/utils";
 import { useStore, nextJobId } from "../store/store";
 import type { IngestJob } from "../store/store";
 import { listApis } from "../lib/api";
-import "./SettingsPage.css";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Textarea } from "../components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "../components/ui/alert-dialog";
+
+const sectionLabel = "text-[0.9375rem] font-semibold uppercase tracking-[0.06em] text-[var(--g-text-dim)] mb-2";
 
 type IngestMode = "url" | "file" | "paste";
 
@@ -82,6 +89,7 @@ export default function SettingsPage() {
 	})));
 
 	const [mode, setMode] = useState<IngestMode>("url");
+	const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 	const [url, setUrl] = useState("");
 	const [apiName, setApiName] = useState("");
 	const [pasteContent, setPasteContent] = useState("");
@@ -153,129 +161,109 @@ export default function SettingsPage() {
 
 				{/* ── Ingest ──────────────────────────────────── */}
 				<div className="mb-6">
-					<div className="settings-section-label">Ingest API Spec</div>
+					<div className={sectionLabel}>Ingest API Spec</div>
 
-					<div className="flex gap-[0.1875rem] mb-3.5">
-						{(["url", "file", "paste"] as IngestMode[]).map((m) => (
-							<button
-								key={m}
-								onClick={() => setMode(m)}
-								className={`settings-mode-btn${mode === m ? " active" : ""}`}
-							>
-								{m === "url" ? "From URL" : m === "file" ? "Upload Files" : "Paste"}
-							</button>
-						))}
-					</div>
+					<Tabs value={mode} onValueChange={(v) => setMode(v as IngestMode)}>
+						<TabsList className="mb-3.5">
+							<TabsTrigger value="url">From URL</TabsTrigger>
+							<TabsTrigger value="file">Upload Files</TabsTrigger>
+							<TabsTrigger value="paste">Paste</TabsTrigger>
+						</TabsList>
 
-					{/* API name — only for URL and paste modes */}
-					{mode !== "file" && (
-						<div className="mb-[0.6875rem]">
-							<label className="text-sm text-[var(--g-text-dim)] block mb-1">
-								API Name
-							</label>
-							<input
-								type="text"
-								placeholder="my-api"
-								value={apiName}
-								onChange={(e) => setApiName(e.target.value)}
-								className="g-input"
-							/>
-						</div>
-					)}
-
-					{mode === "url" && (
-						<div className="mb-[0.6875rem]">
-							<label className="text-sm text-[var(--g-text-dim)] block mb-1">
-								Spec URL or file path
-							</label>
-							<input
-								type="text"
-								placeholder="https://example.com/openapi.yaml"
-								value={url}
-								onChange={(e) => setUrl(e.target.value)}
-								onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-								autoComplete="off"
-								className="g-input"
-							/>
-						</div>
-					)}
-
-					{mode === "file" && (
-						<div className="mb-[0.6875rem]">
-							<label className="text-sm text-[var(--g-text-dim)] block mb-1">
-								OpenAPI spec files (YAML or JSON) — select multiple
-							</label>
-							<div
-								onClick={() => fileRef.current?.click()}
-								className="p-[1.0625rem] bg-[var(--g-surface)] border border-dashed border-[var(--g-border)] rounded-md cursor-pointer text-center text-[0.9375rem] text-[var(--g-text-dim)]"
-							>
-								Click to select files
+						<TabsContent value="url">
+							<div className="mb-[0.6875rem]">
+								<label className="text-sm text-muted-foreground block mb-1">API Name</label>
+								<Input type="text" placeholder="my-api" value={apiName} onChange={(e) => setApiName(e.target.value)} />
 							</div>
-							<input
-								ref={fileRef}
-								type="file"
-								accept=".yaml,.yml,.json"
-								multiple
-								className="hidden"
-								onChange={() => handleFiles()}
-							/>
-						</div>
-					)}
+							<div className="mb-[0.6875rem]">
+								<label className="text-sm text-muted-foreground block mb-1">Spec URL or file path</label>
+								<Input
+									type="text"
+									placeholder="https://example.com/openapi.yaml"
+									value={url}
+									onChange={(e) => setUrl(e.target.value)}
+									onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+									autoComplete="off"
+								/>
+							</div>
+							<Button onClick={handleSubmit}>Ingest</Button>
+						</TabsContent>
 
-					{mode === "paste" && (
-						<div className="mb-[0.6875rem]">
-							<div className="flex items-center gap-2 mb-1">
-								<label className="text-sm text-[var(--g-text-dim)]">Paste spec content</label>
-								<select
-									value={pasteFormat}
-									onChange={(e) => setPasteFormat(e.target.value as "yaml" | "json")}
-									className="text-sm px-1.5 py-px bg-[var(--g-surface)] border border-[var(--g-border)] rounded text-[var(--g-text-muted)]"
+						<TabsContent value="file">
+							<div className="mb-[0.6875rem]">
+								<label className="text-sm text-muted-foreground block mb-1">
+									OpenAPI spec files (YAML or JSON) — select multiple
+								</label>
+								<div
+									onClick={() => fileRef.current?.click()}
+									className="p-[1.0625rem] bg-muted border border-dashed border-border rounded-md cursor-pointer text-center text-[0.9375rem] text-muted-foreground"
 								>
-									<option value="yaml">YAML</option>
-									<option value="json">JSON</option>
-								</select>
+									Click to select files
+								</div>
+								<input
+									ref={fileRef}
+									type="file"
+									accept=".yaml,.yml,.json"
+									multiple
+									className="hidden"
+									onChange={() => handleFiles()}
+								/>
 							</div>
-							<textarea
-								placeholder="openapi: '3.0.0'..."
-								value={pasteContent}
-								onChange={(e) => setPasteContent(e.target.value)}
-								className="g-input h-[10.5rem] py-[0.6875rem] font-mono text-[0.9375rem] resize-y"
-							/>
-						</div>
-					)}
+						</TabsContent>
 
-					{mode !== "file" && (
-						<button
-							onClick={handleSubmit}
-							className="px-5 py-2 text-[0.9375rem] font-semibold border-none rounded-md cursor-pointer bg-[var(--g-accent)] text-[#0D0D10]"
-						>
-							Ingest
-						</button>
-					)}
+						<TabsContent value="paste">
+							<div className="mb-[0.6875rem]">
+								<label className="text-sm text-muted-foreground block mb-1">API Name</label>
+								<Input type="text" placeholder="my-api" value={apiName} onChange={(e) => setApiName(e.target.value)} />
+							</div>
+							<div className="mb-[0.6875rem]">
+								<div className="flex items-center gap-2 mb-1">
+									<label className="text-sm text-muted-foreground">Paste spec content</label>
+									<select
+										value={pasteFormat}
+										onChange={(e) => setPasteFormat(e.target.value as "yaml" | "json")}
+										className="text-sm px-1.5 py-px bg-muted border border-border rounded text-secondary-foreground"
+									>
+										<option value="yaml">YAML</option>
+										<option value="json">JSON</option>
+									</select>
+								</div>
+								<Textarea
+									placeholder="openapi: '3.0.0'..."
+									value={pasteContent}
+									onChange={(e) => setPasteContent(e.target.value)}
+									className="h-[10.5rem] py-[0.6875rem] font-mono text-[0.9375rem] resize-y"
+								/>
+							</div>
+							<Button onClick={handleSubmit}>Ingest</Button>
+						</TabsContent>
+					</Tabs>
 				</div>
 
 				{/* ── Active Jobs ──────────────────────────────── */}
 				{ingestJobs.length > 0 && (
 					<div className="mb-6">
-						<div className="settings-section-label flex items-center">
+						<div className={cn(sectionLabel, "flex items-center")}>
 							<span>Ingest Jobs</span>
 							{!hasActiveJobs && ingestJobs.length > 0 && (
-								<button
+								<Button
+									variant="ghost"
+									size="xs"
 									onClick={clearDoneJobs}
-									className="ml-auto text-[0.8125rem] border-none cursor-pointer px-2 py-[0.125rem] rounded bg-transparent text-[var(--g-text-dim)] normal-case tracking-normal font-normal"
+									className="ml-auto text-muted-foreground normal-case tracking-normal font-normal"
 								>
 									Clear
-								</button>
+								</Button>
 							)}
 						</div>
 						{ingestJobs.map((job) => (
 							<div
 								key={job.id}
-								className="g-card px-[0.6875rem] py-2 mb-1"
+								className="bg-muted border border-border rounded-md px-[0.6875rem] py-2 mb-1"
 								style={{
 									borderColor:
-										job.status === "error" ? "rgba(248,113,113,0.18)" :
-										job.status === "done" ? "rgba(52,211,153,0.18)" :
+										job.status === "error" ? "color-mix(in srgb, var(--g-danger) 18%, transparent)" :
+										job.status === "done" ? "color-mix(in srgb, var(--g-green) 18%, transparent)" :
 										undefined,
 								}}
 							>
@@ -284,20 +272,22 @@ export default function SettingsPage() {
 									<span
 										className={`text-xs px-1.5 py-px rounded font-medium${
 											job.status === "running" ? " bg-[var(--g-accent-muted)] text-[var(--g-accent)]" :
-											job.status === "done" ? " bg-[rgba(52,211,153,0.08)] text-[var(--g-green)]" :
-											job.status === "error" ? " bg-[rgba(248,113,113,0.08)] text-[#F87171]" :
+											job.status === "done" ? " bg-[var(--g-green-muted)] text-[var(--g-green)]" :
+											job.status === "error" ? " bg-[var(--g-danger-muted)] text-[var(--g-danger)]" :
 											" bg-[var(--g-bg)] text-[var(--g-text-dim)]"
 										}`}
 									>
 										{job.status}
 									</span>
 									{(job.status === "done" || job.status === "error") && (
-										<button
+										<Button
+											variant="ghost"
+											size="icon-xs"
 											onClick={() => removeIngestJob(job.id)}
-											className="btn-icon ml-auto p-0.5"
+											className="ml-auto text-muted-foreground"
 										>
 											{Ic.x(13)}
-										</button>
+										</Button>
 									)}
 								</div>
 								<div className="text-[0.8125rem] text-[var(--g-text-dim)] mt-[0.1875rem]">{job.message}</div>
@@ -319,24 +309,47 @@ export default function SettingsPage() {
 
 				{/* ── Ingested APIs ────────────────────────────── */}
 				<div>
-					<div className="settings-section-label">Ingested APIs</div>
+					<div className={sectionLabel}>Ingested APIs</div>
 					{apis.length === 0 && (
 						<div className="text-[0.9375rem] text-[var(--g-text-dim)]">No APIs ingested yet</div>
 					)}
 					{apis.map((a) => (
 						<div
 							key={a.name}
-							className="g-card flex items-center gap-[0.6875rem] px-[0.6875rem] py-[0.4375rem] mb-1"
+							className="bg-muted border border-border rounded-md flex items-center gap-[0.6875rem] px-[0.6875rem] py-[0.4375rem] mb-1"
 						>
-							<span className="flex text-[var(--g-accent)] opacity-50">{Ic.server()}</span>
-							<span className="text-base font-medium text-[var(--g-text)]">{a.name}</span>
-							<span className="text-sm text-[var(--g-text-dim)]">{a.endpoints} endpoints</span>
-							<button
-								onClick={() => handleDelete(a.name)}
-								className="btn-icon ml-auto p-[0.1875rem]"
-							>
-								{Ic.x()}
-							</button>
+							<span className="flex text-primary opacity-50">{Ic.server()}</span>
+							<span className="text-base font-medium text-foreground">{a.name}</span>
+							<span className="text-sm text-muted-foreground">{a.endpoints} endpoints</span>
+							<AlertDialog open={deleteTarget === a.name} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+								<AlertDialogTrigger asChild>
+									<Button
+										variant="ghost"
+										size="icon-xs"
+										onClick={() => setDeleteTarget(a.name)}
+										className="ml-auto text-muted-foreground"
+									>
+										{Ic.x()}
+									</Button>
+								</AlertDialogTrigger>
+								<AlertDialogContent>
+									<AlertDialogHeader>
+										<AlertDialogTitle>Delete {a.name}?</AlertDialogTitle>
+										<AlertDialogDescription>
+											This will permanently remove all ingested endpoints and schemas for this API.
+										</AlertDialogDescription>
+									</AlertDialogHeader>
+									<AlertDialogFooter>
+										<AlertDialogCancel>Cancel</AlertDialogCancel>
+										<AlertDialogAction
+											variant="destructive"
+											onClick={() => { handleDelete(a.name); setDeleteTarget(null); }}
+										>
+											Delete
+										</AlertDialogAction>
+									</AlertDialogFooter>
+								</AlertDialogContent>
+							</AlertDialog>
 						</div>
 					))}
 				</div>

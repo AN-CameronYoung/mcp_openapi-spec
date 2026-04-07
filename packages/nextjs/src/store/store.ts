@@ -52,7 +52,7 @@ function getStoredTheme(): ThemePref {
 function applyTheme(pref: ThemePref) {
 	if (typeof window === "undefined") return;
 	const isDark = pref === "dark" || (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-	document.documentElement.classList.toggle("light", !isDark);
+	document.documentElement.classList.toggle("dark", isDark);
 	try { localStorage.setItem("greg-theme", pref); } catch {}
 }
 

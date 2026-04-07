@@ -9,7 +9,7 @@ import SearchPage from "./pages/SearchPage";
 import DocsPage from "./pages/DocsPage";
 import SettingsPage from "./pages/SettingsPage";
 import IngestFloat from "./components/IngestFloat";
-import AutoIngestBanner from "./components/AutoIngestBanner";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "./components/ui/sheet";
 
 export default function App() {
 	const { page, setPage, setApis, setDocsApi, docsApi, theme, setTheme, hydrateFromStorage } = useStore(
@@ -60,35 +60,22 @@ export default function App() {
 	return (
 		<div className="h-screen flex flex-col">
 			<Header />
-			<AutoIngestBanner />
 			{/* Main content — stays visible behind settings drawer */}
 			{contentPage === "greg" && <GregPage />}
 			{contentPage === "search" && <SearchPage />}
 			{contentPage === "docs" && <DocsPage />}
 
-			{/* Settings drawer overlay */}
-			{showSettings && (
-				<>
-					<div
-						className="fixed inset-0 bg-black/40 z-[200] transition-opacity"
-						onClick={() => setPage(contentPage)}
-					/>
-					<div className="fixed top-0 right-0 h-full w-[28rem] max-w-[90vw] bg-[var(--g-bg)] border-l border-[var(--g-border)] z-[201] shadow-[-4px_0_24px_rgba(0,0,0,0.3)] animate-slide-in-right overflow-hidden flex flex-col">
-						<div className="flex items-center justify-between px-5 py-3 border-b border-[var(--g-border)] shrink-0">
-							<span className="text-base font-semibold text-[var(--g-text)]">Settings</span>
-							<button
-								onClick={() => setPage(contentPage)}
-								className="btn-icon p-1"
-							>
-								<svg width={14} height={14} viewBox="0 0 14 14" fill="none"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
-							</button>
-						</div>
-						<div className="flex-1 overflow-auto">
-							<SettingsPage />
-						</div>
+			{/* Settings drawer */}
+			<Sheet open={showSettings} onOpenChange={(open) => { if (!open) setPage(contentPage); }}>
+				<SheetContent side="right" className="w-[28rem] max-w-[90vw] p-0 flex flex-col gap-0">
+					<SheetHeader className="px-5 py-3 border-b border-border shrink-0">
+						<SheetTitle className="text-base font-semibold">Settings</SheetTitle>
+					</SheetHeader>
+					<div className="flex-1 overflow-auto">
+						<SettingsPage />
 					</div>
-				</>
-			)}
+				</SheetContent>
+			</Sheet>
 			<IngestFloat />
 		</div>
 	);

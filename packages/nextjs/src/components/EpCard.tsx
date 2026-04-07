@@ -1,5 +1,7 @@
 "use client";
+import { cn } from "../lib/utils";
 import { METHOD_COLORS } from "../lib/constants";
+import { Badge } from "./ui/badge";
 
 interface EpCardProps {
 	method: string;
@@ -17,11 +19,16 @@ export default function EpCard({ method, path, api, description, warnings, compa
 	return (
 		<div
 			onClick={onClick}
-			className={`g-card ${compact ? "px-1.5 py-[0.1875rem]" : "px-2 py-1"} ${onClick ? "cursor-pointer hover:border-[var(--g-border-hover)]" : "cursor-default"} transition-all duration-100`}
+			className={cn(
+				"bg-muted border border-border rounded-md transition-all duration-100",
+				compact ? "px-1.5 py-[0.1875rem]" : "px-2 py-1",
+				onClick ? "cursor-pointer hover:border-[var(--g-border-hover)]" : "cursor-default",
+			)}
 		>
 			<div className="flex items-center gap-[0.3125rem]">
-				<span
-					className="method-badge text-center"
+				<Badge
+					variant="method"
+					className="text-center"
 					style={{
 						background: m.bg,
 						color: m.text,
@@ -30,18 +37,21 @@ export default function EpCard({ method, path, api, description, warnings, compa
 					}}
 				>
 					{method}
-				</span>
+				</Badge>
 				<code
-					className={`${compact ? "text-[0.6875rem]" : "text-xs"} font-mono text-[var(--g-text)] truncate flex-1`}
+					className={cn("font-mono text-foreground truncate flex-1", compact ? "text-[0.6875rem]" : "text-xs")}
 				>
 					{path}
 				</code>
-				<span className="api-badge flex-shrink-0">
+				<Badge variant="api">
 					{api}
-				</span>
+				</Badge>
 			</div>
 			<p
-				className={`${compact ? "text-[0.625rem] pl-[2.1875rem]" : "text-[0.6875rem] pl-10"} text-[var(--g-text-dim)] mt-0.5 leading-[1.3] truncate`}
+				className={cn(
+					"text-[var(--g-text-dim)] mt-0.5 leading-[1.3] truncate",
+					compact ? "text-[0.625rem] pl-[2.1875rem]" : "text-[0.6875rem] pl-10",
+				)}
 			>
 				{description}
 			</p>
@@ -50,7 +60,7 @@ export default function EpCard({ method, path, api, description, warnings, compa
 					{warningList.map((w, i) => (
 						<span
 							key={i}
-							className="text-xs px-2 py-[0.1875rem] rounded bg-[rgba(251,191,36,0.15)] text-[#FCD34D] border border-[rgba(251,191,36,0.35)] leading-[1.5]"
+							className="text-xs px-2 py-[0.1875rem] rounded bg-[var(--g-method-put-bg)] text-[var(--g-method-put-text)] border border-[var(--g-method-put-border)] leading-[1.5]"
 						>
 							⚠ {w}
 						</span>
