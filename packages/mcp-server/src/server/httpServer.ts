@@ -257,7 +257,7 @@ export async function runHttpServer(host: string, port: number): Promise<void> {
 						}
 					} catch {}
 				}
-				const summary = await retriever.ingest(body.source, body.api_name, (e) => send(e));
+				const summary = await retriever.ingest(body.source, body.api_name, (e) => send(e as unknown as Record<string, unknown>));
 				send({ phase: "complete", summary });
 			} catch (err) {
 				console.error("[api] ingest error:", err);
@@ -286,7 +286,7 @@ export async function runHttpServer(host: string, port: number): Promise<void> {
 			try {
 				const ext = body.format === "json" ? ".json" : ".yaml";
 				await saveSpecFile(body.api_name, body.content, ext);
-				const summary = await retriever.ingestContent(body.content, body.format, body.api_name, (e) => send(e));
+				const summary = await retriever.ingestContent(body.content, body.format, body.api_name, (e) => send(e as unknown as Record<string, unknown>));
 				send({ phase: "complete", summary });
 			} catch (err) {
 				console.error("[api] ingest/upload error:", err);

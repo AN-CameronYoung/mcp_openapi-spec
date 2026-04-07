@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { streamSSE } from "hono/streaming";
+import type Anthropic from "@anthropic-ai/sdk";
 import type Retriever from "../core/retriever";
 import config from "../core/config";
 
@@ -176,14 +176,14 @@ const GIF_TOOL = {
 	},
 };
 
-function getChatTools(personality: "greg" | "verbose" | "curt" = "greg", apiSuffix: string = "") {
-	const tools = CHAT_TOOLS.map(t => {
+function getChatTools(personality: "greg" | "verbose" | "curt" = "greg", apiSuffix: string = ""): Anthropic.Tool[] {
+	const tools: Anthropic.Tool[] = CHAT_TOOLS.map(t => {
 		if (t.name === "search" && apiSuffix) {
-			return { ...t, description: t.description + apiSuffix };
+			return { ...t, description: t.description + apiSuffix } as Anthropic.Tool;
 		}
-		return t;
+		return t as Anthropic.Tool;
 	});
-	if (config.GIPHY_API_KEY && personality === "greg") tools.push(GIF_TOOL);
+	if (config.GIPHY_API_KEY && personality === "greg") tools.push(GIF_TOOL as Anthropic.Tool);
 	return tools;
 }
 
@@ -395,7 +395,7 @@ async function chatAnthropic(
 			max_tokens: config.LLM_MAX_TOKENS,
 			temperature: 0.3,
 			system: systemBlocks,
-			messages: apiMessages,
+			messages: apiMessages as Anthropic.MessageParam[],
 			tools: getChatTools(personality, apiSuffix),
 		});
 
@@ -432,7 +432,7 @@ async function chatAnthropic(
 					input: block.input as Record<string, unknown>,
 				});
 			}
-			contentBlocks.push(block as { type: string; [key: string]: unknown });
+			contentBlocks.push(block as unknown as { type: string; [key: string]: unknown });
 		}
 
 		if (!hasToolUse) break;
@@ -451,7 +451,7 @@ async function chatAnthropic(
 				max_tokens: config.LLM_MAX_TOKENS,
 				temperature: 0.3,
 				system: systemBlocks,
-				messages: apiMessages,
+				messages: apiMessages as Anthropic.MessageParam[],
 			});
 			for await (const event of finalStream) {
 				if (event.type === "content_block_delta") {
@@ -684,116 +684,6 @@ async function checkToolSupport(
 	}
 }
 
-// Fallback: pre-search relevant context and pass it in the prompt
-async function chatOllamaDirect(
-	messages: ChatMessage[],
-	systemPrompt: string,
-	retriever: Retriever,
-	baseUrl: string,
-	onText: (text: string) => void,
-	onEndpoints: (eps: EndpointCard[]) => void,
-): Promise<void> {
-	// Only pre-search when the message looks like an API question
-	const lastMsg = messages[messages.length - 1]?.content ?? "";
-	let contextBlock = "";
-
-	const looksLikeApiQuery = lastMsg.trim().length > 6 &&
-		!/^(hi|hey|hello|sup|yo|thanks|thank you|ok|okay|cool|bye|greg|what|who are you)\b/i.test(lastMsg.trim());
-
-	if (lastMsg.trim() && looksLikeApiQuery) {
-		try {
-			const epResults = await retriever.searchEndpoints(lastMsg, undefined, undefined, undefined, 2);
-			const schemaResults = await retriever.searchSchemas(lastMsg, undefined, 2);
-
-			const epCards: EndpointCard[] = [];
-
-			if (epResults.length > 0) {
-				contextBlock += "\n\nRelevant endpoints found:\n";
-				for (const r of epResults) {
-					const m = r.metadata;
-					contextBlock += `- ${m.method} ${m.path} (${m.api}): ${(m.full_text ?? r.text).slice(0, 150)}\n`;
-					epCards.push({
-						method: m.method ?? "",
-						path: m.path ?? "",
-						api: m.api ?? "",
-						description: extractDescription(m.full_text ?? r.text),
-						score: Math.max(0, Math.round((1 - (r.distance ?? 0) / 2) * 100) / 100),
-						full_text: m.full_text ?? r.text,
-						response_schema: m.response_schema ?? "",
-						warnings: m.warnings ?? "",
-					});
-				}
-				if (epCards.length > 0) onEndpoints(epCards);
-			}
-
-			if (schemaResults.length > 0) {
-				contextBlock += "\nRelevant schemas found:\n";
-				for (const r of schemaResults) {
-					contextBlock += `- ${r.metadata.name} (${r.metadata.api}): ${(r.metadata.full_text ?? r.text).slice(0, 150)}\n`;
-				}
-			}
-		} catch (err) {
-			console.warn("[chat] retriever search failed, continuing without context:", err instanceof Error ? err.message : err);
-		}
-	}
-
-	// Strip XML endpoint instructions from system prompt — the backend
-	// already sends real endpoint cards, so the model must not invent its own.
-	const directPrompt = systemPrompt
-		.replace(/When you find endpoints.*?<endpoint[^>]*\/>/gs, "")
-		.replace(/Keep everything short\..*/s, "Keep everything short. greg does not write paragraphs.")
-		+ "\n\nIMPORTANT: The matching API endpoints have already been provided to the user as cards. Do NOT fabricate endpoint paths or output <endpoint> tags. Just describe what was found in plain text, referencing the method and path from the context above."
-		+ contextBlock;
-
-	const ollamaMessages = [
-		{ role: "system", content: directPrompt },
-		...messages.map((m) => ({ role: m.role, content: m.content })),
-	];
-
-	const res = await fetch(`${baseUrl}/api/chat`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			model: config.LLM_MODEL,
-			messages: ollamaMessages,
-			stream: true,
-		}),
-	});
-
-	if (!res.ok || !res.body) {
-		onText(`[error: ollama returned ${res.status}]`);
-		return;
-	}
-
-	const reader = res.body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = "";
-
-	while (true) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		buffer += decoder.decode(value, { stream: true });
-
-		const lines = buffer.split("\n");
-		buffer = lines.pop() ?? "";
-
-		for (const line of lines) {
-			if (!line.trim()) continue;
-			try {
-				const chunk = JSON.parse(line);
-				if (chunk.message?.content) {
-					const clean = chunk.message.content.replace(/<endpoint[^>]*\/?>/g, "");
-					if (clean) onText(clean);
-				}
-				if (chunk.prompt_eval_count) usage.input += chunk.prompt_eval_count;
-				if (chunk.eval_count) usage.output += chunk.eval_count;
-			} catch {
-				// skip
-			}
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Double-Check Verification (Sonnet reviews Greg's output)
 // ---------------------------------------------------------------------------
@@ -888,7 +778,7 @@ async function runVerification(
 			max_tokens: 1024,
 			temperature: 0,
 			system: VERIFICATION_PROMPT,
-			messages: verifyMessages,
+			messages: verifyMessages as Anthropic.MessageParam[],
 			tools: VERIFY_TOOLS,
 		});
 		vUsage.input += msg.usage.input_tokens;
@@ -903,7 +793,7 @@ async function runVerification(
 				hasToolUse = true;
 				toolUseBlocks.push({ id: block.id, name: block.name, input: block.input as Record<string, unknown> });
 			}
-			contentBlocks.push(block as { type: string; [key: string]: unknown });
+			contentBlocks.push(block as unknown as { type: string; [key: string]: unknown });
 		}
 
 		onDebug({ event: "verify_round", round, hasTools: hasToolUse, stopReason: msg.stop_reason });
@@ -945,7 +835,7 @@ async function runVerification(
 		max_tokens: 1024,
 		temperature: 0,
 		system: VERIFICATION_PROMPT,
-		messages: verifyMessages,
+		messages: verifyMessages as Anthropic.MessageParam[],
 		tools: VERIFY_TOOLS,
 		tool_choice: { type: "none" },
 	});
