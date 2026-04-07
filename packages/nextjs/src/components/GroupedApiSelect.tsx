@@ -1,5 +1,6 @@
 "use client";
 import { useState, useMemo, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "../lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Button } from "./ui/button";
@@ -132,7 +133,7 @@ function FlyoutGroup({
 				<ChevronRight className="size-3.5 opacity-50 shrink-0" />
 			</div>
 
-			{hovered && (
+			{hovered && createPortal(
 				<div
 					style={{ position: "fixed", top: flyoutPos.top, left: flyoutPos.left, zIndex: 200 }}
 					className="min-w-44 rounded-lg border border-border bg-popover p-1 shadow-md"
@@ -147,7 +148,8 @@ function FlyoutGroup({
 							onClick={() => onSelect(child.name)}
 						/>
 					))}
-				</div>
+				</div>,
+				document.body,
 			)}
 		</div>
 	);
