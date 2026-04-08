@@ -61,7 +61,7 @@ program
 		}
 
 		for (let i = 0; i < results.length; i++) {
-			const res = results[i];
+			const res = results[i]!;
 			const meta = res.metadata;
 			const dist = res.distance ?? 0;
 			console.log(`\n─── Result ${i + 1}  (distance: ${dist.toFixed(4)}) ─────────────────────────`);

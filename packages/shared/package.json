@@ -2,6 +2,9 @@
 	"name": "@greg/shared",
 	"version": "0.1.0",
 	"type": "module",
+	"scripts": {
+		"typecheck": "tsc --noEmit"
+	},
 	"main": "types/index.ts",
 	"exports": {
 		".": {

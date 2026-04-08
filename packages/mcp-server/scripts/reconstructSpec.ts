@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import fs from "fs/promises";
-import path from "path";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { Command } from "commander";
 import YAML from "yaml";
 import SpecStore from "../src/core/store";
@@ -10,7 +10,7 @@ import SpecStore from "../src/core/store";
 // Parsing
 // ---------------------------------------------------------------------------
 
-interface ParsedEndpoint {
+type ParsedEndpoint = {
 	method: string;
 	path: string;
 	summary: string;
@@ -21,17 +21,21 @@ interface ParsedEndpoint {
 	requestBody: { mediaType: string; schemaHint: string } | null;
 	responses: Record<string, { description: string; schemaHint: string }>;
 	responseSchema?: string;
-}
+};
 
-interface ParsedParam {
+type ParsedParam = {
 	name: string;
 	in: string;
 	required: boolean;
 	type: string;
 	description: string;
-}
+};
 
-function parseEndpointText(text: string, metadata: Record<string, string>): ParsedEndpoint | null {
+/**
+ * Parses a text-format endpoint document back into a structured endpoint object.
+ * Returns null when the text is malformed or cannot be parsed.
+ */
+const parseEndpointText = (text: string, metadata: Record<string, string>): ParsedEndpoint | null => {
 	const lines = text.trim().split("\n");
 	if (lines.length === 0) return null;
 
@@ -118,9 +122,13 @@ function parseEndpointText(text: string, metadata: Record<string, string>): Pars
 	if (metadata.tags) ep.tags = metadata.tags.split(",").map((t) => t.trim());
 
 	return ep;
-}
+};
 
-function parseParameterLine(line: string): ParsedParam | null {
+/**
+ * Parses a single parameter line from the text endpoint format.
+ * Returns null when the line does not match the expected pattern.
+ */
+const parseParameterLine = (line: string): ParsedParam | null => {
 	const m = line.match(
 		/^-\s+(\S+)\s+\((\w+),\s*(required|optional)\)(?::\s*(\S+))?(?:\s+—\s+(.*))?$/
 	);
@@ -132,13 +140,17 @@ function parseParameterLine(line: string): ParsedParam | null {
 		type: m[4] ?? "string",
 		description: m[5] ?? "",
 	};
-}
+};
 
 // ---------------------------------------------------------------------------
 // Schema Hint Parsing
 // ---------------------------------------------------------------------------
 
-function parseResponseSchemaHint(hint: string): Record<string, unknown> {
+/**
+ * Converts a schema hint string (e.g. "array of {id: string, name: string}")
+ * into a JSON Schema object.
+ */
+const parseResponseSchemaHint = (hint: string): Record<string, unknown> => {
 	hint = hint.trim();
 	if (!hint) return {};
 
@@ -170,9 +182,12 @@ function parseResponseSchemaHint(hint: string): Record<string, unknown> {
 	}
 
 	return typeToSchema(hint);
-}
+};
 
-function splitSchemaFields(s: string): string[] {
+/**
+ * Splits a comma-separated schema field string, respecting nested braces and brackets.
+ */
+const splitSchemaFields = (s: string): string[] => {
 	const parts: string[] = [];
 	let depth = 0;
 	let current = "";
@@ -193,9 +208,12 @@ function splitSchemaFields(s: string): string[] {
 	}
 	if (current.trim()) parts.push(current);
 	return parts;
-}
+};
 
-function typeToSchema(t: string): Record<string, unknown> {
+/**
+ * Converts a primitive type name string into a JSON Schema object.
+ */
+const typeToSchema = (t: string): Record<string, unknown> => {
 	t = t.trim();
 	if (["string", "integer", "number", "boolean"].includes(t)) {
 		return { type: t };
@@ -210,13 +228,16 @@ function typeToSchema(t: string): Record<string, unknown> {
 		return { type: "object" };
 	}
 	return { type: "string" };
-}
+};
 
 // ---------------------------------------------------------------------------
 // OpenAPI Builder
 // ---------------------------------------------------------------------------
 
-function buildOpenapi(apiName: string, endpoints: ParsedEndpoint[]): Record<string, unknown> {
+/**
+ * Assembles a full OpenAPI 3.0 spec from a list of parsed endpoints.
+ */
+const buildOpenapi = (apiName: string, endpoints: ParsedEndpoint[]): Record<string, unknown> => {
 	const paths: Record<string, Record<string, unknown>> = {};
 
 	for (const ep of endpoints) {
@@ -285,13 +306,16 @@ function buildOpenapi(apiName: string, endpoints: ParsedEndpoint[]): Record<stri
 		},
 		paths,
 	};
-}
+};
 
 // ---------------------------------------------------------------------------
 // Search Results Splitter
 // ---------------------------------------------------------------------------
 
-function splitSearchResults(text: string): string[] {
+/**
+ * Splits a raw search-results text dump into individual endpoint blocks.
+ */
+const splitSearchResults = (text: string): string[] => {
 	const blocks = text.split("\n---\n");
 	const result: string[] = [];
 	for (let block of blocks) {
@@ -303,7 +327,7 @@ function splitSearchResults(text: string): string[] {
 		if (block) result.push(block);
 	}
 	return result;
-}
+};
 
 // ---------------------------------------------------------------------------
 // CLI

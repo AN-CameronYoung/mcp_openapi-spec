@@ -1,19 +1,27 @@
 "use client";
 
 import { use, useCallback, useEffect, useRef } from "react";
+
 import SwaggerUI from "swagger-ui-react";
 import "swagger-ui-react/swagger-ui.css";
-import "./swagger-theme.css";
 
-interface Props {
-	params: Promise<{ apiName: string }>;
-	searchParams: Promise<{ method?: string; path?: string; theme?: string }>;
-}
+import "./swagger-theme.css";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SwaggerSystem = any;
 
-export default function DocsPage({ params, searchParams }: Props) {
+interface DocsPageProps {
+	params: Promise<{ apiName: string }>;
+	searchParams: Promise<{ method?: string; path?: string; theme?: string }>;
+}
+
+/**
+ * Renders the Swagger UI for a given API spec, optionally pre-scrolling
+ * to a specific endpoint identified by method + path query params.
+ *
+ * Accepts a `theme` query param ("light" | "dark") to toggle the body class.
+ */
+const DocsPage = ({ params, searchParams }: DocsPageProps): JSX.Element => {
 	const { apiName } = use(params);
 	const { method, path, theme = "dark" } = use(searchParams);
 	const systemRef = useRef<SwaggerSystem>(null);
@@ -26,7 +34,13 @@ export default function DocsPage({ params, searchParams }: Props) {
 		}
 	}, [theme]);
 
-	function expandAndScroll(m: string, p: string) {
+	/**
+	 * Expands and scrolls the Swagger UI to the operation matching `m` and `p`.
+	 *
+	 * @param m - HTTP method (e.g. "GET")
+	 * @param p - URL path (e.g. "/users/{id}")
+	 */
+	const expandAndScroll = (m: string, p: string): void => {
 		const sys = systemRef.current;
 		if (!sys) return;
 
@@ -44,6 +58,7 @@ export default function DocsPage({ params, searchParams }: Props) {
 				break;
 			}
 		}
+
 		// Fallback: looser match
 		if (!targetEl) {
 			for (const el of candidates) {
@@ -70,7 +85,7 @@ export default function DocsPage({ params, searchParams }: Props) {
 		setTimeout(() => {
 			targetEl?.scrollIntoView({ behavior: "smooth", block: "start" });
 		}, 100);
-	}
+	};
 
 	const onComplete = useCallback(
 		(system: SwaggerSystem) => {
@@ -86,11 +101,11 @@ export default function DocsPage({ params, searchParams }: Props) {
 
 	// Listen for postMessage from parent to scroll to a different endpoint
 	useEffect(() => {
-		function handleMessage(event: MessageEvent) {
+		const handleMessage = (event: MessageEvent): void => {
 			if (event.data?.type === "scrollToEndpoint" && event.data.method && event.data.path) {
 				expandAndScroll(event.data.method, event.data.path);
 			}
-		}
+		};
 		window.addEventListener("message", handleMessage);
 		return () => window.removeEventListener("message", handleMessage);
 	}, []);
@@ -98,4 +113,6 @@ export default function DocsPage({ params, searchParams }: Props) {
 	const specUrl = `/openapi/specs/${apiName}.yaml`;
 
 	return <SwaggerUI url={specUrl} tryItOutEnabled={false} onComplete={onComplete} />;
-}
+};
+
+export default DocsPage;

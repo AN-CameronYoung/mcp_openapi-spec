@@ -7,6 +7,7 @@
 		"greg": "main.ts"
 	},
 	"scripts": {
+		"typecheck": "tsc --noEmit",
 		"start": "bun run main.ts serve",
 		"dev": "bun run --watch main.ts serve"
 	},

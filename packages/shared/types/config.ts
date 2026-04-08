@@ -28,5 +28,5 @@ export const AppConfig = z.object({
 	MAX_TOOL_CALLS_PER_SESSION: z.coerce.number().default(5),
 	LLM_MAX_TOKENS: z.coerce.number().default(4096),
 
-	NODE_ENV: z.string().default("development"),
+	NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 });

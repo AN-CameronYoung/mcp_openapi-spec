@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
+
 import $RefParser from "@apidevtools/json-schema-ref-parser";
 import YAML from "yaml";
 
@@ -19,7 +20,11 @@ const ALLOWED_EXTENSIONS = new Set([".json", ".yaml", ".yml"]);
 // Spec Loading
 // ---------------------------------------------------------------------------
 
-export async function loadSpec(source: string): Promise<Record<string, unknown>> {
+/**
+ * Loads an OpenAPI spec from a URL or file path, dereferences $refs,
+ * and returns the resolved spec object.
+ */
+export const loadSpec = async (source: string): Promise<Record<string, unknown>> => {
 	let data: Record<string, unknown>;
 
 	try {
@@ -47,12 +52,16 @@ export async function loadSpec(source: string): Promise<Record<string, unknown>>
 		const message = err instanceof Error ? err.message : String(err);
 		throw new SpecLoadError(source, `$ref resolution failed: ${message}`);
 	}
-}
+};
 
-export async function parseSpecContent(
+/**
+ * Parses an OpenAPI spec from a raw string (JSON or YAML), dereferences $refs,
+ * and returns the resolved spec object.
+ */
+export const parseSpecContent = async (
 	raw: string,
 	format: "yaml" | "json",
-): Promise<Record<string, unknown>> {
+): Promise<Record<string, unknown>> => {
 	if (raw.length > MAX_SPEC_SIZE) {
 		throw new SpecLoadError("<upload>", `content too large (${raw.length} bytes, max ${MAX_SPEC_SIZE})`);
 	}
@@ -73,13 +82,17 @@ export async function parseSpecContent(
 		const message = err instanceof Error ? err.message : String(err);
 		throw new SpecLoadError("<upload>", `$ref resolution failed: ${message}`);
 	}
-}
+};
 
 // ---------------------------------------------------------------------------
 // URL loading (with SSRF protection)
 // ---------------------------------------------------------------------------
 
-function isPrivateHost(hostname: string): boolean {
+/**
+ * Returns true if the given hostname resolves to a private or loopback address.
+ * Used to block SSRF attempts.
+ */
+const isPrivateHost = (hostname: string): boolean => {
 	// Normalize — URL.hostname includes brackets for IPv6 in some runtimes
 	const host = hostname.startsWith("[") && hostname.endsWith("]")
 		? hostname.slice(1, -1)
@@ -111,9 +124,13 @@ function isPrivateHost(hostname: string): boolean {
 	}
 
 	return false;
-}
+};
 
-function assertSafeUrl(source: string): URL {
+/**
+ * Validates that a URL is safe to fetch: correct protocol, no embedded credentials,
+ * and not pointing at a private/internal network address.
+ */
+const assertSafeUrl = (source: string): URL => {
 	const url = new URL(source);
 
 	if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -132,9 +149,13 @@ function assertSafeUrl(source: string): URL {
 	}
 
 	return url;
-}
+};
 
-async function loadFromUrl(source: string): Promise<Record<string, unknown>> {
+/**
+ * Fetches a spec from a remote URL, following redirects manually
+ * so each hop is validated against the SSRF blocklist.
+ */
+const loadFromUrl = async (source: string): Promise<Record<string, unknown>> => {
 	// Follow redirects manually so each hop is validated against the SSRF blocklist.
 	// `redirect: "follow"` would let the initial URL pass then redirect to 169.254.x.
 	let url = source;
@@ -182,13 +203,16 @@ async function loadFromUrl(source: string): Promise<Record<string, unknown>> {
 		return JSON.parse(raw);
 	}
 	return YAML.parse(raw, { maxAliasCount: MAX_YAML_ALIASES });
-}
+};
 
 // ---------------------------------------------------------------------------
 // File loading (with path traversal protection)
 // ---------------------------------------------------------------------------
 
-async function loadFromFile(source: string): Promise<Record<string, unknown>> {
+/**
+ * Loads a spec from a local file, enforcing path traversal and symlink protections.
+ */
+const loadFromFile = async (source: string): Promise<Record<string, unknown>> => {
 	const resolved = path.resolve(source);
 	const cwd = process.cwd();
 	const specsDir = process.env.SPECS_DIR ? path.resolve(process.env.SPECS_DIR) : null;
@@ -233,7 +257,7 @@ async function loadFromFile(source: string): Promise<Record<string, unknown>> {
 		return JSON.parse(raw);
 	}
 	return YAML.parse(raw, { maxAliasCount: MAX_YAML_ALIASES });
-}
+};
 
 // ---------------------------------------------------------------------------
 // Prototype-pollution sanitization
@@ -241,7 +265,10 @@ async function loadFromFile(source: string): Promise<Record<string, unknown>> {
 
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
-function sanitizeObject(obj: unknown): void {
+/**
+ * Recursively strips prototype-pollution keys from a parsed spec object in place.
+ */
+const sanitizeObject = (obj: unknown): void => {
 	if (obj === null || typeof obj !== "object") return;
 
 	if (Array.isArray(obj)) {
@@ -258,7 +285,7 @@ function sanitizeObject(obj: unknown): void {
 			sanitizeObject(record[key]);
 		}
 	}
-}
+};
 
 // ---------------------------------------------------------------------------
 // Endpoint Extraction
@@ -266,7 +293,11 @@ function sanitizeObject(obj: unknown): void {
 
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options", "trace"] as const;
 
-export function extractEndpoints(spec: Record<string, unknown>): Endpoint[] {
+/**
+ * Extracts all HTTP endpoints from a parsed OpenAPI spec object.
+ * Merges path-level parameters into each operation and attaches security schemes.
+ */
+export const extractEndpoints = (spec: Record<string, unknown>): Endpoint[] => {
 	const endpoints: Endpoint[] = [];
 	const paths = (spec.paths ?? {}) as Record<string, Record<string, unknown>>;
 
@@ -302,20 +333,24 @@ export function extractEndpoints(spec: Record<string, unknown>): Endpoint[] {
 				description: (op.description as string) ?? "",
 				tags: (op.tags as string[]) ?? [],
 				parameters: mergedParams,
-				requestBody: op.requestBody as Endpoint["requestBody"],
+				...(op.requestBody !== undefined && { requestBody: op.requestBody as Endpoint["requestBody"] }),
 				responses: (op.responses ?? {}) as Endpoint["responses"],
 				security: opSecurity,
 				securitySchemes: securitySchemes,
-				rateLimits: opRateLimit ?? undefined,
+				...(opRateLimit !== null && { rateLimits: opRateLimit }),
 				deprecated: (op.deprecated as boolean) ?? false,
 			});
 		}
 	}
 
 	return endpoints;
-}
+};
 
-function extractRateLimit(obj: Record<string, unknown>): { limit?: number; unit?: string } | null {
+/**
+ * Looks for rate limit extension keys in an operation or spec object.
+ * Returns a rate limit object if found, or null.
+ */
+const extractRateLimit = (obj: Record<string, unknown>): { limit?: number; unit?: string } | null => {
 	for (const key of Object.keys(obj)) {
 		const lower = key.toLowerCase();
 		if (lower.includes("ratelimit") || lower.includes("rate-limit") || lower.includes("rate_limit") || lower.includes("throttl")) {
@@ -330,13 +365,16 @@ function extractRateLimit(obj: Record<string, unknown>): { limit?: number; unit?
 		}
 	}
 	return null;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Schema Extraction
 // ---------------------------------------------------------------------------
 
-export function extractSchemas(spec: Record<string, unknown>): SchemaDefinition[] {
+/**
+ * Extracts named schema definitions from an OpenAPI spec's components or definitions section.
+ */
+export const extractSchemas = (spec: Record<string, unknown>): SchemaDefinition[] => {
 	const schemas: SchemaDefinition[] = [];
 
 	let rawSchemas: Record<string, Record<string, unknown>> = {};
@@ -358,18 +396,21 @@ export function extractSchemas(spec: Record<string, unknown>): SchemaDefinition[
 			properties: (schema.properties ?? {}) as Record<string, Record<string, unknown>>,
 			required: (schema.required ?? []) as string[],
 			schemaType: (schema.type as string) ?? "object",
-			enum: schema.enum as unknown[] | undefined,
+			...(schema.enum !== undefined && { enum: schema.enum as unknown[] }),
 		});
 	}
 
 	return schemas;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function mergeParameters(pathParams: Parameter[], opParams: Parameter[]): Parameter[] {
+/**
+ * Merges path-level and operation-level parameters, with operation params taking precedence.
+ */
+const mergeParameters = (pathParams: Parameter[], opParams: Parameter[]): Parameter[] => {
 	const merged = new Map<string, Parameter>();
 
 	for (const p of pathParams) {
@@ -386,4 +427,4 @@ function mergeParameters(pathParams: Parameter[], opParams: Parameter[]): Parame
 	}
 
 	return Array.from(merged.values());
-}
+};

@@ -13,14 +13,20 @@ import type { QueryResult } from "@greg/shared";
 let retriever: Retriever | null = null;
 let cachedApiList: string | null = null;
 
-function getRetriever(): Retriever {
+/**
+ * Returns the shared Retriever instance, creating it lazily on first call.
+ */
+const getRetriever = (): Retriever => {
 	if (!retriever) {
 		retriever = new Retriever();
 	}
 	return retriever;
-}
+};
 
-async function getIndexedApisSuffix(): Promise<string> {
+/**
+ * Returns a suffix string listing currently indexed APIs, caching the result.
+ */
+const getIndexedApisSuffix = async (): Promise<string> => {
 	if (cachedApiList === null) {
 		const apis = await getRetriever().listApis();
 		cachedApiList = apis.length > 0
@@ -28,7 +34,7 @@ async function getIndexedApisSuffix(): Promise<string> {
 			: "";
 	}
 	return cachedApiList;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Session state (tool call cap + dedup)
@@ -39,18 +45,24 @@ let searchCallCount = 0;
 let lastSearchTime = 0;
 const returnedIds = new Set<string>();
 
-function resetSessionIfStale(): void {
+/**
+ * Resets the per-session search counter and dedup set when the session has gone stale.
+ */
+const resetSessionIfStale = (): void => {
 	if (Date.now() - lastSearchTime > SESSION_TIMEOUT_MS) {
 		searchCallCount = 0;
 		returnedIds.clear();
 	}
-}
+};
 
 // ---------------------------------------------------------------------------
 // Server factory
 // ---------------------------------------------------------------------------
 
-export function createMcpServer(): Server {
+/**
+ * Creates and configures a new MCP Server instance with all tool definitions and handlers.
+ */
+export const createMcpServer = (): Server => {
 	const server = new Server(
 		{ name: "greg", version: "0.1.0" },
 		{ capabilities: { tools: {} } },
@@ -198,7 +210,9 @@ export function createMcpServer(): Server {
 					};
 				}
 
-				const dupNote = dupCount.value > 0 ? `(${dupCount.value} duplicate result${dupCount.value > 1 ? "s" : ""} filtered)\n` : "";
+				const dupNote = dupCount.value > 0
+					? `(${dupCount.value} duplicate result${dupCount.value > 1 ? "s" : ""} filtered)\n`
+					: "";
 				return { content: [{ type: "text", text: dupNote + formatResults(newResults, query, detail) }] };
 			}
 
@@ -277,7 +291,7 @@ export function createMcpServer(): Server {
 	});
 
 	return server;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Server entry point
@@ -285,17 +299,24 @@ export function createMcpServer(): Server {
 
 export const WRITE_TOOLS = new Set(["ingest_spec", "delete_api"]);
 
-export async function runStdioServer(): Promise<void> {
+/**
+ * Connects an MCP server to a stdio transport and starts listening.
+ */
+export const runStdioServer = async (): Promise<void> => {
 	const server = createMcpServer();
 	const transport = new StdioServerTransport();
 	await server.connect(transport);
-}
+};
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function formatResults(results: QueryResult[], query: string, detail: "compact" | "medium" | "full" = "medium"): string {
+/**
+ * Formats a list of search results into a human-readable string for the MCP response.
+ * Includes low-confidence warnings when result distances exceed the threshold.
+ */
+const formatResults = (results: QueryResult[], query: string, detail: "compact" | "medium" | "full" = "medium"): string => {
 	if (results.length === 0) {
 		return (
 			`No results found for "${query}" (0 results within distance threshold).\n` +
@@ -309,7 +330,7 @@ function formatResults(results: QueryResult[], query: string, detail: "compact" 
 
 	for (let i = 0; i < results.length; i++) {
 		if (i > 0) lines.push("---");
-		const res = results[i];
+		const res = results[i]!;
 		const meta = res.metadata;
 		const dist = res.distance ?? 0;
 		const header = meta.method && meta.path
@@ -339,4 +360,4 @@ function formatResults(results: QueryResult[], query: string, detail: "compact" 
 	}
 
 	return lines.join("\n");
-}
+};

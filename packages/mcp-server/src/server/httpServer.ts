@@ -9,11 +9,17 @@ import { createMcpServer, WRITE_TOOLS } from "./mcpServer";
 // Auth
 // ---------------------------------------------------------------------------
 
-function isAuthEnabled(): boolean {
-	return config.NODE_ENV === "production" && !!(config.MCP_ADMIN_TOKEN || config.MCP_READ_TOKEN);
-}
+/**
+ * Returns true when auth enforcement is active (production + at least one token configured).
+ */
+const isAuthEnabled = (): boolean =>
+	config.NODE_ENV === "production" && !!(config.MCP_ADMIN_TOKEN || config.MCP_READ_TOKEN);
 
-function getRole(authHeader: string | undefined): "admin" | "read" | null {
+/**
+ * Resolves the role for an incoming Authorization header value.
+ * Returns null when the token is invalid or auth is enabled and no token matches.
+ */
+const getRole = (authHeader: string | undefined): "admin" | "read" | null => {
 	if (!isAuthEnabled()) return "admin";
 
 	const token = authHeader?.startsWith("Bearer ")
@@ -23,13 +29,16 @@ function getRole(authHeader: string | undefined): "admin" | "read" | null {
 	if (config.MCP_ADMIN_TOKEN && token === config.MCP_ADMIN_TOKEN) return "admin";
 	if (config.MCP_READ_TOKEN && token === config.MCP_READ_TOKEN) return "read";
 	return null;
-}
+};
 
 // ---------------------------------------------------------------------------
 // HTTP Server (MCP transport only)
 // ---------------------------------------------------------------------------
 
-export async function runHttpServer(host: string, port: number): Promise<void> {
+/**
+ * Starts the Hono-based HTTP server that exposes the MCP endpoint.
+ */
+export const runHttpServer = async (host: string, port: number): Promise<void> => {
 	const app = new Hono();
 
 	app.use("*", cors({ origin: "*" }));
@@ -62,15 +71,13 @@ export async function runHttpServer(host: string, port: number): Promise<void> {
 			}
 		}
 
-		await next();
+		return next();
 	});
 
 	// MCP HTTP transport
 	app.all("/openapi", async (c) => {
 		const mcpServer = createMcpServer();
-		const transport = new WebStandardStreamableHTTPServerTransport({
-			sessionIdGenerator: undefined,
-		});
+		const transport = new WebStandardStreamableHTTPServerTransport({});
 		await mcpServer.connect(transport);
 		return await transport.handleRequest(c.req.raw);
 	});
@@ -83,4 +90,4 @@ export async function runHttpServer(host: string, port: number): Promise<void> {
 	});
 
 	console.log(`[mcp] HTTP server listening on http://${host}:${port}/openapi`);
-}
+};

@@ -1,7 +1,11 @@
 "use server";
 
+import fs from "node:fs";
+import path from "node:path";
+
 import config from "@greg/shared/core/config";
 import { GREG_PROMPT, VERBOSE_PROMPT, CURT_PROMPT } from "@greg/shared/chat";
+
 import { getRetriever } from "@/lib/retriever";
 
 // ---------------------------------------------------------------------------
@@ -20,7 +24,11 @@ const ANTHROPIC_MODELS: ModelInfo[] = [
 	{ id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", provider: "anthropic" },
 ];
 
-export async function listModels(): Promise<ModelInfo[]> {
+/**
+ * Returns available LLM models from Anthropic (if key configured) and
+ * Ollama (if URL configured).
+ */
+export const listModels = async (): Promise<ModelInfo[]> => {
 	const models: ModelInfo[] = [];
 
 	if (config.ANTHROPIC_API_KEY) {
@@ -42,7 +50,7 @@ export async function listModels(): Promise<ModelInfo[]> {
 	}
 
 	return models;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Suggestions
@@ -67,28 +75,38 @@ const SUGGESTION_POOL = [
 	"streaming response",
 ];
 
-export async function fetchSuggestions(): Promise<string[]> {
+/**
+ * Returns 4 randomly shuffled suggestions from the suggestion pool.
+ */
+export const fetchSuggestions = async (): Promise<string[]> => {
 	const shuffled = [...SUGGESTION_POOL].sort(() => Math.random() - 0.5);
 	return shuffled.slice(0, 4);
-}
+};
 
 // ---------------------------------------------------------------------------
 // Prompts
 // ---------------------------------------------------------------------------
 
-export async function getPrompts(): Promise<{ greg: string; verbose: string; curt: string }> {
+/**
+ * Returns all built-in system prompt strings for the available personalities.
+ */
+export const getPrompts = async (): Promise<{ greg: string; verbose: string; curt: string }> => {
 	return { greg: GREG_PROMPT, verbose: VERBOSE_PROMPT, curt: CURT_PROMPT };
-}
+};
 
 // ---------------------------------------------------------------------------
 // Greeting GIF
 // ---------------------------------------------------------------------------
 
-export async function getGreetingGif(): Promise<{ url: string | null }> {
+/**
+ * Fetches a random greeting GIF from Giphy. Returns `{ url: null }` if the
+ * API key is not configured or the request fails.
+ */
+export const getGreetingGif = async (): Promise<{ url: string | null }> => {
 	if (!config.GIPHY_API_KEY) return { url: null };
 	try {
 		const queries = ["cat hello", "cat wave", "cat greeting", "anime hello", "cat hi"];
-		const q = encodeURIComponent(queries[Math.floor(Math.random() * queries.length)]);
+		const q = encodeURIComponent(queries[Math.floor(Math.random() * queries.length)]!);
 		const res = await fetch(
 			`https://api.giphy.com/v1/stickers/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=10&rating=g&lang=en`,
 			{ signal: AbortSignal.timeout(5000) },
@@ -100,13 +118,20 @@ export async function getGreetingGif(): Promise<{ url: string | null }> {
 	} catch {
 		return { url: null };
 	}
-}
+};
 
 // ---------------------------------------------------------------------------
 // Chat title
 // ---------------------------------------------------------------------------
 
-export async function generateTitle(prompt: string): Promise<{ title: string }> {
+/**
+ * Generates a short 4–6 word title for a chat from the opening prompt.
+ * Tries Ollama first, then Anthropic. Falls back to a truncated version of
+ * the prompt if both are unavailable or fail.
+ *
+ * @param prompt - The user's first message in the chat
+ */
+export const generateTitle = async (prompt: string): Promise<{ title: string }> => {
 	const fallback = { title: prompt.slice(0, 50) };
 	const instruction = `Summarize this in 4-6 words as a chat title. Reply with ONLY the title, no punctuation:\n\n${prompt}`;
 
@@ -153,18 +178,19 @@ export async function generateTitle(prompt: string): Promise<{ title: string }> 
 	}
 
 	return fallback;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Spec file listing (for SettingsPage ingest suggestions)
 // ---------------------------------------------------------------------------
 
-import fs from "fs";
-import path from "path";
-
 const SPECS_DIR = process.env.SPECS_DIR ?? path.resolve(process.cwd(), "../../specs");
 
-export async function listSpecFiles(): Promise<Array<{ url: string; name: string }>> {
+/**
+ * Lists all YAML/JSON spec files in the specs directory, annotating each
+ * entry with a human-readable file-size label.
+ */
+export const listSpecFiles = async (): Promise<Array<{ url: string; name: string }>> => {
 	if (!fs.existsSync(SPECS_DIR)) return [];
 	const SIZE_WARN_BYTES = 10 * 1024 * 1024;
 	const entries = fs.readdirSync(SPECS_DIR).sort();
@@ -187,4 +213,4 @@ export async function listSpecFiles(): Promise<Array<{ url: string; name: string
 		specs.push({ url: `/openapi/specs/${filename}`, name: label });
 	}
 	return specs;
-}
+};

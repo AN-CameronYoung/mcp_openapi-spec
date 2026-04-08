@@ -1,18 +1,19 @@
-import Retriever from "@greg/shared/core/retriever";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
+
+import Retriever from "@greg/shared/core/retriever";
 
 // ---------------------------------------------------------------------------
 // Use globalThis to ensure singletons survive module re-evaluation (Turbopack)
 // ---------------------------------------------------------------------------
 
-interface AutoIngestGlobals {
+type AutoIngestGlobals = {
 	__retriever?: Retriever;
 	__autoIngestDone?: boolean;
 	__autoIngestEvents?: EventEmitter;
 	__autoIngestState?: AutoIngestState;
-}
+};
 
 const g = globalThis as unknown as AutoIngestGlobals;
 
@@ -51,7 +52,11 @@ export const autoIngestState: AutoIngestState = g.__autoIngestState;
 // Retriever singleton
 // ---------------------------------------------------------------------------
 
-export function getRetriever(): Retriever {
+/**
+ * Returns the global `Retriever` singleton, creating it on first call.
+ * Also kicks off auto-ingest of any un-indexed specs (once per process).
+ */
+export const getRetriever = (): Retriever => {
 	if (!g.__retriever) {
 		g.__retriever = new Retriever();
 		if (!g.__autoIngestDone) {
@@ -60,17 +65,24 @@ export function getRetriever(): Retriever {
 		}
 	}
 	return g.__retriever;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Auto-ingest
 // ---------------------------------------------------------------------------
 
-async function autoIngestSpecs(retriever: Retriever): Promise<void> {
+/**
+ * Scans the specs directory for un-indexed YAML/JSON files and ingests them
+ * into the retriever, emitting SSE-compatible progress events throughout.
+ *
+ * @param retriever - The retriever instance to ingest specs into
+ */
+const autoIngestSpecs = async (retriever: Retriever): Promise<void> => {
 	const SPECS_DIR = process.env.SPECS_DIR ?? path.resolve(process.cwd(), "../../specs");
 	if (!fs.existsSync(SPECS_DIR)) return;
 
 	try {
+		// Discover specs to ingest
 		const indexed = new Set((await retriever.listApis()).map((a) => a.name));
 		const entries = fs.readdirSync(SPECS_DIR).sort();
 
@@ -92,6 +104,7 @@ async function autoIngestSpecs(retriever: Retriever): Promise<void> {
 
 		autoIngestEvents.emit("event", { type: "start", specs: specNames } as AutoIngestEvent);
 
+		// Ingest each spec sequentially
 		for (const filename of toIngest) {
 			const ext = path.extname(filename);
 			const apiName = path.basename(filename, ext);
@@ -105,13 +118,18 @@ async function autoIngestSpecs(retriever: Retriever): Promise<void> {
 
 			try {
 				const summary = await retriever.ingest(filePath, apiName, (e) => {
-					if (specState) { specState.message = e.message ?? ""; specState.done = e.done; specState.total = e.total; }
+					if (specState) {
+						specState.message = e.message ?? "";
+						specState.done = e.done!;
+						specState.total = e.total!;
+					}
+
 					autoIngestEvents.emit("event", {
 						type: "spec-progress",
 						name: apiName,
 						message: e.message,
-						done: e.done,
-						total: e.total,
+						done: e.done ?? 0,
+						total: e.total ?? 0,
 					} as AutoIngestEvent);
 					if (e.phase === "embedding" || e.phase === "storing") {
 						if (e.done === e.total || (e.done ?? 0) % 500 === 0) {
@@ -144,4 +162,4 @@ async function autoIngestSpecs(retriever: Retriever): Promise<void> {
 		autoIngestState.active = false;
 		autoIngestEvents.emit("event", { type: "complete" } as AutoIngestEvent);
 	}
-}
+};

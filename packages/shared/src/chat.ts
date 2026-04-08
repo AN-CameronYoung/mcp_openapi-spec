@@ -1,4 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
+
 import type Retriever from "./core/retriever";
 import config from "./core/config";
 
@@ -175,7 +176,12 @@ const GIF_TOOL = {
 	},
 };
 
-function getChatTools(personality: "greg" | "verbose" | "curt" = "greg", apiSuffix: string = ""): Anthropic.Tool[] {
+/**
+ * Returns the set of Anthropic tool definitions for the chat session,
+ * optionally appending an API suffix to the search tool description
+ * and including the GIF tool for the greg personality.
+ */
+const getChatTools = (personality: "greg" | "verbose" | "curt" = "greg", apiSuffix: string = ""): Anthropic.Tool[] => {
 	const tools: Anthropic.Tool[] = CHAT_TOOLS.map(t => {
 		if (t.name === "search" && apiSuffix) {
 			return { ...t, description: t.description + apiSuffix } as Anthropic.Tool;
@@ -184,20 +190,25 @@ function getChatTools(personality: "greg" | "verbose" | "curt" = "greg", apiSuff
 	});
 	if (config.GIPHY_API_KEY && personality === "greg") tools.push(GIF_TOOL as Anthropic.Tool);
 	return tools;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+/** Linearly interpolates between two values. */
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
 const REACTION_QUERIES = ["cat typing keyboard", "cat computer funny", "cat keyboard smash", "cat finally done", "cat phew relief", "cat victory celebration", "anime typing furiously", "cartoon done celebration", "cat dramatic funny", "anime victory dance", "cat working hard", "cartoon stress relief"];
 
-async function fetchRandomGif(): Promise<string | null> {
+/**
+ * Fetches a random reaction GIF from Giphy using a randomly chosen query from REACTION_QUERIES.
+ * Returns a markdown image string, or null if unavailable.
+ */
+const fetchRandomGif = async (): Promise<string | null> => {
 	if (!config.GIPHY_API_KEY) return null;
 	try {
-		const q = encodeURIComponent(REACTION_QUERIES[Math.floor(Math.random() * REACTION_QUERIES.length)]);
+		const q = encodeURIComponent(REACTION_QUERIES[Math.floor(Math.random() * REACTION_QUERIES.length)]!);
 		const offset = Math.floor(Math.random() * 5);
 		const res = await fetch(`https://api.giphy.com/v1/stickers/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=10&offset=${offset}&rating=g&lang=en`);
 		if (!res.ok) return null;
@@ -207,9 +218,13 @@ async function fetchRandomGif(): Promise<string | null> {
 	} catch {
 		return null;
 	}
-}
+};
 
-function extractDescription(fullText: string): string {
+/**
+ * Extracts a short human-readable description from a stored full_text string.
+ * Skips method+path lines, label prefixes, and operationId-style names.
+ */
+const extractDescription = (fullText: string): string => {
 	const lines = fullText.split("\n");
 	for (const line of lines) {
 		const trimmed = line.trim();
@@ -229,17 +244,21 @@ function extractDescription(fullText: string): string {
 		if (trimmed.length > 10) return trimmed.slice(0, 200);
 	}
 	return lines.find((l) => l.trim().length > 0)?.trim().slice(0, 200) ?? "";
-}
+};
 
 // ---------------------------------------------------------------------------
 // Tool Execution
 // ---------------------------------------------------------------------------
 
-async function executeTool(
+/**
+ * Executes a named tool call from the LLM, dispatching to the appropriate
+ * retriever method and returning a result string and any discovered endpoint cards.
+ */
+const executeTool = async (
 	name: string,
 	input: Record<string, unknown>,
 	retriever: Retriever,
-): Promise<{ result: string; endpoints: EndpointCard[] }> {
+): Promise<{ result: string; endpoints: EndpointCard[] }> => {
 	const endpoints: EndpointCard[] = [];
 
 	switch (name) {
@@ -339,7 +358,7 @@ async function executeTool(
 		default:
 			return { result: `Unknown tool: ${name}`, endpoints: [] };
 	}
-}
+};
 
 interface EndpointCard {
 	method: string;
@@ -356,7 +375,12 @@ interface EndpointCard {
 // Anthropic Provider
 // ---------------------------------------------------------------------------
 
-async function chatAnthropic(
+/**
+ * Drives a streaming Anthropic chat session with tool-use loop support.
+ * Emits text deltas via onText, endpoint cards via onEndpoints, and debug
+ * events via onDebug. Enforces a hard cap of MAX_TOOL_CALLS per session.
+ */
+const chatAnthropic = async (
 	messages: ChatMessage[],
 	systemPrompt: string,
 	retriever: Retriever,
@@ -367,7 +391,7 @@ async function chatAnthropic(
 	onEndpoints: (eps: EndpointCard[]) => void,
 	usage: { input: number; output: number; toolCalls: number },
 	onDebug: (entry: Record<string, unknown>) => void,
-): Promise<void> {
+): Promise<void> => {
 	const { default: Anthropic } = await import("@anthropic-ai/sdk");
 	const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 
@@ -484,13 +508,18 @@ async function chatAnthropic(
 		// Separate tool rounds with a newline so text doesn't run together
 		onText("\n");
 	}
-}
+};
 
 // ---------------------------------------------------------------------------
 // Ollama Provider
 // ---------------------------------------------------------------------------
 
-async function chatOllama(
+/**
+ * Drives a streaming Ollama chat session with tool-use loop support.
+ * Falls back gracefully if the model does not support tool calls.
+ * Enforces a hard cap of MAX_TOOL_CALLS per session.
+ */
+const chatOllama = async (
 	messages: ChatMessage[],
 	systemPrompt: string,
 	retriever: Retriever,
@@ -500,7 +529,7 @@ async function chatOllama(
 	onEndpoints: (eps: EndpointCard[]) => void,
 	onDebug: (entry: Record<string, unknown>) => void,
 	usage: { input: number; output: number; toolCalls: number },
-): Promise<void> {
+): Promise<void> => {
 	const baseUrl = config.OLLAMA_URL ?? "http://localhost:11434";
 
 	const ollamaTools = getChatTools(personality, apiSuffix).map((t) => ({
@@ -655,14 +684,17 @@ async function chatOllama(
 			usage.toolCalls++;
 		}
 	}
-}
+};
 
-// Check if model supports tools by sending a minimal test request
-async function checkToolSupport(
+/**
+ * Probes whether an Ollama model supports tool calls by sending a minimal test request.
+ * Returns false if the model explicitly rejects tools or the request fails.
+ */
+const checkToolSupport = async (
 	baseUrl: string,
 	model: string,
 	tools: unknown[],
-): Promise<boolean> {
+): Promise<boolean> => {
 	try {
 		const res = await fetch(`${baseUrl}/api/chat`, {
 			method: "POST",
@@ -682,7 +714,7 @@ async function checkToolSupport(
 	} catch {
 		return false;
 	}
-}
+};
 
 // ---------------------------------------------------------------------------
 // Double-Check Verification (Sonnet reviews Greg's output)
@@ -741,14 +773,19 @@ const VERIFY_TOOLS = [
 	},
 ];
 
-async function runVerification(
+/**
+ * Runs a second-pass verification of an assistant response using the Anthropic API.
+ * Uses VERIFY_TOOLS to independently look up referenced endpoints and reports
+ * any factual errors or omissions.
+ */
+const runVerification = async (
 	userQuestion: string,
 	assistantResponse: string,
 	endpoints: EndpointCard[],
 	retriever: Retriever,
 	onComplete: (text: string) => void,
 	onDebug: (entry: Record<string, unknown>) => void,
-): Promise<{ input: number; output: number }> {
+): Promise<{ input: number; output: number }> => {
 	const { default: Anthropic } = await import("@anthropic-ai/sdk");
 	const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 	const vUsage = { input: 0, output: 0 };
@@ -851,13 +888,19 @@ async function runVerification(
 	onDebug({ event: "verification_done", model: VERIFICATION_MODEL, inputTokens: vUsage.input, outputTokens: vUsage.output });
 
 	return vUsage;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Main Handler (framework-agnostic)
 // ---------------------------------------------------------------------------
 
-export async function handleChat(body: ChatRequest, retriever: Retriever): Promise<Response> {
+/**
+ * Framework-agnostic SSE handler for chat requests.
+ * Selects the appropriate LLM provider, drives the tool-use loop,
+ * optionally appends a reaction GIF and runs double-check verification,
+ * then streams all events as Server-Sent Events.
+ */
+export const handleChat = async (body: ChatRequest, retriever: Retriever): Promise<Response> => {
 	if (!body.messages?.length) {
 		return new Response(JSON.stringify({ error: "missing messages" }), {
 			status: 400,
@@ -866,7 +909,9 @@ export async function handleChat(body: ChatRequest, retriever: Retriever): Promi
 	}
 
 	const personality = body.personality ?? "greg";
-	const defaultPrompt = personality === "greg" ? GREG_PROMPT : personality === "verbose" ? VERBOSE_PROMPT : CURT_PROMPT;
+	let defaultPrompt = CURT_PROMPT;
+	if (personality === "greg") defaultPrompt = GREG_PROMPT;
+	else if (personality === "verbose") defaultPrompt = VERBOSE_PROMPT;
 	const rawPrompt = body.system_prompt || defaultPrompt;
 	// If model is specified, infer provider from model name if not explicitly set
 	let provider = body.provider ?? config.LLM_PROVIDER;
@@ -964,4 +1009,4 @@ export async function handleChat(body: ChatRequest, retriever: Retriever): Promi
 			Connection: "keep-alive",
 		},
 	});
-}
+};

@@ -5,6 +5,7 @@
 	"type": "module",
 	"workspaces": ["packages/*"],
 	"scripts": {
+		"typecheck": "bun run --filter '*' typecheck",
 		"dev": "bun run --filter @greg/server dev & bun run --filter @greg/nextjs dev",
 		"dev:server": "bun run --filter @greg/server dev",
 		"dev:nextjs": "bun run --filter @greg/nextjs dev",

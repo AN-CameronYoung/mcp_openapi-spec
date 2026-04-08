@@ -1,5 +1,7 @@
 "use client";
+
 import { create } from "zustand";
+
 import { generateTitle } from "../lib/api";
 import type { ApiInfo, SearchResult, EndpointCard } from "../lib/api";
 
@@ -35,9 +37,13 @@ export interface IngestJob {
 }
 
 let jobIdCounter = 0;
-export function nextJobId(): string {
+
+/**
+ * Returns a monotonically increasing job ID string for new ingest jobs.
+ */
+export const nextJobId = (): string => {
 	return `job-${++jobIdCounter}`;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Store
@@ -45,28 +51,46 @@ export function nextJobId(): string {
 
 export type ThemePref = "light" | "dark" | "system";
 
-function getStoredTheme(): ThemePref {
+/**
+ * Reads the persisted theme preference from localStorage.
+ * Falls back to "system" if unavailable.
+ */
+const getStoredTheme = (): ThemePref => {
 	try { return (localStorage.getItem("greg-theme") as ThemePref) ?? "system"; } catch { return "system"; }
-}
+};
 
-function applyTheme(pref: ThemePref) {
+/**
+ * Applies a theme preference to the document by toggling the `dark` class
+ * and persisting the preference to localStorage.
+ *
+ * @param pref - The theme preference to apply
+ */
+const applyTheme = (pref: ThemePref): void => {
 	if (typeof window === "undefined") return;
 	const isDark = pref === "dark" || (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 	document.documentElement.classList.toggle("dark", isDark);
 	try { localStorage.setItem("greg-theme", pref); } catch {}
-}
+};
 
 // Apply on load immediately (before React renders, client-only)
 if (typeof window !== "undefined") applyTheme(getStoredTheme());
 
 const VALID_PAGES = new Set(["greg", "search", "docs", "settings"]);
 
-export function pageFromHash(hash = typeof window !== "undefined" ? window.location.hash : ""): AppState["page"] | null {
+/**
+ * Parses the current URL hash to determine the active page.
+ *
+ * @param hash - The hash string to parse; defaults to the current window hash
+ * @returns The matching page name, or null if the hash is unrecognized
+ */
+export const pageFromHash = (hash = typeof window !== "undefined" ? window.location.hash : ""): AppState["page"] | null => {
 	const seg = hash.replace(/^#\/?/, "").split("/")[0] || "greg";
-	return VALID_PAGES.has(seg) ? (seg as AppState["page"]) : null;
-}
+	return VALID_PAGES.has(seg)
+		? (seg as AppState["page"])
+		: null;
+};
 
-interface AppState {
+type AppState = {
 	// Theme
 	theme: ThemePref;
 	setTheme: (t: ThemePref) => void;
@@ -150,7 +174,7 @@ interface AppState {
 
 	// Client-side hydration from localStorage (call once in useEffect)
 	hydrateFromStorage: () => void;
-}
+};
 
 export const useStore = create<AppState>()((set) => ({
 	theme: "system" as ThemePref,
@@ -158,7 +182,7 @@ export const useStore = create<AppState>()((set) => ({
 
 	page: "greg",
 	setPage: (p) => {
-		set({ page: p, docsAnchor: p !== "docs" ? null : undefined });
+		set({ page: p, ...(p !== "docs" && { docsAnchor: null }) });
 		if (typeof window !== "undefined") {
 			const hash = p === "greg" ? "/" : `/${p}`;
 			window.history.pushState(null, "", `#${hash}`);
@@ -172,7 +196,7 @@ export const useStore = create<AppState>()((set) => ({
 	docsAnchor: null,
 	setDocsApi: (api) => set({ docsApi: api, docsAnchor: null }),
 	viewDocs: (api, method, path, operationId, tag) => {
-		set({ page: "docs", docsApi: api, docsAnchor: { method, path, operationId, tag } });
+		set({ page: "docs", docsApi: api, docsAnchor: { method, path, ...(operationId !== undefined && { operationId }), ...(tag !== undefined && { tag }) } });
 		if (typeof window !== "undefined") window.history.pushState(null, "", "#/docs");
 	},
 
@@ -187,8 +211,9 @@ export const useStore = create<AppState>()((set) => ({
 		set((s) => {
 			const msgs = [...s.chatMessages];
 			for (let i = msgs.length - 1; i >= 0; i--) {
-				if (msgs[i].role === "assistant") {
-					msgs[i] = updater(msgs[i]);
+				const msg = msgs[i];
+				if (msg?.role === "assistant") {
+					msgs[i] = updater(msg);
 					break;
 				}
 			}
@@ -277,15 +302,19 @@ export const useStore = create<AppState>()((set) => ({
 
 	hydrateFromStorage: () => {
 		try {
+			// Read persisted values
 			const theme = (localStorage.getItem("greg-theme") as ThemePref) ?? "system";
 			const pv = localStorage.getItem("greg-personality");
-			const personality = (pv === "greg" || pv === "verbose" || pv === "curt") ? pv
+			const personality = (pv === "greg" || pv === "verbose" || pv === "curt")
+				? pv
 				: localStorage.getItem("greg-mode") === "false" ? "curt" : "greg";
 			const selectedModel = localStorage.getItem("greg-model") ?? "";
 			const selectedProvider = localStorage.getItem("greg-provider") ?? "";
 			const chatHistory = JSON.parse(localStorage.getItem("greg-history") ?? "[]");
 			const doubleCheck = localStorage.getItem("greg-double-check") === "true";
 			const page = pageFromHash() ?? "greg";
+
+			// Apply and commit
 			applyTheme(theme);
 			set({ theme, personality: personality as "greg" | "verbose" | "curt", selectedModel, selectedProvider, chatHistory, doubleCheck, page });
 		} catch {}

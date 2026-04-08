@@ -25,6 +25,10 @@ export default class Retriever {
 	// Ingest
 	// ------------------------------------------------------------------
 
+	/**
+	 * Ingests an OpenAPI spec from a URL or file path into the vector store.
+	 * Optionally skips deleting existing data for the given API name.
+	 */
 	async ingest(
 		source: string,
 		apiName: string,
@@ -55,6 +59,9 @@ export default class Retriever {
 		return summary;
 	}
 
+	/**
+	 * Ingests an OpenAPI spec from a raw string (JSON or YAML) into the vector store.
+	 */
 	async ingestContent(
 		raw: string,
 		format: "yaml" | "json",
@@ -87,6 +94,9 @@ export default class Retriever {
 	// Search
 	// ------------------------------------------------------------------
 
+	/**
+	 * Searches for endpoints matching the given query, with optional filters and ranking.
+	 */
 	async searchEndpoints(
 		query: string,
 		api?: string,
@@ -95,13 +105,13 @@ export default class Retriever {
 		n: number = 2,
 		maxDistance: number = MAX_DISTANCE,
 	): Promise<QueryResult[]> {
-		const where = buildWhere({ type: "endpoint", api, method });
+		const where = buildWhere({ type: "endpoint", ...(api !== undefined && { api }), ...(method !== undefined && { method }) });
 		let results = await this.#store.query(query, n * 4, where ?? undefined);
 		results = results.filter((r) => (r.distance ?? 1) <= maxDistance);
 		if (tag) {
 			const tagLower = tag.toLowerCase();
 			results = results.filter(
-				(r) => r.metadata.tags?.toLowerCase().includes(tagLower)
+				(r) => r.metadata.tags?.toLowerCase().includes(tagLower),
 			);
 		}
 		results = applyHybridBoost(query, results);
@@ -110,18 +120,24 @@ export default class Retriever {
 		return results.slice(0, n);
 	}
 
+	/**
+	 * Searches for schemas matching the given query, with optional API filter.
+	 */
 	async searchSchemas(
 		query: string,
 		api?: string,
 		n: number = 2,
 		maxDistance: number = MAX_DISTANCE,
 	): Promise<QueryResult[]> {
-		const where = buildWhere({ type: "schema", api });
+		const where = buildWhere({ type: "schema", ...(api !== undefined && { api }) });
 		let results = await this.#store.query(query, n * 3, where ?? undefined);
 		results = results.filter((r) => (r.distance ?? 1) <= maxDistance);
 		return results.slice(0, n);
 	}
 
+	/**
+	 * Retrieves a specific endpoint by path and HTTP method, optionally scoped to an API.
+	 */
 	async getEndpoint(
 		path: string,
 		method: string,
@@ -147,14 +163,23 @@ export default class Retriever {
 	// Metadata
 	// ------------------------------------------------------------------
 
+	/**
+	 * Deletes all data for the given API from the vector store.
+	 */
 	async deleteApi(apiName: string): Promise<void> {
 		await this.#store.deleteApi(apiName);
 	}
 
+	/**
+	 * Lists all indexed APIs with their endpoint and schema counts.
+	 */
 	async listApis(): Promise<ApiInfo[]> {
 		return this.#store.listApis();
 	}
 
+	/**
+	 * Returns all endpoint documents for a given API name.
+	 */
 	async listEndpoints(apiName: string): Promise<DocumentResult[]> {
 		const docs = await this.#store.getAll(apiName);
 		return docs.filter((d) => d.metadata.type === "endpoint");
@@ -177,9 +202,11 @@ interface WhereFilters {
 	method?: string;
 }
 
-// Hybrid boost: apply rule-based score adjustments on top of semantic distance.
-// Currently handles "create lxc/container" → boost POST /nodes/{node}/lxc exact match.
-function applyHybridBoost(query: string, results: QueryResult[]): QueryResult[] {
+/**
+ * Applies rule-based score boosts on top of semantic distance.
+ * Currently boosts POST /nodes/{node}/lxc for "create lxc/container" queries.
+ */
+const applyHybridBoost = (query: string, results: QueryResult[]): QueryResult[] => {
 	const q = query.toLowerCase();
 	const isCreateLxc = /\bcreate\b/.test(q) && /\b(lxc|container)\b/.test(q);
 	if (!isCreateLxc) return results;
@@ -194,14 +221,18 @@ function applyHybridBoost(query: string, results: QueryResult[]): QueryResult[] 
 	});
 
 	return boosted.sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0));
-}
+};
 
 // Penalize deprecated/unstable/beta endpoints so stable equivalents rank higher.
 const UNSTABLE_PATH_RE = /\/(unstable|beta|experimental|preview|alpha)\//i;
 const UNSTABLE_TAG_RE = /\b(unstable|beta|experimental|preview|alpha|deprecated)\b/i;
 const UNSTABLE_PENALTY = 0.15;
 
-function penalizeUnstable(results: QueryResult[]): QueryResult[] {
+/**
+ * Increases the distance score of deprecated or unstable endpoints
+ * so stable equivalents rank higher in results.
+ */
+const penalizeUnstable = (results: QueryResult[]): QueryResult[] => {
 	return results
 		.map((r) => {
 			const isUnstable =
@@ -212,12 +243,14 @@ function penalizeUnstable(results: QueryResult[]): QueryResult[] {
 			return { ...r, distance: (r.distance ?? 0) + UNSTABLE_PENALTY };
 		})
 		.sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0));
-}
+};
 
-// Deduplicate results to one entry per path prefix, keeping the best score.
-// Prefix = path up to (but not including) the second path parameter.
-// e.g. /nodes/{node}/lxc/{vmid}/status/start → /nodes/{node}/lxc
-function deduplicateByPathPrefix(results: QueryResult[]): QueryResult[] {
+/**
+ * Deduplicates results to one entry per path prefix, keeping the best score.
+ * Prefix = path up to (but not including) the second path parameter.
+ * e.g. /nodes/{node}/lxc/{vmid}/status/start → /nodes/{node}/lxc
+ */
+const deduplicateByPathPrefix = (results: QueryResult[]): QueryResult[] => {
 	const seen = new Map<string, QueryResult>();
 	for (const r of results) {
 		const key = pathPrefix(r.metadata.path ?? "");
@@ -228,9 +261,12 @@ function deduplicateByPathPrefix(results: QueryResult[]): QueryResult[] {
 	}
 	// Preserve original order (best score first)
 	return results.filter((r) => seen.get(pathPrefix(r.metadata.path ?? "")) === r);
-}
+};
 
-function pathPrefix(path: string): string {
+/**
+ * Extracts a stable prefix from a path by truncating at the second path parameter.
+ */
+const pathPrefix = (path: string): string => {
 	const segments = path.split("/").filter(Boolean);
 	let paramCount = 0;
 	const kept: string[] = [];
@@ -239,9 +275,14 @@ function pathPrefix(path: string): string {
 		kept.push(seg);
 	}
 	return "/" + kept.join("/");
-}
+};
 
-function buildWhere(filters: WhereFilters): Record<string, unknown> | null {
+/**
+ * Builds a ChromaDB where clause from the given filter set.
+ * Returns null if no filters are provided, a single clause object for one filter,
+ * or an $and array for multiple.
+ */
+const buildWhere = (filters: WhereFilters): Record<string, unknown> | null => {
 	const clauses: Record<string, string>[] = [];
 
 	if (filters.type) clauses.push({ type: filters.type });
@@ -249,6 +290,6 @@ function buildWhere(filters: WhereFilters): Record<string, unknown> | null {
 	if (filters.method) clauses.push({ method: filters.method.toUpperCase() });
 
 	if (clauses.length === 0) return null;
-	if (clauses.length === 1) return clauses[0];
+	if (clauses.length === 1) return clauses[0]!;
 	return { $and: clauses };
-}
+};

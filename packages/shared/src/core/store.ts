@@ -23,6 +23,9 @@ class RemoteOllamaEmbeddingFunction implements IEmbeddingFunction {
 		this.#model = model;
 	}
 
+	/**
+	 * Generates embeddings for an array of texts via the Ollama /api/embed endpoint.
+	 */
 	async generate(texts: string[]): Promise<number[][]> {
 		const res = await fetch(`${this.#url}/api/embed`, {
 			method: "POST",
@@ -43,7 +46,11 @@ class RemoteOllamaEmbeddingFunction implements IEmbeddingFunction {
 // Client & Embedding Builders
 // ---------------------------------------------------------------------------
 
-function buildEmbeddingFunction(): IEmbeddingFunction | undefined {
+/**
+ * Constructs the appropriate IEmbeddingFunction based on the current config.
+ * Returns undefined when ChromaDB should handle embeddings server-side.
+ */
+const buildEmbeddingFunction = (): IEmbeddingFunction | undefined => {
 	if (config.OLLAMA_URL) {
 		console.log(`[embeddings] using Ollama  url=${config.OLLAMA_URL}  model=${config.OLLAMA_MODEL}`);
 		return new RemoteOllamaEmbeddingFunction(config.OLLAMA_URL, config.OLLAMA_MODEL);
@@ -54,18 +61,19 @@ function buildEmbeddingFunction(): IEmbeddingFunction | undefined {
 	}
 	console.log(`[embeddings] using default chromadb embeddings  model=${config.EMBEDDING_MODEL}`);
 	return new DefaultEmbeddingFunction({ model: config.EMBEDDING_MODEL });
-}
+};
 
-function buildClient(): ChromaClient {
+/**
+ * Constructs a ChromaClient pointed at the configured host and port.
+ */
+const buildClient = (): ChromaClient => {
 	const host = config.CHROMA_HOST ?? "localhost";
 	const baseUrl = `${config.CHROMA_SSL ? "https" : "http"}://${host}:${config.CHROMA_PORT}`;
 	return new ChromaClient({
 		path: baseUrl,
-		auth: config.CHROMA_AUTH_TOKEN
-			? { provider: "token", credentials: config.CHROMA_AUTH_TOKEN }
-			: undefined,
+		...(config.CHROMA_AUTH_TOKEN && { auth: { provider: "token" as const, credentials: config.CHROMA_AUTH_TOKEN } }),
 	});
-}
+};
 
 // ---------------------------------------------------------------------------
 // SpecStore
@@ -87,11 +95,14 @@ export default class SpecStore {
 		this.#collectionName = config.CHROMA_COLLECTION;
 	}
 
+	/**
+	 * Returns the ChromaDB collection, creating it if it doesn't exist yet.
+	 */
 	async #getCollection(): Promise<Collection> {
 		if (!this.#collection) {
 			this.#collection = await this.#client.getOrCreateCollection({
 				name: this.#collectionName,
-				embeddingFunction: this.#embeddingFunction,
+				...(this.#embeddingFunction && { embeddingFunction: this.#embeddingFunction }),
 				metadata: { "hnsw:space": "cosine" },
 			});
 		}
@@ -102,6 +113,11 @@ export default class SpecStore {
 	// Ingest
 	// ------------------------------------------------------------------
 
+	/**
+	 * Upserts a batch of documents into the ChromaDB collection.
+	 * Pre-computes embeddings locally if an embedding function is configured,
+	 * then stores them in batches with progress callbacks.
+	 */
 	async upsert(
 		documents: [string, string, Record<string, string>][],
 		onProgress?: (done: number, total: number, phase: "embedding" | "storing") => void,
@@ -144,11 +160,17 @@ export default class SpecStore {
 		return ids.length;
 	}
 
+	/**
+	 * Deletes all documents belonging to a given API from the collection.
+	 */
 	async deleteApi(apiName: string): Promise<void> {
 		const collection = await this.#getCollection();
 		await collection.delete({ where: { api: apiName } });
 	}
 
+	/**
+	 * Retrieves all documents for a given API, returning them as DocumentResult objects.
+	 */
 	async getAll(apiName: string): Promise<DocumentResult[]> {
 		const collection = await this.#getCollection();
 		const results = await collection.get({
@@ -171,6 +193,10 @@ export default class SpecStore {
 	// Query
 	// ------------------------------------------------------------------
 
+	/**
+	 * Performs a semantic similarity query against the collection.
+	 * Optionally filters by a where clause and returns the top nResults matches.
+	 */
 	async query(
 		queryText: string,
 		nResults: number = 5,
@@ -205,6 +231,9 @@ export default class SpecStore {
 		}
 	}
 
+	/**
+	 * Retrieves a single document by its ID, or null if not found.
+	 */
 	async getById(docId: string): Promise<DocumentResult | null> {
 		const collection = await this.#getCollection();
 		const results = await collection.get({
@@ -216,7 +245,7 @@ export default class SpecStore {
 		if (ids.length === 0) return null;
 
 		return {
-			id: ids[0],
+			id: ids[0]!,
 			text: (results.documents?.[0] as string) ?? "",
 			metadata: (results.metadatas?.[0] as Record<string, string>) ?? {},
 		};
@@ -226,6 +255,9 @@ export default class SpecStore {
 	// Metadata
 	// ------------------------------------------------------------------
 
+	/**
+	 * Lists all indexed APIs with their endpoint and schema counts, sorted alphabetically.
+	 */
 	async listApis(): Promise<ApiInfo[]> {
 		const collection = await this.#getCollection();
 		const results = await collection.get({ include: [IncludeEnum.Metadatas] });
@@ -243,6 +275,9 @@ export default class SpecStore {
 			.map(([name, c]) => ({ name, endpoints: c.endpoints, schemas: c.schemas }));
 	}
 
+	/**
+	 * Returns the total number of documents in the collection.
+	 */
 	async count(): Promise<number> {
 		const collection = await this.#getCollection();
 		return collection.count();

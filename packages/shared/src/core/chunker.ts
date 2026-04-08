@@ -5,11 +5,15 @@ import type { Document } from "#types/store";
 // Endpoint → Document
 // ---------------------------------------------------------------------------
 
-export function endpointToDocument(endpoint: Endpoint, apiName: string): Document {
+/**
+ * Converts an OpenAPI Endpoint into a Document tuple for storage and retrieval.
+ * Builds full display text, a compact embedding text, and rich metadata.
+ */
+export const endpointToDocument = (endpoint: Endpoint, apiName: string): Document => {
 	const { method, path } = endpoint;
 	const docId = `${apiName}:endpoint:${method}:${path}`;
 
-	// ── Full text (stored in metadata, used for display) ───────────
+	// Full text (stored in metadata, used for display)
 	const fullLines: string[] = [`${method} ${path}`];
 
 	if (endpoint.summary) {
@@ -85,7 +89,7 @@ export function endpointToDocument(endpoint: Endpoint, apiName: string): Documen
 
 	const fullText = fullLines.join("\n");
 
-	// ── Embedding text (short, semantic) ──────────────────────────
+	// Embedding text (short, semantic)
 	const embedParts: string[] = [`${method} ${path}`];
 	// Skip summaries that just repeat the method+path (e.g. "GET /devices")
 	const summaryIsRedundant = endpoint.summary &&
@@ -118,7 +122,7 @@ export function endpointToDocument(endpoint: Endpoint, apiName: string): Documen
 	}
 	const embedText = embedParts.join("\n");
 
-	// ── Metadata ──────────────────────────────────────────────────
+	// Metadata
 	const metadata: Record<string, string> = {
 		type: "endpoint",
 		method,
@@ -170,17 +174,20 @@ export function endpointToDocument(endpoint: Endpoint, apiName: string): Documen
 	if (warnings.length > 0) metadata.warnings = warnings.join("|");
 
 	return [docId, embedText, metadata];
-}
+};
 
 // ---------------------------------------------------------------------------
 // Schema → Document
 // ---------------------------------------------------------------------------
 
-export function schemaToDocument(schema: SchemaDefinition, apiName: string): Document {
+/**
+ * Converts a SchemaDefinition into a Document tuple for storage and retrieval.
+ */
+export const schemaToDocument = (schema: SchemaDefinition, apiName: string): Document => {
 	const { name } = schema;
 	const docId = `${apiName}:schema:${name}`;
 
-	// ── Full text (stored in metadata, used for display) ───────────
+	// Full text (stored in metadata, used for display)
 	const fullLines: string[] = [`Schema: ${name}`];
 	if (schema.description) fullLines.push(`Description: ${schema.description}`);
 	if (schema.schemaType) fullLines.push(`Type: ${schema.schemaType}`);
@@ -207,10 +214,10 @@ export function schemaToDocument(schema: SchemaDefinition, apiName: string): Doc
 
 	const fullText = fullLines.join("\n");
 
-	// ── Embedding text (short, semantic) ──────────────────────────
+	// Embedding text (short, semantic)
 	const embedParts: string[] = [`Schema: ${name}`];
 	if (schema.description) {
-		const firstSentence = schema.description.split(". ")[0].split(".\n")[0];
+		const firstSentence = (schema.description.split(". ")[0] ?? schema.description).split(".\n")[0] ?? "";
 		embedParts.push(firstSentence);
 	}
 	if (schema.schemaType) embedParts.push(`Type: ${schema.schemaType}`);
@@ -231,15 +238,17 @@ export function schemaToDocument(schema: SchemaDefinition, apiName: string): Doc
 	};
 
 	return [docId, embedText, metadata];
-}
+};
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-// Build a simplified JSON-like object representing the schema shape.
-// Returns a serializable object so the frontend can JSON.stringify(schema, null, 2).
-function schemaToShape(schema: unknown, depth: number = 0): unknown {
+/**
+ * Builds a simplified JSON-like object representing the schema shape.
+ * Returns a serializable object so the frontend can JSON.stringify(schema, null, 2).
+ */
+const schemaToShape = (schema: unknown, depth: number = 0): unknown => {
 	if (!schema || typeof schema !== "object" || depth > 8) return null;
 
 	const s = schema as Record<string, unknown>;
@@ -273,9 +282,12 @@ function schemaToShape(schema: unknown, depth: number = 0): unknown {
 	}
 
 	return null;
-}
+};
 
-function fullSchemaToStr(schema: unknown, depth: number = 0): string {
+/**
+ * Serializes a schema to a compact string representation for storage in metadata.
+ */
+const fullSchemaToStr = (schema: unknown, depth: number = 0): string => {
 	const shape = schemaToShape(schema, depth);
 	if (shape == null) return "";
 	if (typeof shape === "string") return shape;
@@ -284,7 +296,7 @@ function fullSchemaToStr(schema: unknown, depth: number = 0): string {
 	} catch {
 		return "";
 	}
-}
+};
 
 // ---------------------------------------------------------------------------
 // Medium text helpers
@@ -294,15 +306,21 @@ const TYPE_ABBREV: Record<string, string> = {
 	string: "str", integer: "int", boolean: "bool", number: "num", object: "obj", array: "arr",
 };
 
-function abbreviateType(t: string): string {
+/**
+ * Abbreviates a type string to a short token using the TYPE_ABBREV map.
+ */
+const abbreviateType = (t: string): string => {
 	const lower = t.toLowerCase();
 	if (TYPE_ABBREV[lower]) return TYPE_ABBREV[lower];
 	const arrMatch = lower.match(/^array\s+of\s+(.+)/);
-	if (arrMatch) return `${abbreviateType(arrMatch[1])}[]`;
+	if (arrMatch) return `${abbreviateType(arrMatch[1]!)}[]`;
 	return t;
-}
+};
 
-function abbreviateSchema(fullSchemaStr: string, maxFields: number): string {
+/**
+ * Abbreviates a full JSON schema string to a compact human-readable form.
+ */
+const abbreviateSchema = (fullSchemaStr: string, maxFields: number): string => {
 	if (!fullSchemaStr) return "";
 	try {
 		const parsed = JSON.parse(fullSchemaStr);
@@ -313,9 +331,12 @@ function abbreviateSchema(fullSchemaStr: string, maxFields: number): string {
 	} catch {
 		return fullSchemaStr.slice(0, 120);
 	}
-}
+};
 
-function abbreviateObj(obj: unknown, maxFields: number, depth: number): string {
+/**
+ * Recursively abbreviates an object/array/primitive into a compact inline string.
+ */
+const abbreviateObj = (obj: unknown, maxFields: number, depth: number): string => {
 	if (depth > 2) return "obj";
 	if (Array.isArray(obj)) {
 		const item = obj[0];
@@ -332,9 +353,12 @@ function abbreviateObj(obj: unknown, maxFields: number, depth: number): string {
 	const parts = shown.map(([k, v]) => `${k}:${abbreviateObj(v, maxFields, depth + 1)}`);
 	const suffix = entries.length > maxFields ? `, ...+${entries.length - maxFields}` : "";
 	return `{${parts.join(", ")}${suffix}}`;
-}
+};
 
-function buildMediumText(endpoint: Endpoint, metadata: Record<string, string>): string {
+/**
+ * Builds a compact multi-line text representation of an endpoint for LLM consumption.
+ */
+const buildMediumText = (endpoint: Endpoint, metadata: Record<string, string>): string => {
 	const lines: string[] = [];
 
 	// Line 1: op + tags
@@ -388,7 +412,7 @@ function buildMediumText(endpoint: Endpoint, metadata: Record<string, string>): 
 	}
 
 	return lines.join("\n");
-}
+};
 
 // ---------------------------------------------------------------------------
 // Warning generation
@@ -409,13 +433,18 @@ const COUNTERINTUITIVE_TYPES: [RegExp, string, string][] = [
 	[/port/i, "string", "is string, not integer"],
 ];
 
-function generateWarnings(endpoint: Endpoint): string[] {
+/**
+ * Generates human-readable warnings for non-obvious endpoint traits
+ * such as unusual auth, pagination limits, required headers, rate limits,
+ * and counterintuitive field types.
+ */
+const generateWarnings = (endpoint: Endpoint): string[] => {
 	const warnings: string[] = [];
 	const params = endpoint.parameters ?? [];
 	const schemes = endpoint.securitySchemes ?? {};
 	const security = endpoint.security ?? [];
 
-	// ── Auth warnings ─────────────────────────────────────────────
+	// Auth warnings
 	// Check securitySchemes for non-Bearer auth
 	const activeSchemeNames = new Set(security.flatMap((s) => Object.keys(s)));
 	for (const [name, scheme] of Object.entries(schemes)) {
@@ -445,7 +474,7 @@ function generateWarnings(endpoint: Endpoint): string[] {
 		}
 	}
 
-	// ── Pagination warnings ───��───────────────────────────────────
+	// Pagination warnings
 	const paginationParams = params.filter((p) => PAGINATION_PARAMS.has((p.name ?? "").toLowerCase()));
 	if (paginationParams.length > 0) {
 		const limitParam = paginationParams.find((p) => (p.name ?? "").toLowerCase() === "limit" || (p.name ?? "").toLowerCase() === "page_size" || (p.name ?? "").toLowerCase() === "per_page");
@@ -459,18 +488,18 @@ function generateWarnings(endpoint: Endpoint): string[] {
 		}
 	}
 
-	// ── Required non-standard headers ─────────────────────────────
+	// Required non-standard headers
 	const requiredHeaders = headerParams.filter((p) => p.required && !STANDARD_HEADERS.has((p.name ?? "").toLowerCase()));
 	if (requiredHeaders.length > 0) {
 		warnings.push(`Required header${requiredHeaders.length > 1 ? "s" : ""}: ${requiredHeaders.map((p) => p.name).join(", ")}`);
 	}
 
-	// ── Rate limits ─────��─────────────────────────────────────────
+	// Rate limits
 	if (endpoint.rateLimits?.limit) {
 		warnings.push(`Rate limit: ${endpoint.rateLimits.limit} ${endpoint.rateLimits.unit ?? "req/min"}`);
 	}
 
-	// ── Counterintuitive field types ───���──────────────────────────
+	// Counterintuitive field types
 	const allSchemas = collectFieldSchemas(endpoint);
 	for (const [fieldName, fieldType] of allSchemas) {
 		for (const [pattern, triggerType, message] of COUNTERINTUITIVE_TYPES) {
@@ -482,13 +511,14 @@ function generateWarnings(endpoint: Endpoint): string[] {
 	}
 
 	return warnings;
-}
+};
 
 /** Collect [fieldName, type] pairs from request body and response schemas. */
-function collectFieldSchemas(endpoint: Endpoint): [string, string][] {
+const collectFieldSchemas = (endpoint: Endpoint): [string, string][] => {
 	const fields: [string, string][] = [];
 
-	function walkProperties(schema: unknown, depth: number) {
+	/** Recursively walks schema properties and array items to collect field types. */
+	const walkProperties = (schema: unknown, depth: number): void => {
 		if (!schema || typeof schema !== "object" || depth > 4) return;
 		const s = schema as Record<string, unknown>;
 
@@ -504,7 +534,7 @@ function collectFieldSchemas(endpoint: Endpoint): [string, string][] {
 		if (s.items && typeof s.items === "object") {
 			walkProperties(s.items, depth + 1);
 		}
-	}
+	};
 
 	// Request body schemas
 	const reqContent = endpoint.requestBody?.content ?? {};
@@ -522,9 +552,13 @@ function collectFieldSchemas(endpoint: Endpoint): [string, string][] {
 	}
 
 	return fields;
-}
+};
 
-function schemaSummary(schema: unknown, depth: number = 0): string {
+/**
+ * Produces a short human-readable summary of a JSON Schema object.
+ * Handles arrays, objects, primitives, and combiners (allOf/oneOf/anyOf).
+ */
+const schemaSummary = (schema: unknown, depth: number = 0): string => {
 	if (!schema || typeof schema !== "object" || depth > 2) return "";
 
 	const s = schema as Record<string, unknown>;
@@ -556,4 +590,4 @@ function schemaSummary(schema: unknown, depth: number = 0): string {
 	}
 
 	return JSON.stringify(schema).slice(0, 80);
-}
+};

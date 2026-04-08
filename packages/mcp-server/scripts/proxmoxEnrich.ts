@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
-import fs from "fs/promises";
-import path from "path";
-import crypto from "crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import crypto from "node:crypto";
 import { Command } from "commander";
 import YAML from "yaml";
 
@@ -10,15 +10,15 @@ import YAML from "yaml";
 // Types
 // ---------------------------------------------------------------------------
 
-interface ProxyConfig {
+type ProxyConfig = {
 	apis: Record<string, {
 		authorization: {
 			headers: Record<string, string>;
 		};
 	}>;
-}
+};
 
-interface DiscoveryContext {
+type DiscoveryContext = {
 	node: string;
 	vmid: string;
 	lxcid: string;
@@ -49,28 +49,28 @@ interface DiscoveryContext {
 	volume: string;
 	vmFirewallRulePos: string;
 	tokenid: string;
-}
+};
 
-interface Observation {
+type Observation = {
 	path: string;
 	operationId: string;
 	tags: string[];
 	parameters: ObservationParam[];
 	schema: JsonSchema | null;
-}
+};
 
-interface ObservationParam {
+type ObservationParam = {
 	name: string;
 	in: string;
 	type: string;
-}
+};
 
-interface JsonSchema {
+type JsonSchema = {
 	type?: string;
 	nullable?: boolean;
 	properties?: Record<string, JsonSchema>;
 	items?: JsonSchema;
-}
+};
 
 type EndpointDef = [string, string, string, [string, string, string, string][]];
 
@@ -78,7 +78,10 @@ type EndpointDef = [string, string, string, [string, string, string, string][]];
 // Decryption
 // ---------------------------------------------------------------------------
 
-function loadEnvValues(filePath: string): Record<string, string> {
+/**
+ * Parses a .env file into a key-value map, stripping comments and surrounding quotes.
+ */
+const loadEnvValues = (filePath: string): Record<string, string> => {
 	const text = Bun.env.NODE_ENV === "test" ? "" : require("fs").readFileSync(filePath, "utf-8") as string;
 	const result: Record<string, string> = {};
 	for (const line of text.split("\n")) {
@@ -94,9 +97,12 @@ function loadEnvValues(filePath: string): Record<string, string> {
 		result[key] = value;
 	}
 	return result;
-}
+};
 
-function decryptToken(encryptedBase64: string, hexKey: string): string {
+/**
+ * Decrypts an AES-256-GCM encrypted token from a base64 blob using the provided hex key.
+ */
+const decryptToken = (encryptedBase64: string, hexKey: string): string => {
 	const keyBytes = Buffer.from(hexKey, "hex");
 	const cipherBlob = Buffer.from(encryptedBase64, "base64");
 	const iv = cipherBlob.subarray(0, 12);
@@ -106,9 +112,12 @@ function decryptToken(encryptedBase64: string, hexKey: string): string {
 	decipher.setAuthTag(authTag);
 	const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 	return decrypted.toString("utf-8");
-}
+};
 
-function loadAuth(): string {
+/**
+ * Loads and decrypts the Proxmox Authorization token from the sibling proxy config directory.
+ */
+const loadAuth = (): string => {
 	const proxyDir = path.resolve("..", "mcp_generic-api-passthrough");
 	const envPath = path.join(proxyDir, ".env");
 	const configPath = path.join(proxyDir, "config.yaml");
@@ -133,7 +142,7 @@ function loadAuth(): string {
 	}
 
 	return decryptToken(encryptedValue, encryptionKey);
-}
+};
 
 // ---------------------------------------------------------------------------
 // HTTP Client
@@ -141,11 +150,14 @@ function loadAuth(): string {
 
 const BASE_URL = "https://gate.home.itsnotcam.dev";
 
-interface FetchClient {
+type FetchClient = {
 	get(url: string): Promise<{ data: unknown }>;
-}
+};
 
-function createClient(authToken: string, skipSsl: boolean): FetchClient {
+/**
+ * Creates an HTTP client that injects the Authorization header and optionally skips SSL verification.
+ */
+const createClient = (authToken: string, skipSsl: boolean): FetchClient => {
 	return {
 		async get(url: string) {
 			const fullUrl = `${BASE_URL}${url}`;
@@ -161,7 +173,7 @@ function createClient(authToken: string, skipSsl: boolean): FetchClient {
 			return { data };
 		},
 	};
-}
+};
 
 class FetchError extends Error {
 	status: number;
@@ -175,29 +187,42 @@ class FetchError extends Error {
 // Discovery
 // ---------------------------------------------------------------------------
 
-async function safeGet(client: FetchClient, url: string): Promise<Record<string, unknown> | null> {
+/**
+ * Performs a GET request against the client and returns the parsed body,
+ * or null when the request fails for any reason.
+ */
+const safeGet = async (client: FetchClient, url: string): Promise<Record<string, unknown> | null> => {
 	try {
 		const resp = await client.get(url);
 		return resp.data as Record<string, unknown>;
 	} catch {
 		return null;
 	}
-}
+};
 
-function extractDataArray(resp: Record<string, unknown> | null): Record<string, unknown>[] {
+/**
+ * Extracts the `data` array from a Proxmox API response object.
+ */
+const extractDataArray = (resp: Record<string, unknown> | null): Record<string, unknown>[] => {
 	if (!resp) return [];
 	const data = resp["data"];
 	if (Array.isArray(data)) return data as Record<string, unknown>[];
 	return [];
-}
+};
 
-function firstField(items: Record<string, unknown>[], field: string): string {
+/**
+ * Returns the string value of a named field from the first item in a list, or empty string.
+ */
+const firstField = (items: Record<string, unknown>[], field: string): string => {
 	if (items.length === 0) return "";
 	const val = items[0][field];
 	return val !== undefined && val !== null ? String(val) : "";
-}
+};
 
-async function discover(client: FetchClient): Promise<DiscoveryContext> {
+/**
+ * Discovers live resource IDs from the Proxmox instance to use as path parameter values.
+ */
+const discover = async (client: FetchClient): Promise<DiscoveryContext> => {
 	const ctx: DiscoveryContext = {
 		node: "",
 		vmid: "",
@@ -386,13 +411,16 @@ async function discover(client: FetchClient): Promise<DiscoveryContext> {
 
 	console.log("[discover] Discovery complete");
 	return ctx;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Schema Inference
 // ---------------------------------------------------------------------------
 
-function inferSchema(value: unknown, depth: number = 0): JsonSchema {
+/**
+ * Infers a JsonSchema from a live API response value, recursing up to depth 3.
+ */
+const inferSchema = (value: unknown, depth: number = 0): JsonSchema => {
 	if (depth > 3) {
 		return { type: "object" };
 	}
@@ -450,7 +478,7 @@ function inferSchema(value: unknown, depth: number = 0): JsonSchema {
 		return { type: "object", properties: props };
 	}
 	return { type: "string" };
-}
+};
 
 // ---------------------------------------------------------------------------
 // Endpoint Catalog
@@ -1007,13 +1035,20 @@ const ENDPOINTS: EndpointDef[] = [
 // Collection
 // ---------------------------------------------------------------------------
 
-function resolveParam(ctx: DiscoveryContext, ctxKey: string): string | null {
+/**
+ * Resolves a DiscoveryContext field by key, returning null when the field is empty.
+ */
+const resolveParam = (ctx: DiscoveryContext, ctxKey: string): string | null => {
 	const value = ctx[ctxKey as keyof DiscoveryContext];
 	if (value === undefined || value === "") return null;
 	return value;
-}
+};
 
-function substitutePath(template: string, params: [string, string, string, string][], ctx: DiscoveryContext): string | null {
+/**
+ * Substitutes path parameter placeholders with discovered values.
+ * Returns null when any required parameter is missing from the discovery context.
+ */
+const substitutePath = (template: string, params: [string, string, string, string][], ctx: DiscoveryContext): string | null => {
 	let result = template;
 	for (const [name, , , ctxKey] of params) {
 		const value = resolveParam(ctx, ctxKey);
@@ -1021,18 +1056,25 @@ function substitutePath(template: string, params: [string, string, string, strin
 		result = result.replace(`{${name}}`, encodeURIComponent(value));
 	}
 	return result;
-}
+};
 
-function stripApiPrefix(apiPath: string): string {
+/**
+ * Strips the /api2/json prefix from a Proxmox API path to produce a clean OpenAPI path.
+ */
+const stripApiPrefix = (apiPath: string): string => {
 	// Convert /api2/json/nodes/{node}/status to /nodes/{node}/status
 	return apiPath.replace(/^\/api2\/json/, "");
-}
+};
 
-async function collectEndpoints(
+/**
+ * Iterates over all defined endpoints, fetches each from the live Proxmox instance,
+ * and returns a list of observations with inferred response schemas.
+ */
+const collectEndpoints = async (
 	client: FetchClient,
 	ctx: DiscoveryContext,
 	dryRun: boolean,
-): Promise<Observation[]> {
+): Promise<Observation[]> => {
 	const observations: Observation[] = [];
 	let okCount = 0;
 	let skippedCount = 0;
@@ -1107,13 +1149,13 @@ async function collectEndpoints(
 
 	console.log(`\nCollection complete: ${okCount} ok, ${skippedCount} skipped, ${failedCount} failed`);
 	return observations;
-}
+};
 
 // ---------------------------------------------------------------------------
 // OpenAPI Builder
 // ---------------------------------------------------------------------------
 
-interface OpenApiSpec {
+type OpenApiSpec = {
 	openapi: string;
 	info: {
 		title: string;
@@ -1121,33 +1163,36 @@ interface OpenApiSpec {
 		description: string;
 	};
 	paths: Record<string, Record<string, OpenApiOperation>>;
-}
+};
 
-interface OpenApiOperation {
+type OpenApiOperation = {
 	operationId: string;
 	summary: string;
 	tags: string[];
 	parameters?: OpenApiParameter[];
 	responses: Record<string, OpenApiResponse>;
-}
+};
 
-interface OpenApiParameter {
+type OpenApiParameter = {
 	name: string;
 	in: string;
 	required: boolean;
 	schema: { type: string };
-}
+};
 
-interface OpenApiResponse {
+type OpenApiResponse = {
 	description: string;
 	content?: {
 		"application/json": {
 			schema: JsonSchema;
 		};
 	};
-}
+};
 
-function buildOpenApiSpec(observations: Observation[]): OpenApiSpec {
+/**
+ * Builds an OpenAPI 3.0 spec from a list of live-collected endpoint observations.
+ */
+const buildOpenApiSpec = (observations: Observation[]): OpenApiSpec => {
 	const paths: Record<string, Record<string, OpenApiOperation>> = {};
 
 	for (const obs of observations) {
@@ -1197,7 +1242,7 @@ function buildOpenApiSpec(observations: Observation[]): OpenApiSpec {
 		},
 		paths,
 	};
-}
+};
 
 // ---------------------------------------------------------------------------
 // CLI

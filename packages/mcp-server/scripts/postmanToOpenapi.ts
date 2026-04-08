@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import fs from "fs/promises";
-import path from "path";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { Command } from "commander";
 import YAML from "yaml";
 
@@ -9,66 +9,69 @@ import YAML from "yaml";
 // Types
 // ---------------------------------------------------------------------------
 
-interface PostmanCollection {
+type PostmanCollection = {
 	info?: { name?: string; description?: string };
 	item?: PostmanItem[];
-}
+};
 
-interface PostmanItem {
+type PostmanItem = {
 	name?: string;
 	item?: PostmanItem[];
 	request?: PostmanRequest | string;
-}
+};
 
-interface PostmanRequest {
+type PostmanRequest = {
 	method?: string;
 	url?: PostmanUrl | string;
 	description?: string | { content?: string };
 	header?: PostmanHeader[];
 	body?: PostmanBody;
-}
+};
 
-interface PostmanUrl {
+type PostmanUrl = {
 	raw?: string;
 	path?: string[];
 	query?: PostmanQuery[];
-}
+};
 
-interface PostmanQuery {
+type PostmanQuery = {
 	key?: string;
 	value?: string;
 	description?: string;
 	disabled?: boolean;
-}
+};
 
-interface PostmanHeader {
+type PostmanHeader = {
 	key?: string;
 	value?: string;
 	description?: string;
 	disabled?: boolean;
-}
+};
 
-interface PostmanBody {
+type PostmanBody = {
 	mode?: string;
 	raw?: string;
 	options?: { raw?: { language?: string } };
 	urlencoded?: PostmanFormParam[];
 	formdata?: PostmanFormParam[];
-}
+};
 
-interface PostmanFormParam {
+type PostmanFormParam = {
 	key?: string;
 	value?: string;
 	description?: string;
 	type?: string;
 	disabled?: boolean;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Converter
 // ---------------------------------------------------------------------------
 
-function convert(collection: PostmanCollection, title?: string): Record<string, unknown> {
+/**
+ * Converts a Postman collection to an OpenAPI 3.0 spec object.
+ */
+const convert = (collection: PostmanCollection, title?: string): Record<string, unknown> => {
 	const info = collection.info ?? {};
 	const specTitle = title ?? info.name ?? "Converted API";
 
@@ -84,13 +87,16 @@ function convert(collection: PostmanCollection, title?: string): Record<string, 
 		},
 		paths,
 	};
-}
+};
 
-function walkItems(
+/**
+ * Recursively walks Postman items, collecting requests into the paths map.
+ */
+const walkItems = (
 	items: PostmanItem[],
 	paths: Record<string, Record<string, unknown>>,
 	tagStack: string[],
-): void {
+): void => {
 	for (const item of items) {
 		if (item.item) {
 			walkItems(item.item, paths, [...tagStack, item.name ?? ""]);
@@ -98,13 +104,16 @@ function walkItems(
 			processRequest(item, paths, tagStack);
 		}
 	}
-}
+};
 
-function processRequest(
+/**
+ * Converts a single Postman request item into an OpenAPI path+operation entry.
+ */
+const processRequest = (
 	item: PostmanItem,
 	paths: Record<string, Record<string, unknown>>,
 	tagStack: string[],
-): void {
+): void => {
 	const req = item.request;
 	if (typeof req === "string") return;
 	if (!req) return;
@@ -190,13 +199,16 @@ function processRequest(
 
 	if (!paths[pathStr]) paths[pathStr] = {};
 	paths[pathStr][method] = operation;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Path Building
 // ---------------------------------------------------------------------------
 
-function buildPath(urlObj: PostmanUrl): string {
+/**
+ * Builds an OpenAPI path string from a Postman URL object.
+ */
+const buildPath = (urlObj: PostmanUrl): string => {
 	const pathParts = urlObj.path ?? [];
 	if (pathParts.length === 0) {
 		return urlToPath(urlObj.raw ?? "");
@@ -215,9 +227,12 @@ function buildPath(urlObj: PostmanUrl): string {
 	}
 
 	return segments.length > 0 ? "/" + segments.join("/") : "/";
-}
+};
 
-function urlToPath(raw: string): string {
+/**
+ * Normalises a raw URL string to an OpenAPI-compatible path.
+ */
+const urlToPath = (raw: string): string => {
 	raw = raw.replace(/^\{\{[^}]+\}\}/, "");
 	raw = raw.replace(/^https?:\/\/[^/]+/, "");
 	raw = raw.replace(/:(\w+)/g, "{$1}");
@@ -225,13 +240,17 @@ function urlToPath(raw: string): string {
 	raw = raw.split("?")[0];
 	if (!raw.startsWith("/")) raw = "/" + raw;
 	return raw;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Request Body
 // ---------------------------------------------------------------------------
 
-function buildRequestBody(body: PostmanBody): Record<string, unknown> | null {
+/**
+ * Converts a Postman body definition into an OpenAPI requestBody object.
+ * Returns null when the body mode is unrecognised or has no content.
+ */
+const buildRequestBody = (body: PostmanBody): Record<string, unknown> | null => {
 	const mode = body.mode ?? "";
 
 	if (mode === "raw") {
@@ -297,16 +316,23 @@ function buildRequestBody(body: PostmanBody): Record<string, unknown> | null {
 	}
 
 	return null;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Schema Inference
 // ---------------------------------------------------------------------------
 
-function inferSchema(value: unknown): Record<string, unknown> {
+/**
+ * Infers a JSON Schema object from an arbitrary runtime value.
+ */
+const inferSchema = (value: unknown): Record<string, unknown> => {
 	if (value === null || value === undefined) return { type: "string", nullable: true };
 	if (typeof value === "boolean") return { type: "boolean" };
-	if (typeof value === "number") return Number.isInteger(value) ? { type: "integer" } : { type: "number" };
+	if (typeof value === "number") {
+		return Number.isInteger(value)
+			? { type: "integer" }
+			: { type: "number" };
+	}
 	if (typeof value === "string") return { type: "string" };
 	if (Array.isArray(value)) {
 		if (value.length > 0) return { type: "array", items: inferSchema(value[0]) };
@@ -320,7 +346,7 @@ function inferSchema(value: unknown): Record<string, unknown> {
 		return { type: "object", properties: props };
 	}
 	return { type: "string" };
-}
+};
 
 // ---------------------------------------------------------------------------
 // CLI
