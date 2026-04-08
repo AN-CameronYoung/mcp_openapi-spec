@@ -80,11 +80,11 @@ const App = (): JSX.Element => {
 
 			{/* Settings drawer */}
 			<Sheet open={showSettings} onOpenChange={handleSheetOpenChange}>
-				<SheetContent side="right" className="flex flex-col gap-0 w-[28rem] max-w-[90vw] p-0">
+				<SheetContent side="right" className="flex flex-col gap-0 w-[40rem] max-w-[90vw] p-0">
 					<SheetHeader className="shrink-0 px-5 py-3 border-b border-border">
 						<SheetTitle className="text-base font-semibold">Settings</SheetTitle>
 					</SheetHeader>
-					<div className="flex-1 overflow-auto">
+					<div className="flex flex-col flex-1 min-h-0">
 						<SettingsPage />
 					</div>
 				</SheetContent>

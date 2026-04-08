@@ -73,6 +73,10 @@ const SUGGESTION_POOL = [
 	"get a user's details from Microsoft Graph",
 	"list Proxmox storage pools",
 	"get Darktrace device summary",
+	"how do I authenticate with the API?",
+	"how do I paginate through results?",
+	"how can I filter devices by risk score?",
+	"how can I create a new resource via the API?",
 ];
 
 /**

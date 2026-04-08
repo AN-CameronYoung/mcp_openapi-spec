@@ -3,7 +3,7 @@
 import { useState, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 
-import { listApis } from "../lib/api";
+import { listApis, deleteApi } from "../lib/api";
 import { cn } from "../lib/utils";
 import { Ic } from "../lib/icons";
 import { useStore, nextJobId } from "../store/store";
@@ -184,7 +184,7 @@ const SettingsPage = (): JSX.Element => {
 
   const handleDelete = async (name: string): Promise<void> => {
     try {
-      await fetch(`/openapi/apis/${encodeURIComponent(name)}`, { method: "DELETE" });
+      await deleteApi(name);
       refreshApis();
     } catch {}
   };
@@ -192,8 +192,8 @@ const SettingsPage = (): JSX.Element => {
   const hasActiveJobs = ingestJobs.some((j) => j.status === "running" || j.status === "queued");
 
   return (
-    <div className="px-5 py-3.5">
-      <div>
+    <div className="flex flex-col flex-1 min-h-0">
+      <div className="shrink-0 px-5 py-3.5">
 
         {/* Ingest */}
         <div className="mb-6">
@@ -344,7 +344,8 @@ const SettingsPage = (): JSX.Element => {
         )}
 
         {/* Ingested APIs */}
-        <div>
+      </div>
+      <div className="flex flex-col flex-1 min-h-0 px-5 pb-3.5 overflow-auto">
           <div className={sectionLabel}>Ingested APIs</div>
           {apis.length === 0 && (
             <div className="text-[0.9375rem] text-(--g-text-dim)">No APIs ingested yet</div>
@@ -352,11 +353,11 @@ const SettingsPage = (): JSX.Element => {
           {apis.map((a) => (
             <div
               key={a.name}
-              className="flex items-center gap-[0.6875rem] mb-1 rounded-md border border-border bg-muted px-[0.6875rem] py-[0.4375rem]"
+              className="flex items-center justify-between gap-[0.6875rem] mb-1 rounded-md border border-border bg-muted px-[0.6875rem] py-[0.4375rem]"
             >
               <span className="flex opacity-50 text-primary">{Ic.server()}</span>
-              <span className="text-base font-medium text-foreground">{a.name}</span>
-              <span className="text-sm text-muted-foreground">{a.endpoints} endpoints</span>
+              <span className="flex-1 text-sm font-medium text-foreground">{a.name}</span>
+              <span className="text-xs text-muted-foreground">{a.endpoints} endpoints</span>
               <AlertDialog open={deleteTarget === a.name} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
                 <AlertDialogTrigger asChild>
                   <Button
@@ -388,7 +389,6 @@ const SettingsPage = (): JSX.Element => {
               </AlertDialog>
             </div>
           ))}
-        </div>
       </div>
     </div>
   );

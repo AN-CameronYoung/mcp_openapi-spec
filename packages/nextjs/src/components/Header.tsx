@@ -32,8 +32,7 @@ const THEME_OPTS: ThemeOption[] = [
 
 const TABS = [
   { key: "greg" as const, label: "greg", icon: Ic.chat },
-  { key: "search" as const, label: "Semantic search", icon: Ic.search },
-  { key: "docs" as const, label: "API docs", icon: Ic.doc },
+  { key: "docs" as const, label: "Swagger", icon: Ic.doc },
 ];
 
 // ---------------------------------------------------------------------------
@@ -48,8 +47,8 @@ const SunIcon = () => (
 );
 
 const MoonIcon = () => (
-  <svg width={15} height={15} viewBox="0 0 16 16" fill="none">
-    <path d="M13 10A5.5 5.5 0 016 3a5.5 5.5 0 100 10 5.5 5.5 0 007-3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+  <svg width={15} height={15} viewBox="0 0 24 24" fill="none">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 

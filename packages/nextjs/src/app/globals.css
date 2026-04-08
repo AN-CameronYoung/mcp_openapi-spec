@@ -45,13 +45,13 @@
 	--g-code-bg:   var(--g-bg);
 	--g-logo-text: #FFFFFF;
 
-	/* Derived — method badges */
-	--g-method-get-text:    var(--g-green);
-	--g-method-get-bg:      color-mix(in srgb, var(--g-green) 8%, transparent);
-	--g-method-get-border:  color-mix(in srgb, var(--g-green) 18%, transparent);
-	--g-method-post-text:   var(--g-method-post);
-	--g-method-post-bg:     color-mix(in srgb, var(--g-method-post) 8%, transparent);
-	--g-method-post-border: color-mix(in srgb, var(--g-method-post) 18%, transparent);
+	/* Derived — method badges (GET=blue, POST=green, matching Swagger UI) */
+	--g-method-get-text:    var(--g-method-post);
+	--g-method-get-bg:      color-mix(in srgb, var(--g-method-post) 8%, transparent);
+	--g-method-get-border:  color-mix(in srgb, var(--g-method-post) 18%, transparent);
+	--g-method-post-text:   var(--g-green);
+	--g-method-post-bg:     color-mix(in srgb, var(--g-green) 8%, transparent);
+	--g-method-post-border: color-mix(in srgb, var(--g-green) 18%, transparent);
 	--g-method-put-text:    var(--g-method-put);
 	--g-method-put-bg:      color-mix(in srgb, var(--g-method-put) 8%, transparent);
 	--g-method-put-border:  color-mix(in srgb, var(--g-method-put) 18%, transparent);

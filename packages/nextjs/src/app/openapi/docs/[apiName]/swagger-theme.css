@@ -23,7 +23,6 @@ body { margin: 0; background: #0D0D10; color: #E4E4E7 }
 .swagger-ui .opblock-body pre.microlight, .swagger-ui .highlight-code > .microlight {
   background: #0D0D10 !important; color: #E4E4E7; border-radius: 4px
 }
-.swagger-ui .opblock-body pre span { color: #E4E4E7 !important }
 .swagger-ui .responses-wrapper, .swagger-ui .response-col_description__inner,
 .swagger-ui .parameters-col_description { color: #B0B0BA }
 .swagger-ui section.models { border-color: rgba(255,255,255,0.06) }
@@ -123,8 +122,9 @@ body.claude .swagger-ui .response-controls { color: #5C4838 !important }
 body.claude .swagger-ui .responses-header td.col_header { color: #5C4838 !important }
 
 body.claude .swagger-ui .opblock-body pre.microlight,
-body.claude .swagger-ui .highlight-code > .microlight { background: #EDE8E0 !important; color: #1C1610 }
-body.claude .swagger-ui .opblock-body pre span { color: #1C1610 !important }
+body.claude .swagger-ui .highlight-code > .microlight { background: #EDE8E0 !important; color: #1C1610 !important }
+body.claude .swagger-ui .opblock-body pre span,
+body.claude .swagger-ui .highlight-code span { color: #1C1610 !important }
 
 body.claude .swagger-ui .tab li { color: #6B5444 }
 body.claude .swagger-ui .tab li.active { color: #1C1610 }
@@ -214,8 +214,10 @@ body.light .swagger-ui .responses-header td.col_header { color: #3F3F46 !importa
 
 /* Code blocks — fixes the black-bg / light-text in Example Value */
 body.light .swagger-ui .opblock-body pre.microlight,
-body.light .swagger-ui .highlight-code > .microlight { background: #F4F4F5 !important; color: #18181B }
-body.light .swagger-ui .opblock-body pre span { color: #18181B !important }
+body.light .swagger-ui .highlight-code > .microlight { background: #F4F4F5 !important; color: #18181B !important }
+/* Baseline for structural chars ({} : , etc.) — token colors applied via JS */
+body.light .swagger-ui .opblock-body pre span,
+body.light .swagger-ui .highlight-code span { color: #18181B !important }
 
 /* Example Value | Schema tabs */
 body.light .swagger-ui .tab li { color: #52525B }

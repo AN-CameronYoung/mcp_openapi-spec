@@ -37,7 +37,7 @@ const DocsPage = (): JSX.Element => {
   params.set("theme", resolvedTheme);
   const qs = `?${params}`;
 
-  const iframeSrc = selectedApi ? `/openapi/docs/${selectedApi}${qs}` : "";
+  const iframeSrc = selectedApi ? `/openapi/docs/${encodeURIComponent(selectedApi)}${qs}` : "";
 
   // Force iframe reload when anchor changes by bumping the key
   useEffect(() => {

@@ -39,7 +39,6 @@ interface CopyBtnProps {
 
 interface InputBoxWrapperProps {
   children: React.ReactNode;
-  personality: "greg" | "verbose" | "curt";
 }
 
 interface CodeDropdownProps {
@@ -329,14 +328,8 @@ const CopyBtn = ({ text }: CopyBtnProps): JSX.Element => {
 /**
  * Styled container for the chat input area; border colour changes on focus and is tinted by the active personality.
  */
-const InputBoxWrapper = ({ children, personality }: InputBoxWrapperProps): JSX.Element => {
+const InputBoxWrapper = ({ children }: InputBoxWrapperProps): JSX.Element => {
   const [focused, setFocused] = useState(false);
-  const color = PERSONALITY_COLOR[personality];
-  const bg = personality === "greg"
-    ? "var(--g-surface)"
-    : personality === "verbose"
-    ? "var(--g-method-put-bg)"
-    : "var(--g-surface)";
 
   return (
     <div
@@ -344,8 +337,8 @@ const InputBoxWrapper = ({ children, personality }: InputBoxWrapperProps): JSX.E
       onBlurCapture={() => setFocused(false)}
       className="flex items-center gap-2 rounded-[0.625rem] px-2.5 py-2 transition-[border-color,background] duration-150"
       style={{
-        background: bg,
-        border: `1px solid ${focused ? color : "var(--g-border)"}`,
+        background: "var(--g-surface)",
+        border: `1px solid ${focused ? "var(--g-accent)" : "var(--g-border)"}`,
       }}
     >
       {children}
@@ -1189,6 +1182,7 @@ const GregPage = (): JSX.Element => {
     deleteChat,
     saveChat,
     setDoubleCheck,
+    clearChat,
   } = useStore(useShallow((s) => ({
     chatMessages: s.chatMessages,
     personality: s.personality,
@@ -1212,6 +1206,7 @@ const GregPage = (): JSX.Element => {
     deleteChat: s.deleteChat,
     saveChat: s.saveChat,
     setDoubleCheck: s.setDoubleCheck,
+    clearChat: s.clearChat,
   })));
 
   const doubleCheck = false; // disabled
@@ -1221,7 +1216,7 @@ const GregPage = (): JSX.Element => {
   const [loadingGif, setLoadingGif] = useState<string | null>(null);
   const [greeting, setGreetingText] = useState<string>("");
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [debugMsgIdx, setDebugMsgIdx] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
@@ -1523,6 +1518,16 @@ const GregPage = (): JSX.Element => {
             <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
             <span>History</span>
           </button>
+
+          {/* Clear */}
+          <button
+            onClick={clearChat}
+            title="Clear chat"
+            className="flex items-center gap-[0.3125rem] px-2.5 py-1.5 rounded-lg cursor-pointer text-[0.6875rem] font-medium border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:border-red-500/50 transition-colors"
+          >
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            <span>Clear</span>
+          </button>
         </div>
 
         {/* Messages + detail panel */}
@@ -1530,41 +1535,25 @@ const GregPage = (): JSX.Element => {
           {/* Messages */}
           <div className="relative flex flex-col flex-1 min-w-0">
             <div ref={scrollContainerRef} onScroll={handleScroll} className="relative flex flex-col flex-1 gap-3 overflow-auto">
-              {chatMessages.length === 0 && (
-                <div className="flex flex-1 flex-col items-center justify-center gap-4 text-(--g-text-dim)">
-                  {isGregLike && (
-                    <img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
-                  )}
-                  {!isGregLike && (
-                    <div
-                      className="flex items-center justify-center w-20 h-20 rounded-2xl transition-[background] duration-150"
-                      style={{ background: PERSONALITY_COLOR[personality] }}
-                    >
-                      <svg width={50} height={50} viewBox="0 0 20 20" fill="none">
-                        <circle cx="7" cy="8" r="1.4" fill="white"/>
-                        <circle cx="13" cy="8" r="1.4" fill="white"/>
-                        <path d="M6.5 13.5h7" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
-                      </svg>
-                    </div>
-                  )}
-                  <span className="text-2xl">
-                    {greeting}
-                  </span>
-                  {suggestions.length > 0 && (
-                    <div className="flex flex-wrap justify-center gap-2 max-w-[35rem]">
-                      {suggestions.map((s, i) => (
-                        <button
-                          key={i}
-                          onClick={() => handleSuggestion(s)}
-                          className="px-3.5 py-1.5 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.8125rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
-                        >
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+              <div className={cn("flex flex-col items-center gap-4 text-(--g-text-dim)", chatMessages.length === 0 ? "flex-1 justify-center" : "pt-6 pb-2")}>
+                <img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
+                <span className="text-2xl">
+                  {greeting}
+                </span>
+                {suggestions.length > 0 && chatMessages.length === 0 && (
+                  <div className="flex flex-wrap justify-center gap-2 max-w-[35rem]">
+                    {suggestions.map((s, i) => (
+                      <button
+                        key={i}
+                        onClick={() => handleSuggestion(s)}
+                        className="px-3.5 py-1.5 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.8125rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               {chatMessages.map((msg, i) => (
                 <ChatMessage key={i} msg={msg} i={i} onSelectEndpoint={handleSelectEndpoint} onShowDebug={setDebugMsgIdx} loadingGif={msg.streaming ? loadingGif : null} />
               ))}
@@ -1589,7 +1578,7 @@ const GregPage = (): JSX.Element => {
               <div className="mb-1.5 px-0.5 text-[0.75rem] text-(--g-text-dim)">
                 {personality === "greg" ? "finds endpoints fast" : personality === "curt" ? "straight answers" : "explains how & why"}
               </div>
-              <InputBoxWrapper personality={personality}>
+              <InputBoxWrapper>
                 <textarea
                   rows={1}
                   placeholder={isGregLike ? "talk to greg..." : "Search API documentation..."}

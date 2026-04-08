@@ -24,9 +24,9 @@ const EpCard = ({ method, path, api, description, warnings, compact, onClick }: 
     <div
       onClick={onClick}
       className={cn(
-        "border border-border rounded-md bg-muted transition-all duration-100",
+        "border border-(--g-border-hover) rounded-md bg-muted transition-all duration-100",
         compact ? "px-1.5 py-[0.1875rem]" : "px-2 py-1",
-        onClick ? "cursor-pointer hover:border-(--g-border-hover)" : "cursor-default",
+        onClick ? "cursor-pointer hover:border-(--g-text-dim)" : "cursor-default",
       )}
     >
       {/* Method + path + API */}
@@ -56,7 +56,7 @@ const EpCard = ({ method, path, api, description, warnings, compact, onClick }: 
       {/* Description */}
       <p
         className={cn(
-          "mt-0.5 leading-[1.3] truncate text-(--g-text-dim)",
+          "mt-0.5 leading-[1.3] truncate text-(--g-text-muted)",
           compact ? "text-[0.625rem] pl-[2.1875rem]" : "text-[0.6875rem] pl-10",
         )}
       >
