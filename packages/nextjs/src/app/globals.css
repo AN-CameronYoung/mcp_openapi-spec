@@ -103,6 +103,20 @@
 	--sidebar-ring:               var(--g-accent);
 }
 
+/* ── Claude ──────────────────────────────────────────────────────────────── */
+.claude {
+	--g-bg:           #FAF8F5;
+	--g-text:         #1C1610;
+	--g-accent:       #CC7050;
+	--g-green:        #2A7A52;
+	--g-danger:       #C84040;
+	--g-method-post:  #3A6B9B;
+	--g-method-put:   #9A7820;
+	--g-method-patch: #7A5EA0;
+
+	color-scheme: light;
+}
+
 /* ── Dark ────────────────────────────────────────────────────────────────── */
 .dark {
 	--g-bg:           #0D0D10;

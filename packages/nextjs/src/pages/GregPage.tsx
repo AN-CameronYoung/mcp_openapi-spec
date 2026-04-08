@@ -1019,6 +1019,8 @@ const SwaggerPanel = ({ item, type, onClose }: SwaggerPanelProps): JSX.Element =
   }, []);
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<HTMLDivElement>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchQueryRef = useRef("");
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -1082,9 +1084,21 @@ const SwaggerPanel = ({ item, type, onClose }: SwaggerPanelProps): JSX.Element =
     }
   }, [item.method, item.path, item.api, isEp]);
 
-  // Track which API the iframe has loaded
+  // Keep search ref in sync and push query to iframe on change
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+    iframeRef.current?.contentWindow?.postMessage({ type: "searchOps", query: searchQuery }, "*");
+  }, [searchQuery]);
+
+  // Clear search when API changes
+  useEffect(() => { setSearchQuery(""); }, [item.api]);
+
+  // Track which API the iframe has loaded; replay any active search
   const onIframeLoad = useCallback(() => {
     loadedApiRef.current = item.api;
+    if (searchQueryRef.current) {
+      iframeRef.current?.contentWindow?.postMessage({ type: "searchOps", query: searchQueryRef.current }, "*");
+    }
   }, [item.api]);
 
   return (
@@ -1101,10 +1115,31 @@ const SwaggerPanel = ({ item, type, onClose }: SwaggerPanelProps): JSX.Element =
       <div className="flex flex-col flex-1 min-w-0">
         {/* Header */}
         <div className="flex items-center gap-2 px-2.5 py-2 rounded-t-md border-b border-(--g-border) bg-(--g-surface)">
-          <span className="text-xs font-semibold uppercase tracking-[0.05em] text-(--g-text-dim)">
+          <span className="text-xs font-semibold uppercase tracking-[0.05em] text-(--g-text-dim) shrink-0">
             {isEp ? "Endpoint" : "Schema"} — {item.api}
           </span>
           <span className="flex-1" />
+          <div className="relative flex items-center">
+            <span className="absolute left-1.5 text-(--g-text-dim) pointer-events-none">{Ic.search(11)}</span>
+            <input
+              type="text"
+              placeholder="Search…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-6 w-36 rounded border border-(--g-border) bg-(--g-surface) pl-6 pr-5 text-xs text-(--g-text) placeholder:text-(--g-text-dim) focus:border-(--g-accent) focus:outline-none"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-1 text-(--g-text-dim) hover:text-(--g-text)"
+              >
+                {Ic.x(10)}
+              </button>
+            )}
+          </div>
+          <Button variant="ghost" size="icon-xs" onClick={() => window.open(baseSrc, "_blank")} title="Open in new tab">
+            {Ic.ext()}
+          </Button>
           <Button variant="ghost" size="icon-xs" onClick={onClose}>
             {Ic.x()}
           </Button>
@@ -1497,18 +1532,20 @@ const GregPage = (): JSX.Element => {
             <div ref={scrollContainerRef} onScroll={handleScroll} className="relative flex flex-col flex-1 gap-3 overflow-auto">
               {chatMessages.length === 0 && (
                 <div className="flex flex-1 flex-col items-center justify-center gap-4 text-(--g-text-dim)">
-                  <div
-                    className="flex items-center justify-center w-20 h-20 rounded-2xl transition-[background] duration-150"
-                    style={{ background: PERSONALITY_COLOR[personality] }}
-                  >
-                    <svg width={50} height={50} viewBox="0 0 20 20" fill="none">
-                      <circle cx="7" cy="8" r="1.4" fill="white"/>
-                      <circle cx="13" cy="8" r="1.4" fill="white"/>
-                      <path d="M6.5 13.5h7" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
-                    </svg>
-                  </div>
                   {isGregLike && (
                     <img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
+                  )}
+                  {!isGregLike && (
+                    <div
+                      className="flex items-center justify-center w-20 h-20 rounded-2xl transition-[background] duration-150"
+                      style={{ background: PERSONALITY_COLOR[personality] }}
+                    >
+                      <svg width={50} height={50} viewBox="0 0 20 20" fill="none">
+                        <circle cx="7" cy="8" r="1.4" fill="white"/>
+                        <circle cx="13" cy="8" r="1.4" fill="white"/>
+                        <path d="M6.5 13.5h7" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
+                      </svg>
+                    </div>
                   )}
                   <span className="text-2xl">
                     {greeting}

@@ -8,6 +8,7 @@ import { useStore } from "../store/store";
 import type { ThemePref } from "../store/store";
 import AutoIngestIndicator from "./AutoIngestBanner";
 import { Button } from "./ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -23,8 +24,9 @@ interface ThemeOption {
 // ---------------------------------------------------------------------------
 
 const THEME_OPTS: ThemeOption[] = [
-  { value: "system", label: "Auto" },
+  { value: "system", label: "System" },
   { value: "light", label: "Light" },
+  { value: "claude", label: "Claude" },
   { value: "dark", label: "Dark" },
 ];
 
@@ -35,34 +37,63 @@ const TABS = [
 ];
 
 // ---------------------------------------------------------------------------
+// Icons
+// ---------------------------------------------------------------------------
+
+const SunIcon = () => (
+  <svg width={15} height={15} viewBox="0 0 16 16" fill="none">
+    <circle cx="8" cy="8" r="2.8" stroke="currentColor" strokeWidth="1.3" />
+    <path d="M8 1.5v1M8 13.5v1M1.5 8h1M13.5 8h1M3.4 3.4l.7.7M11.9 11.9l.7.7M11.9 3.4l-.7.7M4.1 11.9l-.7.7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+  </svg>
+);
+
+const MoonIcon = () => (
+  <svg width={15} height={15} viewBox="0 0 16 16" fill="none">
+    <path d="M13 10A5.5 5.5 0 016 3a5.5 5.5 0 100 10 5.5 5.5 0 007-3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+  </svg>
+);
+
+// ---------------------------------------------------------------------------
 // ThemeToggle
 // ---------------------------------------------------------------------------
 
 /**
- * Three-way toggle for system/light/dark theme preference.
+ * Icon button that opens a dropdown to select system/light/paper/dark theme.
  */
 const ThemeToggle = (): JSX.Element => {
   const { theme, setTheme } = useStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme })));
 
+  const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+
   return (
-    <div className="flex overflow-hidden rounded-md border border-border bg-muted">
-      {THEME_OPTS.map((o) => (
+    <Popover>
+      <PopoverTrigger asChild>
         <Button
-          key={o.value}
           variant="ghost"
-          size="xs"
-          onClick={() => setTheme(o.value)}
-          className={cn(
-            "px-2 rounded-none",
-            theme === o.value
-              ? "bg-accent text-primary font-semibold"
-              : "text-muted-foreground font-normal",
-          )}
+          size="icon"
+          className="text-muted-foreground hover:text-foreground"
+          title="Theme"
         >
-          {o.label}
+          {isDark ? <MoonIcon /> : <SunIcon />}
         </Button>
-      ))}
-    </div>
+      </PopoverTrigger>
+      <PopoverContent align="end" sideOffset={6} className="w-32 gap-0 p-1">
+        {THEME_OPTS.map((o) => (
+          <button
+            key={o.value}
+            onClick={() => setTheme(o.value)}
+            className={cn(
+              "w-full rounded px-3 py-1.5 text-left text-sm transition-colors",
+              theme === o.value
+                ? "bg-accent text-primary font-medium"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            {o.label}
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
   );
 };
 
@@ -127,9 +158,9 @@ const Header = (): JSX.Element => {
               ? "bg-accent text-primary"
               : "text-muted-foreground hover:text-foreground",
           )}
-          title="Settings"
+          title="Ingest"
         >
-          {Ic.gear(16)}
+          {Ic.upload(16)}
         </Button>
       </div>
     </div>

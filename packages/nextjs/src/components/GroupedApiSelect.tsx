@@ -158,7 +158,7 @@ const FlyoutGroup = ({ entry, value, onSelect }: FlyoutGroupProps): JSX.Element 
         )}
       >
         <span className="flex-1 truncate">{entry.name}</span>
-        <span className="text-xs text-muted-foreground shrink-0">{entry.children.length}</span>
+        <span className="text-xs text-muted-foreground shrink-0">{entry.children.reduce((sum, c) => sum + c.endpoints, 0)}</span>
         <ChevronRight className="size-3.5 opacity-50 shrink-0" />
       </div>
 

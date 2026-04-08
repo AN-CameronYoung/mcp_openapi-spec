@@ -20,11 +20,11 @@ export const metadata: Metadata = {
 };
 
 // Inline script that runs before first paint to prevent theme flash.
-const themeScript = `(function(){try{var t=localStorage.getItem("greg-theme")||"system";var d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme:dark)").matches);if(d)document.documentElement.classList.add("dark")}catch(e){}})()`;
+const themeScript = `(function(){try{var t=localStorage.getItem("greg-theme")||"system";var el=document.documentElement;if(t==="claude")el.classList.add("claude");else if(t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme:dark)").matches))el.classList.add("dark")}catch(e){}})()`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="en" className={cn(poppins.variable, jetbrainsMono.variable)}>
+		<html lang="en" className={cn(poppins.variable, jetbrainsMono.variable)} suppressHydrationWarning>
 			<head>
 				<script dangerouslySetInnerHTML={{ __html: themeScript }} />
 			</head>

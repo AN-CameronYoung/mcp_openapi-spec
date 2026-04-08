@@ -49,7 +49,7 @@ export const nextJobId = (): string => {
 // Store
 // ---------------------------------------------------------------------------
 
-export type ThemePref = "light" | "dark" | "system";
+export type ThemePref = "light" | "dark" | "system" | "claude";
 
 /**
  * Reads the persisted theme preference from localStorage.
@@ -67,8 +67,10 @@ const getStoredTheme = (): ThemePref => {
  */
 const applyTheme = (pref: ThemePref): void => {
 	if (typeof window === "undefined") return;
-	const isDark = pref === "dark" || (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-	document.documentElement.classList.toggle("dark", isDark);
+	const el = document.documentElement;
+	el.classList.remove("dark", "claude");
+	if (pref === "claude") el.classList.add("claude");
+	else if (pref === "dark" || (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)) el.classList.add("dark");
 	try { localStorage.setItem("greg-theme", pref); } catch {}
 };
 

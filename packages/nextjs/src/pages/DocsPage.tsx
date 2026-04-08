@@ -24,7 +24,9 @@ const DocsPage = (): JSX.Element => {
   const selectedApi = docsApi || (apis.length > 0 ? apis[0]!.name : "");
   const apiInfo = apis.find((a) => a.name === selectedApi);
 
-  const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const resolvedTheme = theme === "system"
+    ? (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+    : theme;
 
   // Pass method+path+theme as query params
   const params = new URLSearchParams();
@@ -32,7 +34,7 @@ const DocsPage = (): JSX.Element => {
     params.set("method", docsAnchor.method);
     params.set("path", docsAnchor.path);
   }
-  params.set("theme", isDark ? "dark" : "light");
+  params.set("theme", resolvedTheme);
   const qs = `?${params}`;
 
   const iframeSrc = selectedApi ? `/openapi/docs/${selectedApi}${qs}` : "";

@@ -57,22 +57,22 @@ export const listModels = async (): Promise<ModelInfo[]> => {
 // ---------------------------------------------------------------------------
 
 const SUGGESTION_POOL = [
-	"create a new user",
-	"list all resources",
-	"authenticate with API key",
-	"search by query",
-	"update an existing record",
-	"delete by ID",
-	"get resource by ID",
-	"paginate results",
-	"filter by status",
-	"upload a file",
-	"download a file",
-	"batch operation",
-	"webhook configuration",
-	"rate limit headers",
-	"error response format",
-	"streaming response",
+	"list all devices detected by Armis",
+	"get Darktrace model breach alerts",
+	"list UniFi access points and their status",
+	"get MikroTik firewall rules via API",
+	"list Microsoft Graph users in a tenant",
+	"get Intune managed device compliance status",
+	"list all Proxmox VMs and their state",
+	"list ZeroTier network members",
+	"create a ZeroTier network",
+	"send a chat completion with OpenAI",
+	"create a message with the Anthropic API",
+	"get UniFi controller site statistics",
+	"search Armis devices by type or risk score",
+	"get a user's details from Microsoft Graph",
+	"list Proxmox storage pools",
+	"get Darktrace device summary",
 ];
 
 /**
