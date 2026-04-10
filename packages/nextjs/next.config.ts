@@ -13,6 +13,9 @@ const SERVER_EXTERNAL = [
 ];
 
 const nextConfig: NextConfig = {
+	// Hide the Next.js dev indicator (the "N" logo)
+	devIndicators: false,
+
 	// Transpile the shared workspace package (exports raw .ts source)
 	transpilePackages: ["@greg/shared"],
 

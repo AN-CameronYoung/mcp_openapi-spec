@@ -38,6 +38,7 @@ interface FlyoutGroupProps {
   entry: ApiGroup;
   value: string;
   onSelect: (v: string) => void;
+  fontSize?: number;
 }
 
 interface GroupedApiSelectProps {
@@ -104,7 +105,7 @@ const MenuItem = ({ label, detail, selected, onClick, className }: MenuItemProps
     <div
       onClick={onClick}
       className={cn(
-        "flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-pointer",
+        "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
         "hover:bg-(--g-surface-hover)",
         selected && "bg-(--g-accent-dim)",
         className,
@@ -128,7 +129,7 @@ const MenuItem = ({ label, detail, selected, onClick, className }: MenuItemProps
  * A grouped row that reveals a flyout sub-menu of child APIs on hover.
  * The sub-menu is portalled to document.body to escape any overflow/clip containers.
  */
-const FlyoutGroup = ({ entry, value, onSelect }: FlyoutGroupProps): JSX.Element => {
+const FlyoutGroup = ({ entry, value, onSelect, fontSize }: FlyoutGroupProps): JSX.Element => {
   const [hovered, setHovered] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
   const [flyoutPos, setFlyoutPos] = useState({ top: 0, left: 0 });
@@ -152,7 +153,7 @@ const FlyoutGroup = ({ entry, value, onSelect }: FlyoutGroupProps): JSX.Element 
     >
       <div
         className={cn(
-          "flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-pointer",
+          "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
           "hover:bg-(--g-surface-hover)",
           (hovered || hasSelected) && "bg-(--g-surface-hover)",
         )}
@@ -164,7 +165,7 @@ const FlyoutGroup = ({ entry, value, onSelect }: FlyoutGroupProps): JSX.Element 
 
       {hovered && createPortal(
         <div
-          style={{ position: "fixed", top: flyoutPos.top, left: flyoutPos.left, zIndex: 200 }}
+          style={{ position: "fixed", top: flyoutPos.top, left: flyoutPos.left, zIndex: 200, fontSize }}
           className="min-w-44 rounded-lg border border-border bg-popover p-1 shadow-md"
         >
           <div className="absolute -left-[5px] top-2.5 size-2.5 rotate-45 border-l border-b border-border bg-popover" />
@@ -255,7 +256,7 @@ const GroupedApiSelect = ({
           <ChevronsUpDown className="opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="p-1 w-auto" style={{ minWidth: Math.max(minWidth, 180) }} align="start">
+      <PopoverContent className="p-1 w-auto" style={{ minWidth: Math.max(minWidth, 180), fontSize }} align="start">
         {/* Search filter */}
         <div className="px-1 pb-1">
           <input
@@ -263,7 +264,7 @@ const GroupedApiSelect = ({
             value={filter}
             onChange={handleFilterChange}
             placeholder="Search APIs..."
-            className="w-full px-2 py-1.5 text-sm bg-transparent border-b border-border outline-none placeholder:text-muted-foreground"
+            className="w-full px-2 py-1.5 bg-transparent border-b border-border outline-none placeholder:text-muted-foreground"
           />
         </div>
 
@@ -280,7 +281,7 @@ const GroupedApiSelect = ({
             </>
           )}
           {filtered.length === 0 && (
-            <div className="px-2 py-3 text-sm text-muted-foreground text-center">No APIs found.</div>
+            <div className="px-2 py-3 text-muted-foreground text-center">No APIs found.</div>
           )}
           {filtered.map((entry) => {
             if (entry.type === "single") {
@@ -300,6 +301,7 @@ const GroupedApiSelect = ({
                 entry={entry}
                 value={value}
                 onSelect={handleSelect}
+                fontSize={fontSize}
               />
             );
           })}

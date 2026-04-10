@@ -87,6 +87,12 @@ export const Ic = {
 			<circle cx="12" cy="12" r="3" />
 		</svg>
 	),
+	clock: (s = 13) => (
+		<svg width={s} height={s} viewBox="0 0 16 16" fill="none">
+			<circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2" />
+			<path d="M8 5v3.5l2 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+		</svg>
+	),
 	bug: (s = 14) => (
 		<svg width={s} height={s} viewBox="0 0 16 16" fill="none">
 			<ellipse cx="8" cy="9.5" rx="3.5" ry="4.5" stroke="currentColor" strokeWidth="1.2"/>

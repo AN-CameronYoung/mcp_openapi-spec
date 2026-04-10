@@ -4,6 +4,7 @@ import { create } from "zustand";
 
 import { generateTitle } from "../lib/api";
 import type { ApiInfo, SearchResult, EndpointCard } from "../lib/api";
+import type { Personality } from "@greg/shared/chat";
 
 // ---------------------------------------------------------------------------
 // Chat message with optional endpoint cards
@@ -15,7 +16,7 @@ export interface ChatMsg {
 	endpoints?: EndpointCard[];
 	streaming?: boolean;
 	model?: string;
-	personality?: "greg" | "verbose" | "curt";
+	personality?: Personality;
 	usage?: { input: number; output: number; toolCalls: number };
 	verificationUsage?: { input: number; output: number };
 	verificationText?: string;
@@ -113,14 +114,14 @@ type AppState = {
 
 	// Chat
 	chatMessages: ChatMsg[];
-	personality: "greg" | "verbose" | "curt";
+	personality: Personality;
 	chatLoading: boolean;
 	selectedModel: string;
 	selectedProvider: string;
 	setChatMessages: (msgs: ChatMsg[]) => void;
 	addChatMessage: (msg: ChatMsg) => void;
 	updateLastAssistant: (updater: (msg: ChatMsg) => ChatMsg) => void;
-	setPersonality: (v: "greg" | "verbose" | "curt") => void;
+	setPersonality: (v: Personality) => void;
 	setChatLoading: (v: boolean) => void;
 	setModel: (model: string, provider: string) => void;
 	clearChat: () => void;
@@ -141,9 +142,11 @@ type AppState = {
 	customGregPrompt: string;
 	customExplainerPrompt: string;
 	customProPrompt: string;
+	customCasualPrompt: string;
 	setCustomGregPrompt: (v: string) => void;
 	setCustomExplainerPrompt: (v: string) => void;
 	setCustomProPrompt: (v: string) => void;
+	setCustomCasualPrompt: (v: string) => void;
 
 	// Ingest jobs
 	ingestJobs: IngestJob[];
@@ -203,7 +206,7 @@ export const useStore = create<AppState>()((set) => ({
 	},
 
 	chatMessages: [],
-	personality: "greg" as "greg" | "verbose" | "curt",
+	personality: "greg" as Personality,
 	chatLoading: false,
 	selectedModel: "",
 	selectedProvider: "",
@@ -271,9 +274,11 @@ export const useStore = create<AppState>()((set) => ({
 	customGregPrompt: "",
 	customExplainerPrompt: "",
 	customProPrompt: "",
+	customCasualPrompt: "",
 	setCustomGregPrompt: (v) => set({ customGregPrompt: v }),
 	setCustomExplainerPrompt: (v) => set({ customExplainerPrompt: v }),
 	setCustomProPrompt: (v) => set({ customProPrompt: v }),
+	setCustomCasualPrompt: (v) => set({ customCasualPrompt: v }),
 
 	ingestJobs: [],
 	addIngestJob: (job) => set((s) => ({ ingestJobs: [...s.ingestJobs, job] })),
@@ -307,7 +312,8 @@ export const useStore = create<AppState>()((set) => ({
 			// Read persisted values
 			const theme = (localStorage.getItem("greg-theme") as ThemePref) ?? "system";
 			const pv = localStorage.getItem("greg-personality");
-			const personality = (pv === "greg" || pv === "verbose" || pv === "curt")
+			const PERSONALITIES: Personality[] = ["greg", "verbose", "curt", "casual"];
+			const personality = (pv !== null && (PERSONALITIES as string[]).includes(pv))
 				? pv
 				: localStorage.getItem("greg-mode") === "false" ? "curt" : "greg";
 			const selectedModel = localStorage.getItem("greg-model") ?? "";
@@ -318,7 +324,7 @@ export const useStore = create<AppState>()((set) => ({
 
 			// Apply and commit
 			applyTheme(theme);
-			set({ theme, personality: personality as "greg" | "verbose" | "curt", selectedModel, selectedProvider, chatHistory, doubleCheck, page });
+			set({ theme, personality: personality as Personality, selectedModel, selectedProvider, chatHistory, doubleCheck, page });
 		} catch {}
 	},
 }));

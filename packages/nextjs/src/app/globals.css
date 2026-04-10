@@ -40,18 +40,19 @@
 	--g-accent-dim:   color-mix(in srgb, var(--g-accent) 6%, transparent);
 
 	/* Derived — semantic areas */
-	--g-user-bg:   color-mix(in srgb, var(--g-accent) 8%, transparent);
-	--g-greg-bg:   color-mix(in srgb, var(--g-text) 4%, var(--g-bg));
-	--g-code-bg:   var(--g-bg);
+	--g-user-bg:          color-mix(in srgb, var(--g-accent) 8%, transparent);
+	--g-greg-bg:          color-mix(in srgb, var(--g-text) 4%, var(--g-bg));
+	--g-code-bg:          var(--g-bg);
+	--g-inline-code-text: #121212;
 	--g-logo-text: #FFFFFF;
 
-	/* Derived — method badges */
-	--g-method-get-text:    var(--g-green);
-	--g-method-get-bg:      color-mix(in srgb, var(--g-green) 8%, transparent);
-	--g-method-get-border:  color-mix(in srgb, var(--g-green) 18%, transparent);
-	--g-method-post-text:   var(--g-method-post);
-	--g-method-post-bg:     color-mix(in srgb, var(--g-method-post) 8%, transparent);
-	--g-method-post-border: color-mix(in srgb, var(--g-method-post) 18%, transparent);
+	/* Derived — method badges (GET=blue, POST=green, matching Swagger UI) */
+	--g-method-get-text:    var(--g-method-post);
+	--g-method-get-bg:      color-mix(in srgb, var(--g-method-post) 8%, transparent);
+	--g-method-get-border:  color-mix(in srgb, var(--g-method-post) 18%, transparent);
+	--g-method-post-text:   var(--g-green);
+	--g-method-post-bg:     color-mix(in srgb, var(--g-green) 8%, transparent);
+	--g-method-post-border: color-mix(in srgb, var(--g-green) 18%, transparent);
 	--g-method-put-text:    var(--g-method-put);
 	--g-method-put-bg:      color-mix(in srgb, var(--g-method-put) 8%, transparent);
 	--g-method-put-border:  color-mix(in srgb, var(--g-method-put) 18%, transparent);
@@ -105,14 +106,15 @@
 
 /* ── Claude ──────────────────────────────────────────────────────────────── */
 .claude {
-	--g-bg:           #FAF8F5;
-	--g-text:         #1C1610;
-	--g-accent:       #CC7050;
-	--g-green:        #2A7A52;
-	--g-danger:       #C84040;
-	--g-method-post:  #3A6B9B;
-	--g-method-put:   #9A7820;
-	--g-method-patch: #7A5EA0;
+	--g-bg:              #FAF8F5;
+	--g-text:            #1C1610;
+	--g-accent:          #CC7050;
+	--g-green:           #2A7A52;
+	--g-danger:          #C84040;
+	--g-method-post:     #3A6B9B;
+	--g-method-put:      #9A7820;
+	--g-method-patch:    #7A5EA0;
+	--g-inline-code-text: #121212;
 
 	color-scheme: light;
 }
@@ -128,6 +130,7 @@
 	--g-method-put:   #FBBF24;
 	--g-method-patch: #C084FC;
 
+	--g-inline-code-text: color-mix(in srgb, var(--g-accent) 80%, #fff);
 	--g-logo-text: var(--g-bg);
 
 	color-scheme: dark;

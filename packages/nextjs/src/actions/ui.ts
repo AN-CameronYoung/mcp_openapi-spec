@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import config from "@greg/shared/core/config";
-import { GREG_PROMPT, VERBOSE_PROMPT, CURT_PROMPT } from "@greg/shared/chat";
+import { GREG_PROMPT, VERBOSE_PROMPT, CURT_PROMPT, CASUAL_PROMPT } from "@greg/shared/chat";
 
 import { getRetriever } from "@/lib/retriever";
 
@@ -57,22 +57,26 @@ export const listModels = async (): Promise<ModelInfo[]> => {
 // ---------------------------------------------------------------------------
 
 const SUGGESTION_POOL = [
-	"list all devices detected by Armis",
-	"get Darktrace model breach alerts",
-	"list UniFi access points and their status",
-	"get MikroTik firewall rules via API",
-	"list Microsoft Graph users in a tenant",
-	"get Intune managed device compliance status",
-	"list all Proxmox VMs and their state",
-	"list ZeroTier network members",
-	"create a ZeroTier network",
-	"send a chat completion with OpenAI",
-	"create a message with the Anthropic API",
-	"get UniFi controller site statistics",
-	"search Armis devices by type or risk score",
-	"get a user's details from Microsoft Graph",
-	"list Proxmox storage pools",
-	"get Darktrace device summary",
+	"How do I get a list of all devices and their risk scores from Armis?",
+	"How do I retrieve AI Analyst incidents from Darktrace?",
+	"How do I find similar devices by behavioural profile in Darktrace?",
+	"How do I list all WLAN configurations for a UniFi site?",
+	"How do I create a new SSID on a UniFi controller?",
+	"How do I read active firewall connections from MikroTik?",
+	"How do I manage firewall filter rules via the MikroTik API?",
+	"How do I list all VMs on a Proxmox node?",
+	"How do I check VM migration eligibility in Proxmox?",
+	"How do I list members of a ZeroTier network?",
+	"How do I get peer latency and path info from ZeroTier?",
+	"How do I send a chat completion request to OpenAI?",
+	"How do I create a message with streaming using the Anthropic API?",
+	"How do I list a user's group memberships in Microsoft Graph?",
+	"How do I query device compliance state via Microsoft Graph?",
+	"How do I get connection traffic data for a device in Darktrace?",
+	"How do I update a registered device's properties via Microsoft Graph?",
+	"How do I list all network configurations for a UniFi site?",
+	"How do I retrieve stored chat completions from OpenAI?",
+	"How do I check transitive group membership for a user in Microsoft Graph?",
 ];
 
 /**
@@ -90,8 +94,8 @@ export const fetchSuggestions = async (): Promise<string[]> => {
 /**
  * Returns all built-in system prompt strings for the available personalities.
  */
-export const getPrompts = async (): Promise<{ greg: string; verbose: string; curt: string }> => {
-	return { greg: GREG_PROMPT, verbose: VERBOSE_PROMPT, curt: CURT_PROMPT };
+export const getPrompts = async (): Promise<{ greg: string; verbose: string; curt: string; casual: string }> => {
+	return { greg: GREG_PROMPT, verbose: VERBOSE_PROMPT, curt: CURT_PROMPT, casual: CASUAL_PROMPT };
 };
 
 // ---------------------------------------------------------------------------
