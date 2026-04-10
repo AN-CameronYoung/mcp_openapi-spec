@@ -4,7 +4,7 @@
 
 export { searchEndpoints, searchSchemas, getEndpoint, listEndpoints } from "@/actions/search";
 export { listApis, deleteApi } from "@/actions/apis";
-export { listModels, fetchSuggestions, generateTitle, getGreetingGif, getPrompts, listSpecFiles } from "@/actions/ui";
+export { listModels, fetchSuggestions, generateTitle, getGreetingGif, getPrompts, listSpecFiles, generateFollowUpSuggestions } from "@/actions/ui";
 
 // ---------------------------------------------------------------------------
 // Types

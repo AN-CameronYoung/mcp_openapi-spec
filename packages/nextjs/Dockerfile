@@ -18,4 +18,5 @@ RUN bun run build
 
 EXPOSE 3001
 
+VOLUME ["/app/specs"]
 CMD ["bun", "run", "start"]
