@@ -9,7 +9,6 @@ import { useStore, pageFromHash } from "./store/store";
 import Header from "./components/Header";
 import GregPage from "./pages/GregPage";
 import SearchPage from "./pages/SearchPage";
-import DocsPage from "./pages/DocsPage";
 import SettingsPage from "./pages/SettingsPage";
 import IngestFloat from "./components/IngestFloat";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "./components/ui/sheet";
@@ -24,8 +23,8 @@ const App = (): JSX.Element => {
 	);
 
 	// Track the last non-settings page so content stays visible behind the drawer
-	const lastPageRef = useRef<"greg" | "search" | "docs">("greg");
-	if (page !== "settings") lastPageRef.current = page;
+	const lastPageRef = useRef<"greg" | "search">("greg");
+	if (page !== "settings") lastPageRef.current = page as "greg" | "search";
 	const contentPage = lastPageRef.current;
 
 	useEffect(() => {
@@ -76,7 +75,6 @@ const App = (): JSX.Element => {
 			{/* Page content — always mounted so DocsPage iframe survives tab switches */}
 			<div className={contentPage === "greg" ? "contents" : "hidden"}><GregPage /></div>
 			<div className={contentPage === "search" ? "contents" : "hidden"}><SearchPage /></div>
-			<div className={contentPage === "docs" ? "contents" : "hidden"}><DocsPage /></div>
 
 			{/* Settings drawer */}
 			<Sheet open={showSettings} onOpenChange={handleSheetOpenChange}>

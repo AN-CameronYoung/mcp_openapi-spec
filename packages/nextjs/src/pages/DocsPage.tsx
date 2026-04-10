@@ -47,7 +47,7 @@ const DocsPage = (): JSX.Element => {
   }, [docsAnchor]);
 
   return (
-    <div className="flex flex-col h-[calc(100%-3.5rem)] px-5 py-3.5">
+    <div className="flex flex-col h-[calc(100%-2.75rem)] px-5 py-3.5">
       {/* Header */}
       <div className="flex items-center gap-3.5 mb-[0.6875rem] shrink-0">
         <div className="relative flex items-center">

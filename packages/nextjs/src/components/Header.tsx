@@ -30,10 +30,6 @@ const THEME_OPTS: ThemeOption[] = [
   { value: "dark", label: "Dark" },
 ];
 
-const TABS = [
-  { key: "greg" as const, label: "greg", icon: Ic.chat },
-  { key: "docs" as const, label: "Swagger", icon: Ic.doc },
-];
 
 // ---------------------------------------------------------------------------
 // Icons
@@ -109,36 +105,11 @@ const Header = (): JSX.Element => {
   const totalEndpoints = apis.reduce((s, a) => s + a.endpoints, 0);
 
   return (
-    <div className="flex items-stretch h-14 px-5 border-b border-border shrink-0">
+    <div className="flex items-stretch h-11 px-5 border-b border-border shrink-0">
       {/* Logo */}
-      <div className="flex items-center gap-2 mr-[1.375rem]">
-        <div className="flex items-center justify-center w-7 h-7 rounded-md bg-(--g-green)">
-          <svg width={18} height={18} viewBox="0 0 20 20" fill="none">
-            <circle cx="7" cy="8" r="1.4" fill="white"/>
-            <circle cx="13" cy="8" r="1.4" fill="white"/>
-            <path d="M6.5 13.5h7" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
-          </svg>
-        </div>
+      <div className="flex items-center mr-[1.375rem]">
         <span className="text-lg font-semibold tracking-[-0.01em]">greg</span>
       </div>
-
-      {/* Tabs */}
-      {TABS.map((t) => (
-        <Button
-          key={t.key}
-          variant="ghost"
-          onClick={() => setPage(t.key)}
-          className={cn(
-            "h-full gap-1.5 px-3.5 -mb-px rounded-none border-b-2 text-base font-medium",
-            page === t.key
-              ? "text-primary border-b-primary"
-              : "text-muted-foreground border-b-transparent",
-          )}
-        >
-          {t.icon()}
-          {t.label}
-        </Button>
-      ))}
 
       {/* Stats + theme toggle */}
       <div className="flex items-center gap-[0.6875rem] ml-auto">

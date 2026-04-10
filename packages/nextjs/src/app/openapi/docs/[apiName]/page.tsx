@@ -62,7 +62,7 @@ function applyJsonHighlighting(container: HTMLElement, themeKey: string, process
 
 interface DocsPageProps {
 	params: Promise<{ apiName: string }>;
-	searchParams: Promise<{ method?: string; path?: string; theme?: string }>;
+	searchParams: Promise<{ method?: string; path?: string; theme?: string; zoom?: string }>;
 }
 
 /**
@@ -78,7 +78,7 @@ interface DocsPageProps {
  */
 const DocsPage = ({ params, searchParams }: DocsPageProps): JSX.Element => {
 	const { apiName } = use(params);
-	const { method, path, theme = "dark" } = use(searchParams);
+	const { method, path, theme = "dark", zoom = "1" } = use(searchParams);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const uiRef = useRef<any>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -87,7 +87,8 @@ const DocsPage = ({ params, searchParams }: DocsPageProps): JSX.Element => {
 		document.body.classList.remove("light", "claude");
 		if (theme === "light") document.body.classList.add("light");
 		else if (theme === "claude") document.body.classList.add("claude");
-	}, [theme]);
+		document.body.style.zoom = zoom;
+	}, [theme, zoom]);
 
 	// Replace microlight output with our own syntax-highlighted HTML.
 	// New WeakSet per theme ensures re-highlighting if theme changes.
@@ -146,6 +147,9 @@ const DocsPage = ({ params, searchParams }: DocsPageProps): JSX.Element => {
 		const handleMessage = (event: MessageEvent): void => {
 			if (event.data?.type === "scrollToEndpoint" && event.data.method && event.data.path) {
 				expandAndScroll(event.data.method, event.data.path);
+			}
+			if (event.data?.type === "setZoom" && typeof event.data.zoom === "number") {
+				document.body.style.zoom = String(event.data.zoom);
 			}
 			if (event.data?.type === "searchOps") {
 				const query = (event.data.query ?? "").toLowerCase().trim();

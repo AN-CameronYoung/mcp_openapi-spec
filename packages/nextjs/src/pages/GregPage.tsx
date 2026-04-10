@@ -16,6 +16,7 @@ import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
 import { streamChat, listModels, fetchSuggestions } from "../lib/api";
 import type { EndpointCard, Personality } from "../lib/api";
+import GroupedApiSelect from "../components/GroupedApiSelect";
 import { cn } from "../lib/utils";
 import { useStore } from "../store/store";
 import type { ChatMsg } from "../store/store";
@@ -107,8 +108,7 @@ interface ChatMessageProps {
 }
 
 interface SwaggerPanelProps {
-  item: { method?: string; path?: string; api: string; name?: string };
-  type: "endpoints" | "schemas";
+  anchor: { api: string; method?: string; path?: string } | null;
   onClose: () => void;
 }
 
@@ -339,7 +339,7 @@ const InputBoxWrapper = ({ children }: InputBoxWrapperProps): JSX.Element => {
     <div
       onFocusCapture={() => setFocused(true)}
       onBlurCapture={() => setFocused(false)}
-      className="flex items-center gap-2 rounded-[0.625rem] px-2.5 py-2 transition-[border-color,background] duration-150"
+      className="flex flex-col rounded-[0.625rem] px-2.5 pt-2.5 pb-2 transition-[border-color,background] duration-150"
       style={{
         background: "var(--g-surface)",
         border: `1px solid ${focused ? "var(--g-accent)" : "var(--g-border)"}`,
@@ -1029,19 +1029,82 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, loadingGif }:
 // ---------------------------------------------------------------------------
 
 /**
- * Resizable side panel showing Swagger UI for the selected endpoint or schema.
- * Drag the left edge to resize; the panel width is persisted to localStorage.
+ * Resizable side panel showing Swagger UI with an API selector dropdown.
+ * Accepts an optional anchor (api + method/path) for navigating to a specific endpoint.
+ * Drag the left edge to resize; width is persisted to localStorage.
  */
-const SwaggerPanel = ({ item, type, onClose }: SwaggerPanelProps): JSX.Element => {
-  const theme = useStore((s) => s.theme);
+const SwaggerPanel = ({ anchor, onClose }: SwaggerPanelProps): JSX.Element => {
+  const { apis, theme } = useStore(useShallow((s) => ({ apis: s.apis, theme: s.theme })));
   const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+
   const initWidth = useMemo(() => {
     try { const v = parseInt(localStorage.getItem("greg-panel-width") ?? ""); return v > 200 ? v : 480; } catch { return 480; }
   }, []);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<HTMLDivElement>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const loadedApiRef = useRef<string>("");
   const searchQueryRef = useRef("");
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [zoom, setZoom] = useState(() => {
+    try { const v = parseFloat(localStorage.getItem("greg-panel-zoom") ?? ""); return v > 0 ? v : 0.8; } catch { return 0.8; }
+  });
+  const defaultApi = anchor?.api ?? apis[0]?.name ?? "";
+  const [selectedApi, setSelectedApi] = useState(defaultApi);
+
+  // When a new anchor arrives for a different API, switch to it
+  useEffect(() => {
+    if (anchor?.api && anchor.api !== selectedApi) setSelectedApi(anchor.api);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anchor?.api]);
+
+  // Build iframe src — reloads only when selectedApi or theme changes
+  const baseSrc = useMemo(() => {
+    const params = new URLSearchParams();
+    if (anchor?.method && anchor?.path && anchor.api === selectedApi) {
+      params.set("method", anchor.method);
+      params.set("path", anchor.path);
+    }
+    params.set("theme", isDark ? "dark" : "light");
+    params.set("zoom", String(zoom));
+    return selectedApi ? `/openapi/docs/${encodeURIComponent(selectedApi)}?${params}` : "";
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedApi, isDark]);
+
+  // Push zoom changes to iframe without reloading and persist
+  useEffect(() => {
+    iframeRef.current?.contentWindow?.postMessage({ type: "setZoom", zoom }, "*");
+    try { localStorage.setItem("greg-panel-zoom", String(zoom)); } catch {}
+  }, [zoom]);
+
+  // When anchor changes on the same API, postMessage to scroll instead of reloading
+  useEffect(() => {
+    if (!anchor?.method || !anchor?.path) return;
+    if (loadedApiRef.current === selectedApi && iframeRef.current?.contentWindow) {
+      iframeRef.current.contentWindow.postMessage(
+        { type: "scrollToEndpoint", method: anchor.method, path: anchor.path },
+        "*",
+      );
+    }
+  }, [anchor?.method, anchor?.path, selectedApi]);
+
+  // Keep search ref in sync and push to iframe
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+    iframeRef.current?.contentWindow?.postMessage({ type: "searchOps", query: searchQuery }, "*");
+  }, [searchQuery]);
+
+  // Clear search when API changes
+  useEffect(() => { setSearchQuery(""); }, [selectedApi]);
+
+  const onIframeLoad = useCallback(() => {
+    loadedApiRef.current = selectedApi;
+    if (searchQueryRef.current) {
+      iframeRef.current?.contentWindow?.postMessage({ type: "searchOps", query: searchQueryRef.current }, "*");
+    }
+  }, [selectedApi]);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -1050,17 +1113,13 @@ const SwaggerPanel = ({ item, type, onClose }: SwaggerPanelProps): JSX.Element =
     if (!container) return;
     const startX = e.clientX;
     const startW = container.offsetWidth;
-
-    // Show overlay to block iframe from eating events
     const overlay = document.createElement("div");
     overlay.style.cssText = "position:fixed;inset:0;z-index:9999;cursor:col-resize;";
     document.body.appendChild(overlay);
     if (handle) { handle.style.background = "var(--g-accent)"; handle.style.opacity = "1"; }
-
     const onMove = (ev: MouseEvent) => {
       const delta = startX - ev.clientX;
-      const next = Math.max(280, Math.min(window.innerWidth * 0.7, startW + delta));
-      container.style.width = next + "px";
+      container.style.width = Math.max(280, Math.min(window.innerWidth * 0.7, startW + delta)) + "px";
     };
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
@@ -1071,74 +1130,32 @@ const SwaggerPanel = ({ item, type, onClose }: SwaggerPanelProps): JSX.Element =
       if (handle) { handle.style.background = ""; handle.style.opacity = ""; }
       try { localStorage.setItem("greg-panel-width", String(container.offsetWidth)); } catch {}
     };
-
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
   }, []);
 
-  const isEp = type === "endpoints" && item.method && item.path;
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const loadedApiRef = useRef<string>("");
-
-  // Build iframe src — only changes when the API name or theme changes
-  const baseSrc = useMemo(() => {
-    const params = new URLSearchParams();
-    if (isEp) {
-      params.set("method", item.method!);
-      params.set("path", item.path!);
-    }
-    params.set("theme", isDark ? "dark" : "light");
-    return `/openapi/docs/${encodeURIComponent(item.api)}?${params}`;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.api, isDark]);
-
-  // When the item changes but we're on the same API, postMessage to scroll instead of reloading
-  useEffect(() => {
-    if (!isEp) return;
-    if (loadedApiRef.current === item.api && iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        { type: "scrollToEndpoint", method: item.method, path: item.path },
-        "*",
-      );
-    }
-  }, [item.method, item.path, item.api, isEp]);
-
-  // Keep search ref in sync and push query to iframe on change
-  useEffect(() => {
-    searchQueryRef.current = searchQuery;
-    iframeRef.current?.contentWindow?.postMessage({ type: "searchOps", query: searchQuery }, "*");
-  }, [searchQuery]);
-
-  // Clear search when API changes
-  useEffect(() => { setSearchQuery(""); }, [item.api]);
-
-  // Track which API the iframe has loaded; replay any active search
-  const onIframeLoad = useCallback(() => {
-    loadedApiRef.current = item.api;
-    if (searchQueryRef.current) {
-      iframeRef.current?.contentWindow?.postMessage({ type: "searchOps", query: searchQueryRef.current }, "*");
-    }
-  }, [item.api]);
-
   return (
     <div ref={containerRef} className="relative flex h-full shrink-0" style={{ width: initWidth }}>
       {/* Drag handle */}
-      <div
-        onMouseDown={onMouseDown}
-        className="flex items-center justify-center w-2 shrink-0 cursor-col-resize"
-      >
+      <div onMouseDown={onMouseDown} className="flex items-center justify-center w-2 shrink-0 cursor-col-resize">
         <div ref={handleRef} className="w-[0.1875rem] h-9 rounded-[0.125rem] opacity-50 bg-(--g-text-dim)" />
       </div>
 
       {/* Panel content */}
       <div className="flex flex-col flex-1 min-w-0">
         {/* Header */}
-        <div className="flex items-center gap-2 px-2.5 py-2 rounded-t-md border-b border-(--g-border) bg-(--g-surface)">
-          <span className="text-xs font-semibold uppercase tracking-[0.05em] text-(--g-text-dim) shrink-0">
-            {isEp ? "Endpoint" : "Schema"} — {item.api}
-          </span>
+        <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-t-md border-b border-(--g-border) bg-(--g-surface)">
+          <GroupedApiSelect
+            apis={apis}
+            value={selectedApi}
+            onChange={setSelectedApi}
+            height={28}
+            fontSize={12}
+            minWidth={120}
+            color="var(--g-text)"
+          />
           <span className="flex-1" />
           <div className="relative flex items-center">
             <span className="absolute left-1.5 text-(--g-text-dim) pointer-events-none">{Ic.search(11)}</span>
@@ -1147,33 +1164,49 @@ const SwaggerPanel = ({ item, type, onClose }: SwaggerPanelProps): JSX.Element =
               placeholder="Search…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-6 w-36 rounded border border-(--g-border) bg-(--g-surface) pl-6 pr-5 text-xs text-(--g-text) placeholder:text-(--g-text-dim) focus:border-(--g-accent) focus:outline-none"
+              className="h-6 w-32 rounded border border-(--g-border) bg-(--g-surface) pl-6 pr-5 text-xs text-(--g-text) placeholder:text-(--g-text-dim) focus:border-(--g-accent) focus:outline-none"
             />
             {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-1 text-(--g-text-dim) hover:text-(--g-text)"
-              >
+              <button onClick={() => setSearchQuery("")} className="absolute right-1 text-(--g-text-dim) hover:text-(--g-text)">
                 {Ic.x(10)}
               </button>
             )}
           </div>
+          {/* Zoom controls */}
+          <button onClick={() => setZoom((z) => Math.max(0.4, parseFloat((z - 0.1).toFixed(1))))} title="Zoom out" className="flex items-center justify-center w-5 h-5 rounded text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors">
+            <svg width={14} height={14} viewBox="0 0 16 16" fill="none">
+              <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.3" />
+              <path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              <path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button onClick={() => setZoom((z) => Math.min(1.5, parseFloat((z + 0.1).toFixed(1))))} title="Zoom in" className="flex items-center justify-center w-5 h-5 rounded text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors">
+            <svg width={14} height={14} viewBox="0 0 16 16" fill="none">
+              <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.3" />
+              <path d="M4.5 6.5h4M6.5 4.5v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              <path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+          </button>
           <Button variant="ghost" size="icon-xs" onClick={() => window.open(baseSrc, "_blank")} title="Open in new tab">
             {Ic.ext()}
-          </Button>
-          <Button variant="ghost" size="icon-xs" onClick={onClose}>
-            {Ic.x()}
           </Button>
         </div>
 
         {/* Swagger iframe */}
-        <iframe
-          ref={iframeRef}
-          src={baseSrc}
-          onLoad={onIframeLoad}
-          className="flex-1 w-full rounded-b-md border border-t-0 border-(--g-border) bg-(--g-surface)"
-          title={`${item.api} docs`}
-        />
+        {selectedApi ? (
+          <iframe
+            ref={iframeRef}
+            src={baseSrc}
+            onLoad={onIframeLoad}
+            className="flex-1 w-full rounded-b-md border border-t-0 border-(--g-border) bg-(--g-surface)"
+            title={`${selectedApi} docs`}
+          />
+        ) : (
+          <div className="flex flex-col flex-1 items-center justify-center gap-3 rounded-b-md border border-t-0 border-(--g-border) bg-(--g-surface) text-(--g-text-dim)">
+            <div className="flex">{Ic.doc(32)}</div>
+            <span className="text-sm">{apis.length > 0 ? "Select an api from the dropdown" : "no apis ingested yet"}</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1195,9 +1228,6 @@ const GregPage = (): JSX.Element => {
     updateLastAssistant,
     setPersonality,
     setChatLoading,
-    detailItem,
-    detailType,
-    setDetail,
     customGregPrompt,
     customExplainerPrompt,
     customProPrompt,
@@ -1220,9 +1250,6 @@ const GregPage = (): JSX.Element => {
     updateLastAssistant: s.updateLastAssistant,
     setPersonality: s.setPersonality,
     setChatLoading: s.setChatLoading,
-    detailItem: s.detailItem,
-    detailType: s.detailType,
-    setDetail: s.setDetail,
     customGregPrompt: s.customGregPrompt,
     customExplainerPrompt: s.customExplainerPrompt,
     customProPrompt: s.customProPrompt,
@@ -1249,11 +1276,23 @@ const GregPage = (): JSX.Element => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [debugMsgIdx, setDebugMsgIdx] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [personalityOpen, setPersonalityOpen] = useState(false);
+  const personalityRef = useRef<HTMLDivElement>(null);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelAnchor, setPanelAnchor] = useState<{ api: string; method?: string; path?: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => { listModels().then(setModels).catch(() => {}); }, []);
   useEffect(() => { fetchSuggestions().then(setSuggestions).catch(() => {}); }, []);
   useEffect(() => { setGreetingText(getGreeting(personality)); }, [personality]);
+  useEffect(() => {
+    if (!personalityOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (personalityRef.current && !personalityRef.current.contains(e.target as Node)) setPersonalityOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [personalityOpen]);
 
   const fetchGreetingGif = useCallback(() => {
     fetch("/api/greeting-gif").then((r) => r.json()).then((d) => setGreetingGif(d.url ?? null)).catch(() => {});
@@ -1269,7 +1308,10 @@ const GregPage = (): JSX.Element => {
     if (isGregLike) fetchGreetingGif();
   }, [isGregLike, newChat, fetchGreetingGif]);
 
-  const handleSelectEndpoint = useCallback((ep: EndpointCard) => setDetail(ep, "endpoints"), [setDetail]);
+  const handleSelectEndpoint = useCallback((ep: EndpointCard) => {
+    setPanelAnchor({ api: ep.api, method: ep.method, path: ep.path });
+    setPanelOpen(true);
+  }, []);
 
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1420,17 +1462,17 @@ const GregPage = (): JSX.Element => {
   };
 
   return (
-    <div className="flex h-[calc(100%-3.5rem)]">
-      {/* Chat history sidebar — full height */}
-      {sidebarOpen && (
-        <div className="flex flex-col w-[16.25rem] shrink-0 overflow-auto px-2.5 py-3 border-r border-(--g-border) bg-(--g-surface)">
+    <div className="flex h-[calc(100%-2.75rem)]">
+      {/* History sidebar — DOM-affecting flex child */}
+      <div
+        className="flex shrink-0 overflow-hidden border-r border-(--g-border) bg-(--g-surface) transition-[width] duration-200"
+        style={{ width: sidebarOpen ? "16.25rem" : "0" }}
+      >
+        <div className="flex flex-col w-[16.25rem] min-w-[16.25rem] h-full overflow-auto px-2.5 py-3">
           <div className="flex items-center mb-2.5">
             <span className="flex-1 text-[0.9375rem] font-semibold text-(--g-text)">History</span>
             <Button variant="ghost" size="icon-xs" onClick={handleNewChat} className="text-(--g-accent)" title="New chat">
               {Ic.plus(14)}
-            </Button>
-            <Button variant="ghost" size="icon-xs" onClick={() => setSidebarOpen(false)}>
-              {Ic.x(14)}
             </Button>
           </div>
           {chatHistory.length === 0 && (
@@ -1465,103 +1507,37 @@ const GregPage = (): JSX.Element => {
             );
           })}
         </div>
-      )}
+      </div>
 
-      {/* Right column */}
-      <div className="flex flex-col flex-1 min-w-0 px-6 py-5">
-        {/* Chat header */}
-        <div className="flex items-center gap-4 mb-5 shrink-0">
-          <div
-            className="flex items-center justify-center w-[2.625rem] h-[2.625rem] rounded-[0.625rem] shrink-0 transition-[background] duration-150"
-            style={{ background: PERSONALITY_COLOR[personality] }}
-          >
-            <svg width={26} height={26} viewBox="0 0 20 20" fill="none">
-              <circle cx="7" cy="8" r="1.4" fill="white"/>
-              <circle cx="13" cy="8" r="1.4" fill="white"/>
-              <path d="M6.5 13.5h7" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
-            </svg>
-          </div>
-          <span className="flex-1" />
+      {/* History toggle badge — fixed, slides with sidebar */}
+      <button
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        className="fixed z-20 flex items-center justify-center px-3 py-3 rounded-r-lg border border-l-0 border-(--g-border) bg-(--g-surface) shadow-sm hover:bg-(--g-surface-hover) -translate-y-1/2 transition-[left,color] duration-200"
+        style={{ top: "4.25rem", left: sidebarOpen ? "16.25rem" : "0", color: sidebarOpen ? "var(--g-accent)" : "var(--g-text-dim)" }}
+        title={sidebarOpen ? "Close history" : "Open history"}
+      >
+        {Ic.clock(18)}
+      </button>
 
-          {/* Personality selector */}
-          <div className="flex items-center h-9 overflow-hidden rounded-lg border border-(--g-border) bg-(--g-surface) text-sm">
-            {(["greg", "curt", "casual", "verbose"] as const satisfies Personality[]).map((p, i, arr) => (
-              <div
-                key={p}
-                onClick={() => setPersonality(p)}
-                className="flex items-center h-full px-3 cursor-pointer transition-all duration-150"
-                style={{
-                  color: personality === p ? PERSONALITY_COLOR[p] : "var(--g-text-dim)",
-                  background: personality === p
-                    ? `color-mix(in srgb, ${PERSONALITY_COLOR[p]} 10%, transparent)`
-                    : "transparent",
-                  fontWeight: personality === p ? 600 : 400,
-                  borderRight: i < arr.length - 1 ? "1px solid var(--g-border)" : "none",
-                }}
-              >
-                {p}
-              </div>
-            ))}
-          </div>
-
-          {/* Model picker */}
-          <select
-            value={selectedModel || ""}
-            onChange={(e) => {
-              const m = models.find((x) => x.id === e.target.value);
-              if (m) setModel(m.id, m.provider);
-            }}
-            className="h-9 px-2.5 rounded-lg border border-(--g-border) bg-(--g-surface) text-sm text-(--g-text-muted)"
-          >
-            <option value="">Default model</option>
-            {models.filter((m) => m.provider === "anthropic").length > 0 && (
-              <optgroup label="Anthropic">
-                {models.filter((m) => m.provider === "anthropic").map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </optgroup>
-            )}
-            {models.filter((m) => m.provider === "ollama").length > 0 && (
-              <optgroup label="Ollama">
-                {models.filter((m) => m.provider === "ollama").map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-
-          {/* Double-check toggle — disabled */}
-
-          {/* History */}
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            title="Chat history"
-            className={cn(
-              "flex items-center gap-[0.3125rem] px-2.5 py-1.5 rounded-lg cursor-pointer text-[0.6875rem] font-medium",
-              sidebarOpen
-                ? "border border-(--g-border-accent) bg-(--g-accent-dim) text-(--g-accent)"
-                : "border border-(--g-border) bg-(--g-surface) text-(--g-text-dim)",
-            )}
-          >
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
-            <span>History</span>
-          </button>
-
-          {/* Clear */}
-          <button
-            onClick={clearChat}
-            title="Clear chat"
-            className="flex items-center gap-[0.3125rem] px-2.5 py-1.5 rounded-lg cursor-pointer text-[0.6875rem] font-medium border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:border-red-500/50 transition-colors"
-          >
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-            <span>Clear</span>
-          </button>
-        </div>
-
+      {/* Main area: chat content + swagger panel */}
+      <div className="flex flex-1 min-w-0">
+        {/* Chat column */}
+        <div className="flex flex-col flex-1 min-w-0 px-6 pt-5 pb-5">
         {/* Messages + detail panel */}
         <div className="flex flex-1 gap-5 min-h-0">
           {/* Messages */}
           <div className="relative flex flex-col flex-1 min-w-0">
+            {/* Clear button */}
+            {chatMessages.length > 0 && (
+              <button
+                onClick={clearChat}
+                className="absolute top-0 right-0 z-10 flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+                title="Clear chat"
+              >
+                <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                Clear
+              </button>
+            )}
             <div ref={scrollContainerRef} onScroll={handleScroll} className="relative flex flex-col flex-1 gap-3 overflow-auto">
               <div className={cn("flex flex-col items-center gap-4 text-(--g-text-dim)", chatMessages.length === 0 ? "flex-1 justify-center" : "pt-6 pb-2")}>
                 <img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
@@ -1603,9 +1579,6 @@ const GregPage = (): JSX.Element => {
 
             {/* Input */}
             <div className="mt-3 shrink-0">
-              <div className="mb-1.5 px-0.5 text-[0.75rem] text-(--g-text-dim)">
-                {personality === "greg" ? "finds endpoints fast" : personality === "curt" ? "straight answers" : personality === "casual" ? "ok" : "explains how & why"}
-              </div>
               <InputBoxWrapper>
                 <textarea
                   rows={1}
@@ -1613,39 +1586,122 @@ const GregPage = (): JSX.Element => {
                   value={input}
                   onChange={(e) => { setInput(e.target.value); const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; }}
                   onKeyDown={handleKeyDown}
-                  className="flex-1 min-h-5 p-0 resize-none border-none bg-transparent outline-none font-[inherit] text-[0.8125rem] text-(--g-text) leading-[1.5]"
+                  className="w-full min-h-5 p-0 resize-none border-none bg-transparent outline-none font-[inherit] text-[0.8125rem] text-(--g-text) leading-[1.5] mb-1"
                 />
-                {chatLoading ? (
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => { abortRef.current?.abort(); abortRef.current = null; setChatLoading(false); updateLastAssistant((m) => ({ ...m, streaming: false })); saveChat(); }}
-                    className="bg-(--g-danger-muted) text-(--g-danger)"
+                {/* Bottom row: personality + model + send */}
+                <div className="flex items-center gap-1.5 pt-1.5" style={{ borderTop: "1px solid var(--g-border)" }}>
+                  {/* Personality dropup */}
+                  <div className="relative" ref={personalityRef}>
+                    <button
+                      onClick={() => setPersonalityOpen(!personalityOpen)}
+                      className="flex items-center gap-1.5 h-6 px-2 rounded text-[0.6875rem] font-medium transition-colors hover:bg-(--g-surface-hover)"
+                      style={{ color: PERSONALITY_COLOR[personality] }}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: PERSONALITY_COLOR[personality] }} />
+                      {personality}
+                      <svg width={8} height={8} viewBox="0 0 10 10" fill="none" className={cn("transition-transform duration-150", personalityOpen ? "rotate-180" : "rotate-0")}>
+                        <path d="M2 6.5l3-3 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                    {personalityOpen && (
+                      <div className="absolute bottom-full mb-1.5 left-0 z-50 min-w-[9rem] rounded-lg border border-(--g-border) bg-(--g-surface) shadow-lg overflow-hidden">
+                        {(["greg", "curt", "casual", "verbose"] as const satisfies Personality[]).map((p) => (
+                          <button
+                            key={p}
+                            onClick={() => { setPersonality(p); setPersonalityOpen(false); }}
+                            className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left transition-colors"
+                            style={{
+                              color: p === personality ? PERSONALITY_COLOR[p] : "var(--g-text-muted)",
+                              background: p === personality ? `color-mix(in srgb, ${PERSONALITY_COLOR[p]} 8%, transparent)` : "transparent",
+                            }}
+                            onMouseEnter={(e) => { if (p !== personality) (e.currentTarget as HTMLElement).style.background = "var(--g-surface-hover)"; }}
+                            onMouseLeave={(e) => { if (p !== personality) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: PERSONALITY_COLOR[p] }} />
+                            {p}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Model picker */}
+                  <select
+                    value={selectedModel || ""}
+                    onChange={(e) => {
+                      const m = models.find((x) => x.id === e.target.value);
+                      if (m) setModel(m.id, m.provider);
+                    }}
+                    className="h-6 px-1.5 rounded text-[0.6875rem] text-(--g-text-muted) bg-transparent border-none outline-none cursor-pointer hover:bg-(--g-surface-hover) transition-colors"
                   >
-                    <svg width={14} height={14} viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2" /></svg>
-                  </Button>
-                ) : (
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => handleSend()}
-                    className="bg-(--g-accent-muted) text-(--g-accent)"
+                    <option value="">Default model</option>
+                    {models.filter((m) => m.provider === "anthropic").length > 0 && (
+                      <optgroup label="Anthropic">
+                        {models.filter((m) => m.provider === "anthropic").map((m) => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {models.filter((m) => m.provider === "ollama").length > 0 && (
+                      <optgroup label="Ollama">
+                        {models.filter((m) => m.provider === "ollama").map((m) => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+
+                  <span className="flex-1" />
+
+                  {/* Docs toggle */}
+                  <button
+                    onClick={() => setPanelOpen(!panelOpen)}
+                    className="flex items-center gap-1 h-6 px-2 rounded text-[0.6875rem] font-medium transition-colors hover:bg-(--g-surface-hover)"
+                    style={{ color: panelOpen ? "var(--g-accent)" : "var(--g-text-dim)" }}
+                    title="Toggle API docs"
                   >
-                    {Ic.send(14)}
-                  </Button>
-                )}
+                    {Ic.doc(12)}
+                    <span>Docs</span>
+                  </button>
+
+                  {/* Send / Stop */}
+                  {chatLoading ? (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => { abortRef.current?.abort(); abortRef.current = null; setChatLoading(false); updateLastAssistant((m) => ({ ...m, streaming: false })); saveChat(); }}
+                      className="bg-(--g-danger-muted) text-(--g-danger)"
+                    >
+                      <svg width={14} height={14} viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2" /></svg>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => handleSend()}
+                      className="bg-(--g-accent-muted) text-(--g-accent)"
+                    >
+                      <span className="-rotate-90">{Ic.send(14)}</span>
+                    </Button>
+                  )}
+                </div>
               </InputBoxWrapper>
             </div>
           </div>
 
-          {/* Detail panel — Swagger iframe */}
-          {detailItem && (
-            <SwaggerPanel item={detailItem as never} type={detailType} onClose={() => setDetail(null)} />
-          )}
+        </div>
+        </div>
+
+        {/* Swagger panel — full height sibling outside padded column, slides in/out */}
+        <div
+          className="flex overflow-hidden transition-[max-width] duration-200 ease-in-out"
+          style={{ maxWidth: panelOpen ? "70vw" : 0 }}
+        >
+          <SwaggerPanel anchor={panelAnchor} onClose={() => { setPanelOpen(false); setPanelAnchor(null); }} />
         </div>
       </div>
 
-      {/* Debug panel — sibling to right column */}
+      {/* Debug panel — sibling to main area */}
       {debugMsgIdx !== null && (() => {
         const msg = chatMessages[debugMsgIdx];
         return msg ? <DebugPanel entries={msg.debug ?? []} {...(msg.model !== undefined && { model: msg.model })} onClose={() => setDebugMsgIdx(null)} /> : null;
