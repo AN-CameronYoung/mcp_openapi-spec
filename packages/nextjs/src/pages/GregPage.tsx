@@ -16,6 +16,7 @@ import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
 import { streamChat, listModels, fetchSuggestions } from "../lib/api";
 import type { EndpointCard, Personality } from "../lib/api";
+import ApiViewer from "../components/ApiViewer";
 import GroupedApiSelect from "../components/GroupedApiSelect";
 import { cn } from "../lib/utils";
 import { useStore } from "../store/store";
@@ -1034,8 +1035,7 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, loadingGif }:
  * Drag the left edge to resize; width is persisted to localStorage.
  */
 const SwaggerPanel = ({ anchor, onClose }: SwaggerPanelProps): JSX.Element => {
-  const { apis, theme } = useStore(useShallow((s) => ({ apis: s.apis, theme: s.theme })));
-  const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const { apis } = useStore(useShallow((s) => ({ apis: s.apis })));
 
   const initWidth = useMemo(() => {
     try { const v = parseInt(localStorage.getItem("greg-panel-width") ?? ""); return v > 200 ? v : 480; } catch { return 480; }
@@ -1043,9 +1043,6 @@ const SwaggerPanel = ({ anchor, onClose }: SwaggerPanelProps): JSX.Element => {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<HTMLDivElement>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const loadedApiRef = useRef<string>("");
-  const searchQueryRef = useRef("");
 
   const [searchQuery, setSearchQuery] = useState("");
   const [zoom, setZoom] = useState(() => {
@@ -1060,51 +1057,13 @@ const SwaggerPanel = ({ anchor, onClose }: SwaggerPanelProps): JSX.Element => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anchor?.api]);
 
-  // Build iframe src — reloads only when selectedApi or theme changes
-  const baseSrc = useMemo(() => {
-    const params = new URLSearchParams();
-    if (anchor?.method && anchor?.path && anchor.api === selectedApi) {
-      params.set("method", anchor.method);
-      params.set("path", anchor.path);
-    }
-    params.set("theme", isDark ? "dark" : "light");
-    params.set("zoom", String(zoom));
-    return selectedApi ? `/openapi/docs/${encodeURIComponent(selectedApi)}?${params}` : "";
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedApi, isDark]);
-
-  // Push zoom changes to iframe without reloading and persist
+  // Persist zoom
   useEffect(() => {
-    iframeRef.current?.contentWindow?.postMessage({ type: "setZoom", zoom }, "*");
     try { localStorage.setItem("greg-panel-zoom", String(zoom)); } catch {}
   }, [zoom]);
 
-  // When anchor changes on the same API, postMessage to scroll instead of reloading
-  useEffect(() => {
-    if (!anchor?.method || !anchor?.path) return;
-    if (loadedApiRef.current === selectedApi && iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        { type: "scrollToEndpoint", method: anchor.method, path: anchor.path },
-        "*",
-      );
-    }
-  }, [anchor?.method, anchor?.path, selectedApi]);
-
-  // Keep search ref in sync and push to iframe
-  useEffect(() => {
-    searchQueryRef.current = searchQuery;
-    iframeRef.current?.contentWindow?.postMessage({ type: "searchOps", query: searchQuery }, "*");
-  }, [searchQuery]);
-
   // Clear search when API changes
   useEffect(() => { setSearchQuery(""); }, [selectedApi]);
-
-  const onIframeLoad = useCallback(() => {
-    loadedApiRef.current = selectedApi;
-    if (searchQueryRef.current) {
-      iframeRef.current?.contentWindow?.postMessage({ type: "searchOps", query: searchQueryRef.current }, "*");
-    }
-  }, [selectedApi]);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -1187,20 +1146,21 @@ const SwaggerPanel = ({ anchor, onClose }: SwaggerPanelProps): JSX.Element => {
               <path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
             </svg>
           </button>
-          <Button variant="ghost" size="icon-xs" onClick={() => window.open(baseSrc, "_blank")} title="Open in new tab">
+          <Button variant="ghost" size="icon-xs" onClick={() => window.open(`/openapi/docs/${encodeURIComponent(selectedApi)}`, "_blank")} title="Open in new tab">
             {Ic.ext()}
           </Button>
         </div>
 
-        {/* Swagger iframe */}
+        {/* API Viewer — direct render, no iframe */}
         {selectedApi ? (
-          <iframe
-            ref={iframeRef}
-            src={baseSrc}
-            onLoad={onIframeLoad}
-            className="flex-1 w-full rounded-b-md border border-t-0 border-(--g-border) bg-(--g-surface)"
-            title={`${selectedApi} docs`}
-          />
+          <div className="flex-1 min-h-0 overflow-hidden rounded-b-md border border-t-0 border-(--g-border) bg-(--g-bg)">
+            <ApiViewer
+              apiName={selectedApi}
+              anchor={anchor?.api === selectedApi ? anchor : null}
+              searchQuery={searchQuery}
+              zoom={zoom}
+            />
+          </div>
         ) : (
           <div className="flex flex-col flex-1 items-center justify-center gap-3 rounded-b-md border border-t-0 border-(--g-border) bg-(--g-surface) text-(--g-text-dim)">
             <div className="flex">{Ic.doc(32)}</div>
