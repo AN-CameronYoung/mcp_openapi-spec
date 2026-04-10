@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
 import { useStore } from "../store/store";
+import ApiViewer from "../components/ApiViewer";
 import GroupedApiSelect from "../components/GroupedApiSelect";
 
 /**
@@ -14,37 +14,13 @@ import GroupedApiSelect from "../components/GroupedApiSelect";
  * and updates the iframe when the selected API or anchor changes.
  */
 const DocsPage = (): JSX.Element => {
-  const { apis, docsApi, docsAnchor, setDocsApi, theme } = useStore(
-    useShallow((s) => ({ apis: s.apis, docsApi: s.docsApi, docsAnchor: s.docsAnchor, setDocsApi: s.setDocsApi, theme: s.theme })),
+  const { apis, docsApi, docsAnchor, setDocsApi } = useStore(
+    useShallow((s) => ({ apis: s.apis, docsApi: s.docsApi, docsAnchor: s.docsAnchor, setDocsApi: s.setDocsApi })),
   );
-
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const iframeKeyRef = useRef(0);
 
   const selectedApi = docsApi || (apis.length > 0 ? apis[0]!.name : "");
   const apiInfo = apis.find((a) => a.name === selectedApi);
-
-  const resolvedTheme = theme === "system"
-    ? (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-    : theme;
-
-  // Pass method+path+theme as query params
-  const params = new URLSearchParams();
-  if (docsAnchor) {
-    params.set("method", docsAnchor.method);
-    params.set("path", docsAnchor.path);
-  }
-  params.set("theme", resolvedTheme);
-  const qs = `?${params}`;
-
-  const iframeSrc = selectedApi ? `/openapi/docs/${encodeURIComponent(selectedApi)}${qs}` : "";
-
-  // Force iframe reload when anchor changes by bumping the key
-  useEffect(() => {
-    if (docsAnchor) {
-      iframeKeyRef.current++;
-    }
-  }, [docsAnchor]);
+  const newTabHref = selectedApi ? `/openapi/docs/${encodeURIComponent(selectedApi)}` : "#";
 
   return (
     <div className="flex flex-col h-[calc(100%-2.75rem)] px-5 py-3.5">
@@ -69,7 +45,7 @@ const DocsPage = (): JSX.Element => {
           <span className="text-[0.9375rem] text-(--g-text-dim)">{apiInfo.endpoints} endpoints</span>
         )}
         <a
-          href={iframeSrc}
+          href={newTabHref}
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-1 ml-auto text-[0.9375rem] text-(--g-accent) no-underline"
@@ -97,15 +73,11 @@ const DocsPage = (): JSX.Element => {
         </div>
       )}
 
-      {/* Swagger iframe */}
+      {/* API Viewer — direct render, no iframe */}
       {selectedApi ? (
-        <iframe
-          key={`${selectedApi}-${qs}-${iframeKeyRef.current}`}
-          ref={iframeRef}
-          src={iframeSrc}
-          className="flex-1 w-full rounded-md border border-(--g-border) bg-(--g-surface)"
-          title={`${selectedApi} API docs`}
-        />
+        <div className="flex-1 min-h-0 overflow-hidden rounded-md border border-(--g-border) bg-(--g-bg)">
+          <ApiViewer apiName={selectedApi} anchor={docsAnchor} />
+        </div>
       ) : (
         <div className="flex flex-col flex-1 items-center justify-center gap-3.5 rounded-md border border-(--g-border) bg-(--g-surface)">
           <div className="flex text-(--g-text-dim)">{Ic.doc(38)}</div>
