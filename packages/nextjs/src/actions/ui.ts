@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import config from "@greg/shared/core/config";
-import { GREG_PROMPT, VERBOSE_PROMPT, CURT_PROMPT } from "@greg/shared/chat";
+import { GREG_PROMPT, VERBOSE_PROMPT, CURT_PROMPT, CASUAL_PROMPT } from "@greg/shared/chat";
 
 import { getRetriever } from "@/lib/retriever";
 
@@ -94,8 +94,8 @@ export const fetchSuggestions = async (): Promise<string[]> => {
 /**
  * Returns all built-in system prompt strings for the available personalities.
  */
-export const getPrompts = async (): Promise<{ greg: string; verbose: string; curt: string }> => {
-	return { greg: GREG_PROMPT, verbose: VERBOSE_PROMPT, curt: CURT_PROMPT };
+export const getPrompts = async (): Promise<{ greg: string; verbose: string; curt: string; casual: string }> => {
+	return { greg: GREG_PROMPT, verbose: VERBOSE_PROMPT, curt: CURT_PROMPT, casual: CASUAL_PROMPT };
 };
 
 // ---------------------------------------------------------------------------

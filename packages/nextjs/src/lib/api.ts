@@ -12,6 +12,8 @@ export { listModels, fetchSuggestions, generateTitle, getGreetingGif, getPrompts
 
 export type { SearchResult } from "@/lib/formatters";
 export type { ApiInfo } from "#types/store";
+import type { Personality } from "@greg/shared/chat";
+export type { Personality };
 
 export interface EndpointCard {
 	method: string;
@@ -53,7 +55,7 @@ export interface ChatSSEEvent {
 
 export async function* streamChat(
 	messages: ChatMessage[],
-	personality: "greg" | "verbose" | "curt",
+	personality: Personality,
 	opts?: { systemPrompt?: string; model?: string; provider?: string; doubleCheck?: boolean },
 	signal?: AbortSignal,
 ): AsyncGenerator<ChatSSEEvent> {

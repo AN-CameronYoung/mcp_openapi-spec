@@ -5,7 +5,7 @@ import { useShallow } from "zustand/react/shallow";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
 import python from "react-syntax-highlighter/dist/esm/languages/prism/python";
 import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
@@ -15,7 +15,7 @@ import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
 import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
 import { streamChat, listModels, fetchSuggestions } from "../lib/api";
-import type { EndpointCard } from "../lib/api";
+import type { EndpointCard, Personality } from "../lib/api";
 import { cn } from "../lib/utils";
 import { useStore } from "../store/store";
 import type { ChatMsg } from "../store/store";
@@ -50,7 +50,7 @@ interface CodeDropdownProps {
 
 interface StreamingTextProps {
   text: string;
-  personality?: "greg" | "verbose" | "curt";
+  personality?: Personality;
 }
 
 interface ApiPathCodeProps {
@@ -68,6 +68,7 @@ interface SectionDropdownProps {
   msgKey: number | string;
   langMap: Record<string, string>;
   defaultOpen: boolean;
+  isDark: boolean;
 }
 
 interface GregMarkdownProps {
@@ -137,16 +138,18 @@ const ANTHROPIC_PRICING: Record<string, [number, number]> = {
   "claude-3-opus": [15, 75],
 };
 
-const PERSONALITY_COLOR: Record<string, string> = {
+const PERSONALITY_COLOR: Record<Personality, string> = {
   greg: "var(--g-green)",
   verbose: "var(--g-method-put-text)",
   curt: "var(--g-text-dim)",
+  casual: "var(--g-method-patch)",
 };
 
-const BUBBLE_STYLES: Record<string, { bg: string; border: string }> = {
+const BUBBLE_STYLES: Record<Personality, { bg: string; border: string }> = {
   greg: { bg: "color-mix(in srgb, var(--g-green) 6%, transparent)", border: "color-mix(in srgb, var(--g-green) 20%, transparent)" },
   verbose: { bg: "color-mix(in srgb, var(--g-method-put) 6%, transparent)", border: "color-mix(in srgb, var(--g-method-put) 20%, transparent)" },
   curt: { bg: "color-mix(in srgb, var(--g-text-dim) 12%, transparent)", border: "color-mix(in srgb, var(--g-text-dim) 30%, transparent)" },
+  casual: { bg: "color-mix(in srgb, var(--g-method-patch) 6%, transparent)", border: "color-mix(in srgb, var(--g-method-patch) 20%, transparent)" },
 };
 
 const METHOD_RE = /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/\S*|$)/;
@@ -272,9 +275,10 @@ const isApiPath = (code: string): boolean => {
  *
  * @param personality - The active chat personality
  */
-const getGreeting = (personality: "greg" | "verbose" | "curt"): string => {
+const getGreeting = (personality: Personality): string => {
   if (personality === "verbose") return "Ready to explain your APIs in depth. What would you like to understand?";
   if (personality === "curt") return "What can I help you with?";
+  if (personality === "casual") return "ok";
   return GREG_GREETINGS[Math.floor(Math.random() * GREG_GREETINGS.length)]!;
 };
 
@@ -350,7 +354,9 @@ const InputBoxWrapper = ({ children }: InputBoxWrapperProps): JSX.Element => {
  * Collapsible code block with syntax highlighting and a copy button.
  */
 const CodeDropdown = ({ code, lang, lineCount, blockKey }: CodeDropdownProps): JSX.Element => {
-  const { open, toggle } = useStore(useShallow((s) => ({ open: !!s.openCodeBlocks[blockKey], toggle: s.toggleCodeBlock })));
+  const { open, toggle, theme } = useStore(useShallow((s) => ({ open: !!s.openCodeBlocks[blockKey], toggle: s.toggleCodeBlock, theme: s.theme })));
+  const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const syntaxStyle = isDark ? oneDark : oneLight;
 
   return (
     <div className="my-1.5">
@@ -370,7 +376,7 @@ const CodeDropdown = ({ code, lang, lineCount, blockKey }: CodeDropdownProps): J
       </div>
       {open && (
         <div className="mt-1">
-          <SyntaxHighlighter style={oneDark} language={lang} PreTag="div" customStyle={{ background: "var(--g-bg)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }}>
+          <SyntaxHighlighter style={syntaxStyle} language={lang} PreTag="div" customStyle={{ background: "var(--g-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }}>
             {code}
           </SyntaxHighlighter>
         </div>
@@ -460,18 +466,19 @@ const ApiPathCode = ({ code }: ApiPathCodeProps): JSX.Element => {
  * @param msgKey - Unique key for the message (for stable code block keys)
  * @param langMap - Map of language aliases to canonical language names
  */
-const mdComponents = (msgKey: number | string, langMap: Record<string, string>) => ({
+const mdComponents = (msgKey: number | string, langMap: Record<string, string>, isDark: boolean) => ({
   code({ className, children }: { className?: string; children?: React.ReactNode }) {
     const match = /language-(\w+)/.exec(String(className ?? ""));
     const code = String(children ?? "").replace(/\n$/, "");
     const DATA_LANGS = new Set(["json", "md", "markdown", "text"]);
+    const syntaxStyle = isDark ? oneDark : oneLight;
 
     if (match || code.includes("\n")) {
       const rawLang = match?.[1] ?? "text";
       const lang = langMap[rawLang] ?? rawLang;
       if (DATA_LANGS.has(lang)) {
         return (
-          <SyntaxHighlighter style={oneDark} language={lang === "md" || lang === "markdown" ? "text" : lang} PreTag="div" customStyle={{ background: "var(--g-bg)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto", margin: "6px 0" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }}>
+          <SyntaxHighlighter style={syntaxStyle} language={lang === "md" || lang === "markdown" ? "text" : lang} PreTag="div" customStyle={{ background: "var(--g-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto", margin: "6px 0" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }}>
             {code}
           </SyntaxHighlighter>
         );
@@ -483,7 +490,7 @@ const mdComponents = (msgKey: number | string, langMap: Record<string, string>) 
 
     if (isApiPath(code)) return <ApiPathCode code={code} />;
     return (
-      <code className="rounded bg-(--g-bg) py-px px-[0.3125rem] font-mono text-[0.9em] text-(--g-accent)">
+      <code className="rounded bg-(--g-bg) py-px px-[0.3125rem] font-mono text-[0.9em]" style={{ color: "var(--g-inline-code-text)" }}>
         {children as React.ReactNode}
       </code>
     );
@@ -517,10 +524,25 @@ const mdComponents = (msgKey: number | string, langMap: Record<string, string>) 
 // ---------------------------------------------------------------------------
 
 /**
+ * Returns true if children contain any block-level element (paragraph, list, etc.)
+ * indicating there is sub-content worth collapsing.
+ */
+const hasSubContent = (children: React.ReactNode): boolean => {
+  const BLOCK = new Set(["p", "ul", "ol", "blockquote", "pre", "table", "div"]);
+  const nodes = Array.isArray(children) ? children : [children];
+  return nodes.some((c) => c && typeof c === "object" && "type" in (c as React.ReactElement) && BLOCK.has((c as React.ReactElement).type as string));
+};
+
+/**
  * Collapsible list item — shows a summary line, expands to reveal full content on click.
+ * Renders as a plain list item when there is no block-level sub-content.
  */
 const LiDropdown = ({ children, index }: LiDropdownProps): JSX.Element => {
   const [open, setOpen] = useState(false);
+
+  if (!hasSubContent(children)) {
+    return <li className="list-decimal ml-[1.125rem] mb-0.5">{children as React.ReactNode}</li>;
+  }
 
   const text = (
     getTextFromChildren(children).split("\n")[0] ?? ""
@@ -556,8 +578,12 @@ const LiDropdown = ({ children, index }: LiDropdownProps): JSX.Element => {
 /**
  * Collapsible markdown section triggered by a heading line.
  */
-const SectionDropdown = ({ title, body, msgKey, langMap, defaultOpen }: SectionDropdownProps): JSX.Element => {
+const SectionDropdown = ({ title, body, msgKey, langMap, defaultOpen, isDark }: SectionDropdownProps): JSX.Element => {
   const [open, setOpen] = useState(defaultOpen);
+
+  if (!body.trim()) {
+    return <div className="mb-1.5"><span className="text-xl font-semibold text-(--g-text)">{title}</span></div>;
+  }
 
   const handleToggle = () => setOpen(!open);
 
@@ -575,7 +601,7 @@ const SectionDropdown = ({ title, body, msgKey, langMap, defaultOpen }: SectionD
       </button>
       {open && (
         <div className="pl-[1.125rem] text-sm">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap) as never}>{body}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap, isDark) as never}>{body}</ReactMarkdown>
         </div>
       )}
     </div>
@@ -591,6 +617,8 @@ const SectionDropdown = ({ title, body, msgKey, langMap, defaultOpen }: SectionD
  */
 const GregMarkdown = ({ text, msgKey }: GregMarkdownProps): JSX.Element => {
   const langMap: Record<string, string> = { ts: "typescript", js: "javascript", py: "python", sh: "bash", yml: "yaml" };
+  const theme = useStore((s) => s.theme);
+  const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
   // Split into sections by headings — only use dropdowns if 2+ headings
   // Replace code block content with spaces (preserving length) so # comments inside don't match as headings
@@ -619,17 +647,17 @@ const GregMarkdown = ({ text, msgKey }: GregMarkdownProps): JSX.Element => {
     return (
       <>
         {sections.preamble && (
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap) as never}>{sections.preamble}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap, isDark) as never}>{sections.preamble}</ReactMarkdown>
         )}
         {sections.items.map((s, i) => (
-          <SectionDropdown key={i} title={s.title} body={s.body} msgKey={msgKey} langMap={langMap} defaultOpen={false} />
+          <SectionDropdown key={i} title={s.title} body={s.body} msgKey={msgKey} langMap={langMap} defaultOpen={false} isDark={isDark} />
         ))}
       </>
     );
   }
 
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap) as never}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap, isDark) as never}>
       {text}
     </ReactMarkdown>
   );
@@ -1173,6 +1201,7 @@ const GregPage = (): JSX.Element => {
     customGregPrompt,
     customExplainerPrompt,
     customProPrompt,
+    customCasualPrompt,
     selectedModel,
     selectedProvider,
     setModel,
@@ -1197,6 +1226,7 @@ const GregPage = (): JSX.Element => {
     customGregPrompt: s.customGregPrompt,
     customExplainerPrompt: s.customExplainerPrompt,
     customProPrompt: s.customProPrompt,
+    customCasualPrompt: s.customCasualPrompt,
     selectedModel: s.selectedModel,
     selectedProvider: s.selectedProvider,
     setModel: s.setModel,
@@ -1216,7 +1246,7 @@ const GregPage = (): JSX.Element => {
   const [loadingGif, setLoadingGif] = useState<string | null>(null);
   const [greeting, setGreetingText] = useState<string>("");
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [debugMsgIdx, setDebugMsgIdx] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
@@ -1299,7 +1329,7 @@ const GregPage = (): JSX.Element => {
     const debugLog: Record<string, unknown>[] = [];
 
     try {
-      const customPrompt = personality === "greg" ? customGregPrompt : personality === "verbose" ? customExplainerPrompt : customProPrompt;
+      const customPrompt = personality === "greg" ? customGregPrompt : personality === "verbose" ? customExplainerPrompt : personality === "casual" ? customCasualPrompt : customProPrompt;
       const abort = new AbortController();
       abortRef.current = abort;
       for await (const event of streamChat(
@@ -1455,20 +1485,18 @@ const GregPage = (): JSX.Element => {
 
           {/* Personality selector */}
           <div className="flex items-center h-9 overflow-hidden rounded-lg border border-(--g-border) bg-(--g-surface) text-sm">
-            {(["greg", "curt", "verbose"] as const).map((p) => (
+            {(["greg", "curt", "casual", "verbose"] as const satisfies Personality[]).map((p, i, arr) => (
               <div
                 key={p}
                 onClick={() => setPersonality(p)}
                 className="flex items-center h-full px-3 cursor-pointer transition-all duration-150"
                 style={{
-                  color: personality === p
-                    ? (p === "greg" ? "var(--g-green)" : p === "verbose" ? "var(--g-method-put-text)" : "var(--g-accent)")
-                    : "var(--g-text-dim)",
+                  color: personality === p ? PERSONALITY_COLOR[p] : "var(--g-text-dim)",
                   background: personality === p
-                    ? (p === "greg" ? "var(--g-green-muted)" : p === "verbose" ? "var(--g-method-put-bg)" : "var(--g-accent-muted)")
+                    ? `color-mix(in srgb, ${PERSONALITY_COLOR[p]} 10%, transparent)`
                     : "transparent",
                   fontWeight: personality === p ? 600 : 400,
-                  borderRight: p !== "verbose" ? "1px solid var(--g-border)" : "none",
+                  borderRight: i < arr.length - 1 ? "1px solid var(--g-border)" : "none",
                 }}
               >
                 {p}
@@ -1576,7 +1604,7 @@ const GregPage = (): JSX.Element => {
             {/* Input */}
             <div className="mt-3 shrink-0">
               <div className="mb-1.5 px-0.5 text-[0.75rem] text-(--g-text-dim)">
-                {personality === "greg" ? "finds endpoints fast" : personality === "curt" ? "straight answers" : "explains how & why"}
+                {personality === "greg" ? "finds endpoints fast" : personality === "curt" ? "straight answers" : personality === "casual" ? "ok" : "explains how & why"}
               </div>
               <InputBoxWrapper>
                 <textarea
