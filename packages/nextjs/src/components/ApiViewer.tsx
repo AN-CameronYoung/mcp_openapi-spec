@@ -174,6 +174,23 @@ const SchemaNode = ({
 
 	// Array
 	if (schema.type === "array" && schema.items) {
+		const itemsIsComplex =
+			schema.items.type === "object" ||
+			!!schema.items.properties ||
+			!!schema.items.allOf?.length ||
+			!!schema.items.oneOf?.length ||
+			!!schema.items.anyOf?.length;
+		if (itemsIsComplex) {
+			return (
+				<div className="text-xs font-mono">
+					<span className="text-(--g-text-dim)">array&lt;</span>
+					<div className="ml-3 border-l border-(--g-border) pl-2 mt-0.5 mb-0.5">
+						<SchemaNode schema={schema.items} depth={depth + 1} />
+					</div>
+					<span className="text-(--g-text-dim)">&gt;</span>
+				</div>
+			);
+		}
 		return (
 			<span className="text-xs">
 				<span className="text-(--g-text-dim) font-mono">array&lt;</span>
@@ -255,7 +272,7 @@ const ParamTable = ({ params }: { params: OAParameter[] }): JSX.Element => (
 				</span>
 				<code className="font-mono font-medium text-(--g-text) shrink-0">{p.name}</code>
 				{p.required && (
-					<span className="text-[0.625rem] text-(--g-danger) shrink-0">req</span>
+					<span className="text-[0.625rem] text-(--g-danger) shrink-0">required</span>
 				)}
 				{p.schema?.type && (
 					<span className="font-mono text-(--g-text-dim) text-[0.6875rem] shrink-0">
@@ -271,31 +288,77 @@ const ParamTable = ({ params }: { params: OAParameter[] }): JSX.Element => (
 );
 
 // ---------------------------------------------------------------------------
+// schemaToJson — generate a representative JSON value from a schema node
+// ---------------------------------------------------------------------------
+
+function schemaToJson(schema: OASchemaNode, depth = 0): unknown {
+	if (depth > 5) return "...";
+	if (schema.example !== undefined) return schema.example;
+
+	const variants = schema.allOf ?? schema.oneOf ?? schema.anyOf;
+	if (variants?.length) return schemaToJson(variants[0]!, depth);
+
+	if (schema.type === "object" || schema.properties) {
+		const obj: Record<string, unknown> = {};
+		for (const [key, val] of Object.entries(schema.properties ?? {})) {
+			obj[key] = schemaToJson(val, depth + 1);
+		}
+		return obj;
+	}
+
+	if (schema.type === "array") {
+		return schema.items ? [schemaToJson(schema.items, depth + 1)] : [];
+	}
+
+	if (schema.enum?.length) return schema.enum[0];
+
+	switch (schema.type) {
+		case "string":
+			return schema.format === "date-time"
+				? "2024-01-01T00:00:00Z"
+				: schema.format === "uuid"
+					? "00000000-0000-0000-0000-000000000000"
+					: schema.description?.toLowerCase().includes("id") ? "string_id" : "string";
+		case "integer":
+		case "number":
+			return 0;
+		case "boolean":
+			return true;
+		default:
+			return null;
+	}
+}
+
+// ---------------------------------------------------------------------------
 // RequestBodySection
 // ---------------------------------------------------------------------------
 
 const RequestBodySection = ({ body }: { body: OARequestBody }): JSX.Element => {
-	const [showExample, setShowExample] = useState(false);
+	const preview = body.example ?? (body.schema ? schemaToJson(body.schema) : null);
+	const [open, setOpen] = useState(true);
 	return (
-		<div className="space-y-2">
-			<div className="flex items-center gap-2">
-				<span className="text-[0.625rem] font-mono px-1.5 py-0.5 rounded bg-(--g-surface) text-(--g-text-dim)">
+		<div className="rounded border border-(--g-border) overflow-hidden">
+			<button
+				onClick={() => setOpen((v) => !v)}
+				className="flex items-center gap-2 w-full px-2.5 py-1.5 text-xs text-left hover:bg-(--g-surface-hover) cursor-pointer"
+			>
+				<span className="font-mono px-1.5 py-0.5 rounded bg-(--g-surface) text-(--g-text-dim) text-[0.625rem]">
 					{body.contentType}
 				</span>
 				{body.required && (
 					<span className="text-[0.625rem] text-(--g-danger)">required</span>
 				)}
-			</div>
-			{body.schema && <SchemaNode schema={body.schema} />}
-			{body.example != null && (
-				<div>
-					<button
-						onClick={() => setShowExample((v) => !v)}
-						className="text-[0.625rem] text-(--g-accent) hover:underline"
-					>
-						{showExample ? "Hide" : "Show"} example
-					</button>
-					{showExample && <ExampleBlock example={body.example} />}
+				<span className={cn("flex text-(--g-text-dim) shrink-0 transition-transform duration-150 ml-auto", open ? "rotate-180" : "")}>
+					<svg width={8} height={8} viewBox="0 0 10 10" fill="none">
+						<path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+					</svg>
+				</span>
+			</button>
+			{open && preview != null && (
+				<div className="px-2.5 pb-2.5 pt-1 border-t border-(--g-border)">
+					<div className="overflow-y-auto max-h-[calc(20*1.375rem)] rounded">
+						<ExampleBlock example={preview} />
+					</div>
 				</div>
 			)}
 		</div>
@@ -315,7 +378,9 @@ function statusColor(code: string): string {
 }
 
 const ResponsesSection = ({ responses }: { responses: OAResponse[] }): JSX.Element => {
-	const [open, setOpen] = useState<Set<string>>(new Set());
+	const [open, setOpen] = useState<Set<string>>(
+		() => new Set(responses.filter((r) => r.schema != null || r.example != null).map((r) => r.statusCode)),
+	);
 
 	const toggle = (code: string): void =>
 		setOpen((prev) => {
@@ -354,9 +419,15 @@ const ResponsesSection = ({ responses }: { responses: OAResponse[] }): JSX.Eleme
 							)}
 						</button>
 						{isOpen && (
-							<div className="px-2.5 pb-2.5 pt-1 border-t border-(--g-border) space-y-2">
-								{r.schema && <SchemaNode schema={r.schema} />}
-								{r.example != null && <ExampleBlock example={r.example} />}
+							<div className="px-2.5 pb-2.5 pt-1 border-t border-(--g-border)">
+								{(() => {
+									const preview = r.example ?? (r.schema ? schemaToJson(r.schema) : null);
+									return preview != null ? (
+										<div className="overflow-y-auto max-h-[calc(20*1.375rem)] rounded">
+											<ExampleBlock example={preview} />
+										</div>
+									) : null;
+								})()}
 							</div>
 						)}
 					</div>
