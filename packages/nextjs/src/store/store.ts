@@ -22,6 +22,7 @@ export interface ChatMsg {
 	verificationText?: string;
 	verificationStreaming?: boolean;
 	debug?: Record<string, unknown>[];
+	compactedTokens?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +313,7 @@ export const useStore = create<AppState>()((set) => ({
 			// Read persisted values
 			const theme = (localStorage.getItem("greg-theme") as ThemePref) ?? "system";
 			const pv = localStorage.getItem("greg-personality");
-			const PERSONALITIES: Personality[] = ["greg", "verbose", "curt", "casual"];
+			const PERSONALITIES: Personality[] = ["greg", "explanatory", "curt", "casual"];
 			const personality = (pv !== null && (PERSONALITIES as string[]).includes(pv))
 				? pv
 				: localStorage.getItem("greg-mode") === "false" ? "curt" : "greg";

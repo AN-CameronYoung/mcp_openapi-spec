@@ -46,7 +46,11 @@ const EpCard = ({ method, path, api, description, warnings, compact, onClick }: 
         <code
           className={cn("flex-1 font-mono font-[inherit] truncate text-foreground", compact ? "text-[0.6875rem]" : "text-xs")}
         >
-          {path}
+          {path.split(/(\{[^}]+\})/).map((seg, i) =>
+            seg.startsWith("{") && seg.endsWith("}") ? (
+              <span key={i} style={{ color: "var(--g-green)" }}>{seg}</span>
+            ) : seg
+          )}
         </code>
         <Badge variant="api">
           {api}

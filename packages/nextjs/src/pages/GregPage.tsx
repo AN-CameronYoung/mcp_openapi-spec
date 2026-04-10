@@ -1,6 +1,8 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useMemo, memo, useCallback } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, memo, useCallback } from "react";
+import { useGroupRef } from "react-resizable-panels";
+import type { Layout } from "react-resizable-panels";
 import { useShallow } from "zustand/react/shallow";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -14,7 +16,7 @@ import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
 
 import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
-import { streamChat, listModels, fetchSuggestions } from "../lib/api";
+import { streamChat, listModels, fetchSuggestions, generateFollowUpSuggestions, getEndpoint } from "../lib/api";
 import type { EndpointCard, Personality } from "../lib/api";
 import GroupedApiSelect from "../components/GroupedApiSelect";
 import { cn } from "../lib/utils";
@@ -22,6 +24,7 @@ import { useStore } from "../store/store";
 import type { ChatMsg } from "../store/store";
 import EpCard from "../components/EpCard";
 import { Button } from "../components/ui/button";
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "../components/ui/resizable";
 
 SyntaxHighlighter.registerLanguage("typescript", typescript);
 SyntaxHighlighter.registerLanguage("javascript", typescript);
@@ -85,6 +88,7 @@ interface EndpointDropdownProps {
 interface DebugPanelProps {
   entries: Record<string, unknown>[];
   model?: string;
+  compactedTokens?: number;
   onClose: () => void;
 }
 
@@ -140,15 +144,15 @@ const ANTHROPIC_PRICING: Record<string, [number, number]> = {
 
 const PERSONALITY_COLOR: Record<Personality, string> = {
   greg: "var(--g-green)",
-  verbose: "var(--g-method-put-text)",
-  curt: "var(--g-text-dim)",
+  explanatory: "var(--g-method-put-text)",
+  curt: "var(--g-method-post)",
   casual: "var(--g-method-patch)",
 };
 
 const BUBBLE_STYLES: Record<Personality, { bg: string; border: string }> = {
   greg: { bg: "color-mix(in srgb, var(--g-green) 6%, transparent)", border: "color-mix(in srgb, var(--g-green) 20%, transparent)" },
-  verbose: { bg: "color-mix(in srgb, var(--g-method-put) 6%, transparent)", border: "color-mix(in srgb, var(--g-method-put) 20%, transparent)" },
-  curt: { bg: "color-mix(in srgb, var(--g-text-dim) 12%, transparent)", border: "color-mix(in srgb, var(--g-text-dim) 30%, transparent)" },
+  explanatory: { bg: "color-mix(in srgb, var(--g-method-put) 6%, transparent)", border: "color-mix(in srgb, var(--g-method-put) 20%, transparent)" },
+  curt: { bg: "color-mix(in srgb, var(--g-method-post) 6%, transparent)", border: "color-mix(in srgb, var(--g-method-post) 20%, transparent)" },
   casual: { bg: "color-mix(in srgb, var(--g-method-patch) 6%, transparent)", border: "color-mix(in srgb, var(--g-method-patch) 20%, transparent)" },
 };
 
@@ -276,7 +280,7 @@ const isApiPath = (code: string): boolean => {
  * @param personality - The active chat personality
  */
 const getGreeting = (personality: Personality): string => {
-  if (personality === "verbose") return "Ready to explain your APIs in depth. What would you like to understand?";
+  if (personality === "explanatory") return "Ready to explain your APIs in depth. What would you like to understand?";
   if (personality === "curt") return "What can I help you with?";
   if (personality === "casual") return "ok";
   return GREG_GREETINGS[Math.floor(Math.random() * GREG_GREETINGS.length)]!;
@@ -329,6 +333,92 @@ const CopyBtn = ({ text }: CopyBtnProps): JSX.Element => {
   );
 };
 
+const ENDPOINT_RE = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\/[^\s\n`'")\]]+)/g;
+
+const stripCodeBlocks = (text: string): string =>
+  text
+    .replace(/```[\s\S]*?```/g, (block) => {
+      // Preserve any API endpoint references found inside the block
+      const endpoints = [...block.matchAll(ENDPOINT_RE)].map((m) => `\`${m[1]} ${m[2]}\``);
+      return endpoints.length > 0 ? `(${endpoints.join(", ")})` : "";
+    })
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+/**
+ * Token counter with color-coded context health, an info popover, and a compact button at red.
+ */
+const TokenCounter = ({ chatMessages, provider, onCompact }: { chatMessages: ChatMsg[]; provider?: string; onCompact: () => void }): JSX.Element | null => {
+  const [showInfo, setShowInfo] = useState(false);
+  const msgsWithUsage = chatMessages.filter((m) => m.role === "assistant" && m.usage);
+  if (chatMessages.length === 0) return null;
+
+  const isOllama = provider === "ollama";
+  const warnAt = isOllama ? 60_000 : 100_000;
+  const redAt  = isOllama ? 100_000 : 150_000;
+
+  // Use API-reported usage data as source of truth; fall back to text estimate for messages without it
+  const totalIn  = msgsWithUsage.reduce((s, m) => s + (m.usage?.input ?? 0), 0);
+  const totalOut = msgsWithUsage.reduce((s, m) => s + (m.usage?.output ?? 0), 0);
+  const total = msgsWithUsage.length > 0
+    ? totalIn + totalOut
+    : chatMessages.reduce((s, m) => s + Math.ceil(m.text.length / 4), 0);
+  const isRed  = total >= redAt;
+  // Lerp from yellow (#CA8A04) to red (#DC2626) between warnAt and redAt
+  const lerpColor = (): string => {
+    if (total < warnAt) return "var(--g-text-dim)";
+    const t = Math.min(1, (total - warnAt) / (redAt - warnAt));
+    // yellow: [202, 138, 4]  red: [220, 38, 38]
+    const r = Math.round(202 + (220 - 202) * t);
+    const g = Math.round(138 + (38  - 138) * t);
+    const b = Math.round(4   + (38  - 4)   * t);
+    return `rgb(${r},${g},${b})`;
+  };
+  const color  = lerpColor();
+  const fmt    = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
+
+  return (
+    <div className="relative flex items-center gap-1">
+      <span className="font-mono text-[0.625rem] tabular-nums" style={{ color }}>
+        {fmt}
+      </span>
+      <button
+        onMouseEnter={() => setShowInfo(true)}
+        onMouseLeave={() => setShowInfo(false)}
+        className="flex items-center justify-center w-3.5 h-3.5 rounded-full text-[0.5625rem] font-bold border cursor-default select-none leading-none"
+        style={{ color: "var(--g-text-dim)", borderColor: "var(--g-border-hover)" }}
+      >
+        i
+      </button>
+      {isRed && (
+        <button
+          onClick={onCompact}
+          className="flex items-center gap-0.5 h-[1.125rem] px-1.5 rounded text-[0.5625rem] font-medium border cursor-pointer transition-colors hover:bg-(--g-danger-muted)"
+          style={{ color: "var(--g-danger)", borderColor: "color-mix(in srgb, var(--g-danger) 30%, transparent)" }}
+          title="Remove code blocks and endpoint cards from chat history to free up context"
+        >
+          compact
+        </button>
+      )}
+      {showInfo && (
+        <div className="absolute bottom-full left-0 mb-2 w-56 rounded-lg border border-(--g-border-hover) bg-(--g-surface) shadow-lg p-3 z-50 text-[0.6875rem] leading-[1.55] text-(--g-text-muted)">
+          <div className="font-semibold text-(--g-text) mb-1.5">Context window usage</div>
+          <p className="mb-1.5">
+            <span className="font-mono text-(--g-text)">{totalIn.toLocaleString()}</span> in &nbsp;·&nbsp; <span className="font-mono text-(--g-text)">{totalOut.toLocaleString()}</span> out
+          </p>
+          <p className="mb-2">As the conversation grows the model receives the full history every turn. Once the context fills, responses become less reliable — earlier instructions get ignored and the model loses track of prior details.</p>
+          <div className="flex flex-col gap-0.5 border-t border-(--g-border) pt-1.5">
+            <span style={{ color: "var(--g-text-dim)" }}>● Gray — healthy</span>
+            <span style={{ color: "#CA8A04" }}>● Yellow — getting full, consider a new chat ({warnAt / 1000}k+)</span>
+            <span style={{ color: "var(--g-danger)" }}>● Red — degradation likely ({redAt / 1000}k+)</span>
+          </div>
+          <p className="mt-1.5 text-[0.625rem] text-(--g-text-dim)">{isOllama ? "Thresholds adjusted for local models." : "Thresholds for Claude models."}</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
 /**
  * Styled container for the chat input area; border colour changes on focus and is tinted by the active personality.
  */
@@ -374,13 +464,18 @@ const CodeDropdown = ({ code, lang, lineCount, blockKey }: CodeDropdownProps): J
         </button>
         <CopyBtn text={code} />
       </div>
-      {open && (
-        <div className="mt-1">
-          <SyntaxHighlighter style={syntaxStyle} language={lang} PreTag="div" customStyle={{ background: "var(--g-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }}>
-            {code}
-          </SyntaxHighlighter>
+      <div
+        className="grid transition-[grid-template-rows] duration-200 ease-out"
+        style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          <div className="mt-1">
+            <SyntaxHighlighter showLineNumbers style={syntaxStyle} language={lang} PreTag="div" customStyle={{ background: "var(--g-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }} lineNumberStyle={{ color: "color-mix(in srgb, var(--g-text-dim) 60%, transparent)", minWidth: "2em", paddingRight: "1em", userSelect: "none", fontStyle: "normal" }}>
+              {code}
+            </SyntaxHighlighter>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 };
@@ -476,14 +571,29 @@ const mdComponents = (msgKey: number | string, langMap: Record<string, string>, 
     if (match || code.includes("\n")) {
       const rawLang = match?.[1] ?? "text";
       const lang = langMap[rawLang] ?? rawLang;
-      if (DATA_LANGS.has(lang)) {
+      const trimmed = code.trimStart();
+      const looksLikeJson = !match && (trimmed.startsWith("{") || trimmed.startsWith("["));
+      if (DATA_LANGS.has(lang) || looksLikeJson) {
+        const renderLang = looksLikeJson ? "json" : (lang === "md" || lang === "markdown" ? "text" : lang);
         return (
-          <SyntaxHighlighter style={syntaxStyle} language={lang === "md" || lang === "markdown" ? "text" : lang} PreTag="div" customStyle={{ background: "var(--g-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto", margin: "6px 0" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }}>
+          <SyntaxHighlighter style={syntaxStyle} language={renderLang} PreTag="div" customStyle={{ background: "var(--g-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto", margin: "6px 0" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }}>
             {code}
           </SyntaxHighlighter>
         );
       }
       const lineCount = code.split("\n").length;
+      if (lineCount <= 30) {
+        return (
+          <div className="relative my-1.5 group">
+            <div className="absolute top-1.5 right-1.5 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+              <CopyBtn text={code} />
+            </div>
+            <SyntaxHighlighter showLineNumbers style={syntaxStyle} language={lang} PreTag="div" customStyle={{ background: "var(--g-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }} lineNumberStyle={{ color: "color-mix(in srgb, var(--g-text-dim) 60%, transparent)", minWidth: "2em", paddingRight: "1em", userSelect: "none", fontStyle: "normal" }}>
+              {code}
+            </SyntaxHighlighter>
+          </div>
+        );
+      }
       const key = `msg-${msgKey}-${stableKey(code)}`;
       return <CodeDropdown code={code} lang={lang} lineCount={lineCount} blockKey={key} />;
     }
@@ -690,21 +800,26 @@ const EndpointDropdown = ({ endpoints, onSelect }: EndpointDropdownProps): JSX.E
           </svg>
         </span>
       </button>
-      {open && (
-        <div className="flex flex-col gap-[0.1875rem] mt-1 max-h-[18.75rem] overflow-auto">
-          {endpoints.sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).map((ep, j) => (
-            <EpCard
-              key={j}
-              method={ep.method}
-              path={ep.path}
-              api={ep.api}
-              description={ep.description}
-              {... (ep.warnings !== undefined && { warnings: ep.warnings })}
-              onClick={() => onSelect(ep)}
-            />
-          ))}
+      <div
+        className="grid transition-[grid-template-rows] duration-200 ease-out"
+        style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          <div className="flex flex-col gap-[0.1875rem] mt-1 max-h-[18.75rem] overflow-auto">
+            {endpoints.sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).map((ep, j) => (
+              <EpCard
+                key={j}
+                method={ep.method}
+                path={ep.path}
+                api={ep.api}
+                description={ep.description}
+                {... (ep.warnings !== undefined && { warnings: ep.warnings })}
+                onClick={() => onSelect(ep)}
+              />
+            ))}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 };
@@ -820,10 +935,11 @@ const DebugPanelEntries = ({ entries }: DebugPanelEntriesProps): JSX.Element => 
 /**
  * Side panel showing the full debug trace for a completed assistant message.
  */
-const DebugPanel = ({ entries, model, onClose }: DebugPanelProps): JSX.Element => {
+const DebugPanel = ({ entries, model, compactedTokens, onClose }: DebugPanelProps): JSX.Element => {
+
   const rounds = entries.filter((e) => (e as { event: string }).event === "round");
-  const lastRound = rounds[rounds.length - 1] as { totalInput?: number; totalOutput?: number } | undefined;
-  const primaryTokens = lastRound ? ((lastRound.totalInput ?? 0) + (lastRound.totalOutput ?? 0)) : 0;
+  const lastRound = rounds[rounds.length - 1] as { totalInput?: number; totalOutput?: number; inputTokens?: number; outputTokens?: number } | undefined;
+  const primaryTokens = lastRound ? ((lastRound.totalInput ?? lastRound.inputTokens ?? 0) + (lastRound.totalOutput ?? lastRound.outputTokens ?? 0)) : 0;
   const toolCallCount = entries.filter((e) => (e as { event: string }).event === "tool_call").length;
 
   // Verification tokens
@@ -843,51 +959,56 @@ const DebugPanel = ({ entries, model, onClose }: DebugPanelProps): JSX.Element =
   const cost = totalCostNum > 0 ? totalCostNum.toFixed(Math.max(2, 6 - Math.floor(Math.log10(totalCostNum)))) : primaryCost;
 
   return (
-    <div className="flex flex-col w-[18.75rem] min-h-0 overflow-hidden shrink-0 border-l border-(--g-border) bg-(--g-surface)">
+    <div className="flex flex-col h-full min-w-0 overflow-hidden border-l border-(--g-border) bg-(--g-surface)">
       {/* Header */}
-      <div className="flex items-center shrink-0 px-3.5 py-2.5 border-b border-(--g-border) bg-(--g-bg)">
-        <span className="flex-1 text-xs font-medium text-(--g-text-muted)">Debug trace</span>
-        <span className={cn(debugEntry, "mr-2 text-(--g-text-dim)")}>{entries.length} events</span>
-        <Button variant="ghost" size="icon-xs" onClick={onClose}>{Ic.x(12)}</Button>
-      </div>
+        <div className="flex items-center shrink-0 px-3.5 py-2.5 border-b border-(--g-border) bg-(--g-bg)">
+          <span className="flex-1 text-xs font-medium text-(--g-text-muted)">Debug trace</span>
+          <span className={cn(debugEntry, "mr-2 text-(--g-text-dim)")}>{entries.length} events</span>
+          <Button variant="ghost" size="icon-xs" onClick={onClose}>{Ic.x(12)}</Button>
+        </div>
 
-      {/* Scroll area */}
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-2.5">
-        {entries.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center text-xs text-(--g-text-dim)">
-            No debug data yet
+        {/* Scroll area */}
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-2.5">
+          {entries.length === 0 ? (
+            <div className="flex flex-1 items-center justify-center text-xs text-(--g-text-dim)">
+              No debug data yet
+            </div>
+          ) : (
+            <DebugPanelEntries entries={entries} />
+          )}
+        </div>
+
+        {/* Token bar */}
+        <div className="flex flex-col gap-1 shrink-0 px-3 py-[0.4375rem] border-t border-(--g-border) bg-(--g-bg)">
+          <div className="flex gap-3.5">
+            <span className={cn(debugEntry, "text-(--g-text-dim)")}>
+              primary <span className="text-(--g-text-muted)">{primaryTokens.toLocaleString()}</span>
+            </span>
+            {verifyTokens > 0 && (
+              <span className={cn(debugEntry, "text-(--g-text-dim)")}>
+                double check <span className="text-(--g-green)">{verifyTokens.toLocaleString()}</span>
+              </span>
+            )}
+            <span className={cn(debugEntry, "text-(--g-text-dim)")}>
+              <span className="text-(--g-text-muted)">{toolCallCount}</span> tools
+            </span>
+            {compactedTokens && compactedTokens > 0 ? (
+              <span className={cn(debugEntry, "text-(--g-method-patch-text)")}>
+                compacted: {compactedTokens.toLocaleString()}
+              </span>
+            ) : null}
           </div>
-        ) : (
-          <DebugPanelEntries entries={entries} />
-        )}
-      </div>
-
-      {/* Token bar */}
-      <div className="flex flex-col gap-1 shrink-0 px-3 py-[0.4375rem] border-t border-(--g-border) bg-(--g-bg)">
-        <div className="flex gap-3.5">
-          <span className={cn(debugEntry, "text-(--g-text-dim)")}>
-            primary <span className="text-(--g-text-muted)">{primaryTokens.toLocaleString()}</span>
-          </span>
-          {verifyTokens > 0 && (
-            <span className={cn(debugEntry, "text-(--g-text-dim)")}>
-              double check <span className="text-(--g-green)">{verifyTokens.toLocaleString()}</span>
+          <div className="flex gap-3.5">
+            <span className={cn(debugEntry, "font-semibold text-(--g-text)")}>
+              total {grandTotal.toLocaleString()} tokens
             </span>
-          )}
-          <span className={cn(debugEntry, "text-(--g-text-dim)")}>
-            <span className="text-(--g-text-muted)">{toolCallCount}</span> tools
-          </span>
+            {cost && (
+              <span className={cn(debugEntry, "text-(--g-text-dim)")}>
+                ${cost}
+              </span>
+            )}
+          </div>
         </div>
-        <div className="flex gap-3.5">
-          <span className={cn(debugEntry, "font-semibold text-(--g-text)")}>
-            total {grandTotal.toLocaleString()} tokens
-          </span>
-          {cost && (
-            <span className={cn(debugEntry, "text-(--g-text-dim)")}>
-              ${cost}
-            </span>
-          )}
-        </div>
-      </div>
     </div>
   );
 };
@@ -993,7 +1114,7 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, loadingGif }:
           </div>
         )}
         <div
-          className={`px-3.5 py-3 text-sm leading-[1.6] ${msg.role === "user" ? "rounded-[12px_12px_2px_12px]" : "rounded-[0.625rem]"}`}
+          className={`px-3.5 ${msg.role === "user" ? "py-3 rounded-[12px_12px_2px_12px]" : "py-2 rounded-[0.625rem]"} text-[0.8125rem] leading-[1.6]`}
           style={{
             background: msg.role === "user" ? "var(--g-user-bg)" : bubbleStyle.bg,
             border: `1px solid ${msg.role === "user" ? "var(--g-border-accent)" : bubbleStyle.border}`,
@@ -1029,20 +1150,14 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, loadingGif }:
 // ---------------------------------------------------------------------------
 
 /**
- * Resizable side panel showing Swagger UI with an API selector dropdown.
+ * Side panel showing Swagger UI with an API selector dropdown.
  * Accepts an optional anchor (api + method/path) for navigating to a specific endpoint.
- * Drag the left edge to resize; width is persisted to localStorage.
+ * Sizing is handled externally by ResizablePanelGroup.
  */
 const SwaggerPanel = ({ anchor, onClose }: SwaggerPanelProps): JSX.Element => {
   const { apis, theme } = useStore(useShallow((s) => ({ apis: s.apis, theme: s.theme })));
-  const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
-  const initWidth = useMemo(() => {
-    try { const v = parseInt(localStorage.getItem("greg-panel-width") ?? ""); return v > 200 ? v : 480; } catch { return 480; }
-  }, []);
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const handleRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const loadedApiRef = useRef<string>("");
   const searchQueryRef = useRef("");
@@ -1106,45 +1221,8 @@ const SwaggerPanel = ({ anchor, onClose }: SwaggerPanelProps): JSX.Element => {
     }
   }, [selectedApi]);
 
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    const container = containerRef.current;
-    const handle = handleRef.current;
-    if (!container) return;
-    const startX = e.clientX;
-    const startW = container.offsetWidth;
-    const overlay = document.createElement("div");
-    overlay.style.cssText = "position:fixed;inset:0;z-index:9999;cursor:col-resize;";
-    document.body.appendChild(overlay);
-    if (handle) { handle.style.background = "var(--g-accent)"; handle.style.opacity = "1"; }
-    const onMove = (ev: MouseEvent) => {
-      const delta = startX - ev.clientX;
-      container.style.width = Math.max(280, Math.min(window.innerWidth * 0.7, startW + delta)) + "px";
-    };
-    const onUp = () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      overlay.remove();
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      if (handle) { handle.style.background = ""; handle.style.opacity = ""; }
-      try { localStorage.setItem("greg-panel-width", String(container.offsetWidth)); } catch {}
-    };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }, []);
-
   return (
-    <div ref={containerRef} className="relative flex h-full shrink-0" style={{ width: initWidth }}>
-      {/* Drag handle */}
-      <div onMouseDown={onMouseDown} className="flex items-center justify-center w-2 shrink-0 cursor-col-resize">
-        <div ref={handleRef} className="w-[0.1875rem] h-9 rounded-[0.125rem] opacity-50 bg-(--g-text-dim)" />
-      </div>
-
-      {/* Panel content */}
-      <div className="flex flex-col flex-1 min-w-0">
+    <div className="flex flex-col h-full min-w-0">
         {/* Header */}
         <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-t-md border-b border-(--g-border) bg-(--g-surface)">
           <GroupedApiSelect
@@ -1207,7 +1285,6 @@ const SwaggerPanel = ({ anchor, onClose }: SwaggerPanelProps): JSX.Element => {
             <span className="text-sm">{apis.length > 0 ? "Select an api from the dropdown" : "no apis ingested yet"}</span>
           </div>
         )}
-      </div>
     </div>
   );
 };
@@ -1242,6 +1319,7 @@ const GregPage = (): JSX.Element => {
     saveChat,
     setDoubleCheck,
     clearChat,
+    setChatMessages,
   } = useStore(useShallow((s) => ({
     chatMessages: s.chatMessages,
     personality: s.personality,
@@ -1264,7 +1342,19 @@ const GregPage = (): JSX.Element => {
     saveChat: s.saveChat,
     setDoubleCheck: s.setDoubleCheck,
     clearChat: s.clearChat,
+    setChatMessages: s.setChatMessages,
   })));
+
+  const handleCompact = useCallback(() => {
+    const compacted = chatMessages.map((m) => ({
+      role: m.role,
+      text: stripCodeBlocks(m.text),
+      ...(m.personality !== undefined && { personality: m.personality }),
+      ...(m.model !== undefined && { model: m.model }),
+      ...(m.usage !== undefined && { usage: m.usage }),
+    })) as ChatMsg[];
+    setChatMessages(compacted);
+  }, [chatMessages, setChatMessages]);
 
   const doubleCheck = false; // disabled
   const isGregLike = personality === "greg";
@@ -1276,6 +1366,17 @@ const GregPage = (): JSX.Element => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [debugMsgIdx, setDebugMsgIdx] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [followUpSuggestions, setFollowUpSuggestions] = useState<string[]>([]);
+  const [generatingFollowUps, setGeneratingFollowUps] = useState(false);
+  const [autoCompact, setAutoCompact] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem("greg-auto-compact");
+      if (saved !== null) return saved !== "false";
+    } catch {}
+    return true;
+  });
+  const autoCompactRef = useRef(autoCompact);
+  autoCompactRef.current = autoCompact;
   const [personalityOpen, setPersonalityOpen] = useState(false);
   const personalityRef = useRef<HTMLDivElement>(null);
   const [panelOpen, setPanelOpen] = useState(true);
@@ -1285,6 +1386,16 @@ const GregPage = (): JSX.Element => {
   useEffect(() => { listModels().then(setModels).catch(() => {}); }, []);
   useEffect(() => { fetchSuggestions().then(setSuggestions).catch(() => {}); }, []);
   useEffect(() => { setGreetingText(getGreeting(personality)); }, [personality]);
+  useEffect(() => { try { localStorage.setItem("greg-auto-compact", String(autoCompact)); } catch {} }, [autoCompact]);
+  // If provider is ollama and the user has never explicitly set a preference, default auto-compact ON
+  useEffect(() => {
+    try {
+      if (selectedProvider === "ollama" && localStorage.getItem("greg-auto-compact") === null) {
+        setAutoCompact(true);
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProvider]);
   useEffect(() => {
     if (!personalityOpen) return;
     const handler = (e: MouseEvent) => {
@@ -1293,6 +1404,26 @@ const GregPage = (): JSX.Element => {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [personalityOpen]);
+
+  // Resizable panel groups — persistent sizing via useLayoutEffect (before first paint)
+  const innerGroupRef = useGroupRef();
+  const outerGroupRef = useGroupRef();
+  useLayoutEffect(() => {
+    try {
+      const inner = localStorage.getItem("rp-greg-inner");
+      if (inner && innerGroupRef.current) innerGroupRef.current.setLayout(JSON.parse(inner) as Layout);
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Re-apply outer layout whenever the debug panel mounts (conditional rendering resets the group)
+  useLayoutEffect(() => {
+    if (debugMsgIdx === null) return;
+    try {
+      const outer = localStorage.getItem("rp-greg-outer");
+      if (outer && outerGroupRef.current) outerGroupRef.current.setLayout(JSON.parse(outer) as Layout);
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugMsgIdx !== null]);
 
   const fetchGreetingGif = useCallback(() => {
     fetch("/api/greeting-gif").then((r) => r.json()).then((d) => setGreetingGif(d.url ?? null)).catch(() => {});
@@ -1349,6 +1480,8 @@ const GregPage = (): JSX.Element => {
 
     setInput("");
     setUserScrolled(false);
+    setFollowUpSuggestions([]);
+    setGeneratingFollowUps(false);
     setLoadingGif(null);
     addChatMessage({ role: "user", text, personality });
     addChatMessage({ role: "assistant", text: "", streaming: true, ...(selectedModel && { model: selectedModel }), personality });
@@ -1371,7 +1504,7 @@ const GregPage = (): JSX.Element => {
     const debugLog: Record<string, unknown>[] = [];
 
     try {
-      const customPrompt = personality === "greg" ? customGregPrompt : personality === "verbose" ? customExplainerPrompt : personality === "casual" ? customCasualPrompt : customProPrompt;
+      const customPrompt = personality === "greg" ? customGregPrompt : personality === "explanatory" ? customExplainerPrompt : personality === "casual" ? customCasualPrompt : customProPrompt;
       const abort = new AbortController();
       abortRef.current = abort;
       for await (const event of streamChat(
@@ -1437,19 +1570,57 @@ const GregPage = (): JSX.Element => {
 
     abortRef.current = null;
     const dedupedEndpoints = [...endpointMap.values()];
+
+    // Scan response text for inline routes (e.g. `POST /s/{siteId}/rest/wlanconf`) not already returned by tools
+    const INLINE_ROUTE_RE = /\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/[^\s`'")\]\n]+)/g;
+    const seenKeys = new Set(dedupedEndpoints.map((e) => `${e.method}:${e.path}`));
+    const routesToLookup: Array<{ method: string; path: string }> = [];
+    let rm: RegExpExecArray | null;
+    while ((rm = INLINE_ROUTE_RE.exec(accumulated)) !== null) {
+      const key = `${rm[1]}:${rm[2]}`;
+      if (!seenKeys.has(key)) { seenKeys.add(key); routesToLookup.push({ method: rm[1]!, path: rm[2]! }); }
+    }
+    const lookedUp: EndpointCard[] = routesToLookup.length > 0
+      ? (await Promise.all(routesToLookup.map((r) => getEndpoint(r.method, r.path).catch(() => null))))
+          .filter(Boolean)
+          .map((r) => ({ method: r!.method, path: r!.path, api: r!.api, description: r!.description, score: r!.score, full_text: r!.full_text, response_schema: r!.response_schema, ...(r!.warnings ? { warnings: r!.warnings } : {}) }))
+      : [];
+    const allEndpoints = [...dedupedEndpoints, ...lookedUp];
+
     updateLastAssistant((m) => ({
       ...m,
       streaming: false,
       verificationStreaming: false,
-      ...(dedupedEndpoints.length > 0 ? { endpoints: dedupedEndpoints } : {}),
+      ...(allEndpoints.length > 0 ? { endpoints: allEndpoints } : {}),
       ...(doneModel !== undefined && { model: doneModel }),
       ...(doneUsage !== undefined && { usage: doneUsage }),
       ...(doneVerificationUsage !== undefined && { verificationUsage: doneVerificationUsage }),
       ...(verificationText ? { verificationText } : {}),
       ...(debugLog.length > 0 ? { debug: debugLog } : {}),
     }));
+
+    // Auto-compact: strip code blocks from the just-finished assistant message if the toggle is on
+    if (autoCompactRef.current) {
+      updateLastAssistant((m) => {
+        const stripped = stripCodeBlocks(m.text);
+        if (stripped === m.text) return m;
+        return {
+          ...m,
+          text: stripped,
+          compactedTokens: Math.ceil(stripped.length / 4),
+        };
+      });
+    }
+
     saveChat();
     setChatLoading(false);
+    if (accumulated) {
+      setGeneratingFollowUps(true);
+      generateFollowUpSuggestions(text, accumulated, {
+        ...(selectedModel ? { model: selectedModel } : {}),
+        ...(selectedProvider ? { provider: selectedProvider } : {}),
+      }).then((s) => { setFollowUpSuggestions(s); setGeneratingFollowUps(false); }).catch(() => { setGeneratingFollowUps(false); });
+    }
   };
 
   const handleSuggestion = (q: string): void => { handleSend(q); };
@@ -1470,21 +1641,21 @@ const GregPage = (): JSX.Element => {
       >
         <div className="flex flex-col w-[16.25rem] min-w-[16.25rem] h-full overflow-auto px-2.5 py-3">
           <div className="flex items-center mb-2.5">
-            <span className="flex-1 text-[0.9375rem] font-semibold text-(--g-text)">History</span>
+            <span className="flex-1 text-[0.75rem] font-semibold text-(--g-text)">History</span>
             <Button variant="ghost" size="icon-xs" onClick={handleNewChat} className="text-(--g-accent)" title="New chat">
               {Ic.plus(14)}
             </Button>
           </div>
           {chatHistory.length === 0 && (
-            <span className="text-[0.8125rem] text-(--g-text-dim)">No chats yet</span>
+            <span className="text-[0.6875rem] text-(--g-text-dim)">No chats yet</span>
           )}
           {chatHistory.map((chat) => {
             const isActive = chat.id === useStore.getState().activeChatId;
             return (
               <div
                 key={chat.id}
-                onClick={() => loadChat(chat.id)}
-                className="flex items-center gap-1.5 mb-0.5 px-2 py-1.5 rounded-md cursor-pointer transition-colors duration-100"
+                onClick={() => { loadChat(chat.id); setFollowUpSuggestions([]); }}
+                className="flex items-center gap-1.5 mb-0.5 px-2 py-1 rounded-md cursor-pointer transition-colors duration-100"
                 style={{
                   background: isActive ? "var(--g-surface-active)" : "transparent",
                   borderLeft: isActive ? "2px solid var(--g-accent)" : "2px solid transparent",
@@ -1492,7 +1663,7 @@ const GregPage = (): JSX.Element => {
                 onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "var(--g-surface-hover)"; }}
                 onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
               >
-                <span className="flex-1 truncate text-[0.8125rem] text-(--g-text)">
+                <span className="flex-1 truncate text-[0.6875rem] text-(--g-text)">
                   {chat.title}
                 </span>
                 <Button
@@ -1519,10 +1690,14 @@ const GregPage = (): JSX.Element => {
         {Ic.clock(18)}
       </button>
 
-      {/* Main area: chat content + swagger panel */}
-      <div className="flex flex-1 min-w-0">
+      {/* Main area: chat + swagger + debug — all resizable */}
+      <ResizablePanelGroup groupRef={outerGroupRef} onLayoutChanged={(l) => { try { localStorage.setItem("rp-greg-outer", JSON.stringify(l)); } catch {} }} className="flex flex-1 min-w-0">
+        {/* Inner group: chat + swagger */}
+        <ResizablePanel id="main" minSize={20}>
+          <ResizablePanelGroup groupRef={innerGroupRef} onLayoutChanged={(l) => { try { localStorage.setItem("rp-greg-inner", JSON.stringify(l)); } catch {} }}>
+            <ResizablePanel id="chat" defaultSize={75} minSize={20}>
         {/* Chat column */}
-        <div className="flex flex-col flex-1 min-w-0 px-6 pt-5 pb-5">
+        <div className="flex flex-col h-full min-w-0 px-6 pt-5 pb-5">
         {/* Messages + detail panel */}
         <div className="flex flex-1 gap-5 min-h-0">
           {/* Messages */}
@@ -1530,8 +1705,9 @@ const GregPage = (): JSX.Element => {
             {/* Clear button */}
             {chatMessages.length > 0 && (
               <button
-                onClick={clearChat}
-                className="absolute top-0 right-0 z-10 flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+                onClick={() => { clearChat(); setFollowUpSuggestions([]); }}
+                className="absolute top-0 right-0 z-10 flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs text-red-400 hover:text-red-300 transition-colors"
+                style={{ background: "var(--g-bg)" }}
                 title="Clear chat"
               >
                 <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
@@ -1541,7 +1717,7 @@ const GregPage = (): JSX.Element => {
             <div ref={scrollContainerRef} onScroll={handleScroll} className="relative flex flex-col flex-1 gap-3 overflow-auto">
               <div className={cn("flex flex-col items-center gap-4 text-(--g-text-dim)", chatMessages.length === 0 ? "flex-1 justify-center" : "pt-6 pb-2")}>
                 <img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
-                <span className="text-2xl">
+                <span className="text-lg">
                   {greeting}
                 </span>
                 {suggestions.length > 0 && chatMessages.length === 0 && (
@@ -1561,6 +1737,22 @@ const GregPage = (): JSX.Element => {
               {chatMessages.map((msg, i) => (
                 <ChatMessage key={i} msg={msg} i={i} onSelectEndpoint={handleSelectEndpoint} onShowDebug={setDebugMsgIdx} loadingGif={msg.streaming ? loadingGif : null} />
               ))}
+              {generatingFollowUps && followUpSuggestions.length === 0 && (
+                <span className="mt-1 ml-0.5 text-[0.6875rem] text-(--g-text-dim) animate-pulse">generating follow-ups…</span>
+              )}
+              {followUpSuggestions.length > 0 && (
+                <div className="flex flex-col gap-1.5 mt-1 ml-0.5">
+                  {followUpSuggestions.map((s, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleSuggestion(s)}
+                      className="self-start px-3 py-1 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.75rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div ref={messagesEndRef} />
             </div>
 
@@ -1582,7 +1774,7 @@ const GregPage = (): JSX.Element => {
               <InputBoxWrapper>
                 <textarea
                   rows={1}
-                  placeholder={isGregLike ? "talk to greg..." : "Search API documentation..."}
+                  placeholder={isGregLike ? "talk to greg..." : chatMessages.length > 0 ? "Reply..." : "How can I help?"}
                   value={input}
                   onChange={(e) => { setInput(e.target.value); const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; }}
                   onKeyDown={handleKeyDown}
@@ -1605,7 +1797,7 @@ const GregPage = (): JSX.Element => {
                     </button>
                     {personalityOpen && (
                       <div className="absolute bottom-full mb-1.5 left-0 z-50 min-w-[9rem] rounded-lg border border-(--g-border) bg-(--g-surface) shadow-lg overflow-hidden">
-                        {(["greg", "curt", "casual", "verbose"] as const satisfies Personality[]).map((p) => (
+                        {(["greg", "curt", "casual", "explanatory"] as const satisfies Personality[]).map((p) => (
                           <button
                             key={p}
                             onClick={() => { setPersonality(p); setPersonalityOpen(false); }}
@@ -1650,8 +1842,23 @@ const GregPage = (): JSX.Element => {
                       </optgroup>
                     )}
                   </select>
+                  <TokenCounter chatMessages={chatMessages} provider={selectedProvider} onCompact={handleCompact} />
 
                   <span className="flex-1" />
+
+                  {/* Auto-compact toggle */}
+                  <button
+                    onClick={() => setAutoCompact((v) => !v)}
+                    className="flex items-center gap-1 h-6 px-2 rounded text-[0.6875rem] font-medium transition-colors hover:bg-(--g-surface-hover)"
+                    style={{ color: autoCompact ? "var(--g-green)" : "var(--g-text-dim)" }}
+                    title={autoCompact ? "Auto-compact on: code blocks stripped after each response" : "Auto-compact off: full responses retained"}
+                  >
+                    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/>
+                      <line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/>
+                    </svg>
+                    <span>Auto-compact</span>
+                  </button>
 
                   {/* Docs toggle */}
                   <button
@@ -1691,21 +1898,34 @@ const GregPage = (): JSX.Element => {
 
         </div>
         </div>
+            </ResizablePanel>
 
-        {/* Swagger panel — full height sibling outside padded column, slides in/out */}
-        <div
-          className="flex overflow-hidden transition-[max-width] duration-200 ease-in-out"
-          style={{ maxWidth: panelOpen ? "70vw" : 0 }}
-        >
-          <SwaggerPanel anchor={panelAnchor} onClose={() => { setPanelOpen(false); setPanelAnchor(null); }} />
-        </div>
-      </div>
+            {/* Swagger panel */}
+            {panelOpen && (
+              <>
+                <ResizableHandle withHandle />
+                <ResizablePanel id="swagger" minSize={10} defaultSize={25} className="transition-[flex] duration-200 ease-in-out">
+                  <SwaggerPanel anchor={panelAnchor} onClose={() => { setPanelOpen(false); setPanelAnchor(null); }} />
+                </ResizablePanel>
+              </>
+            )}
+          </ResizablePanelGroup>
+        </ResizablePanel>
 
-      {/* Debug panel — sibling to main area */}
-      {debugMsgIdx !== null && (() => {
-        const msg = chatMessages[debugMsgIdx];
-        return msg ? <DebugPanel entries={msg.debug ?? []} {...(msg.model !== undefined && { model: msg.model })} onClose={() => setDebugMsgIdx(null)} /> : null;
-      })()}
+        {/* Debug panel */}
+        {debugMsgIdx !== null && (() => {
+          const msg = chatMessages[debugMsgIdx];
+          if (!msg) return null;
+          return (
+            <>
+              <ResizableHandle withHandle />
+              <ResizablePanel id="debug" minSize={8} defaultSize={10} className="transition-[flex] duration-200 ease-in-out">
+                <DebugPanel entries={msg.debug ?? []} {...(msg.model !== undefined && { model: msg.model })} {...(msg.compactedTokens ? { compactedTokens: msg.compactedTokens } : {})} onClose={() => setDebugMsgIdx(null)} />
+              </ResizablePanel>
+            </>
+          );
+        })()}
+      </ResizablePanelGroup>
     </div>
   );
 };
