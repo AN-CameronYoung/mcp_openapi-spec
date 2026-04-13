@@ -22,6 +22,7 @@ import remarkGfm from "remark-gfm";
 import { METHOD_COLORS } from "@/lib/constants";
 import { useStore } from "@/store/store";
 import { cn } from "@/lib/utils";
+import MermaidDiagram from "./MermaidDiagram";
 
 SyntaxHighlighter.registerLanguage("typescript", typescript);
 SyntaxHighlighter.registerLanguage("javascript", typescript);
@@ -312,6 +313,7 @@ const Markdown = ({ children, className }: { children: string; className?: strin
 			const code = String(kids ?? "").replace(/\n$/, "");
 			if (match || code.includes("\n")) {
 				const rawLang = match?.[1] ?? "text";
+				if (rawLang === "mermaid") return <MermaidDiagram code={code} isDark={isDark} />;
 				const lang = LANG_ALIASES[rawLang] ?? rawLang;
 				return (
 					<SyntaxHighlighter
@@ -330,7 +332,7 @@ const Markdown = ({ children, className }: { children: string; className?: strin
 		pre({ children: kids }: { children?: React.ReactNode }) {
 			return <>{kids}</>;
 		},
-	}), [syntaxStyle]);
+	}), [syntaxStyle, isDark]);
 
 	return (
 		<div className={cn("leading-relaxed", MD_CLASSES, className)}>
@@ -878,11 +880,11 @@ const ApiViewer = ({
 		setExpandedTags((prev) => new Set([...prev, group.tag]));
 		setExpandedOps((prev) => new Set([...prev, key]));
 
-		// Scroll after DOM updates
-		requestAnimationFrame(() => {
+		// Two-frame delay: first RAF yields to React's commit, second ensures layout is ready
+		requestAnimationFrame(() => requestAnimationFrame(() => {
 			const el = document.getElementById(`op-${CSS.escape(key)}`);
 			el?.scrollIntoView({ behavior: "smooth", block: "start" });
-		});
+		}));
 	// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [anchor?.method, anchor?.path, groups]);
 

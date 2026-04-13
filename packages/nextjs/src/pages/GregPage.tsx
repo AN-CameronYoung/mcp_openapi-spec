@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useLayoutEffect, memo, useCallback } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect, memo, useCallback, useMemo } from "react";
 import { useGroupRef } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
 import { useShallow } from "zustand/react/shallow";
@@ -16,18 +16,21 @@ import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
 
 import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
-import { streamChat, listModels, fetchSuggestions, generateFollowUpSuggestions, getEndpoint } from "../lib/api";
+import { streamChat, listModels, fetchSuggestions, generateFollowUpSuggestions, analyzeQuickActionRelevance, getEndpoint } from "../lib/api";
 import type { EndpointCard, Personality } from "../lib/api";
+import { stripRoutes } from "../actions/suggestions";
 import ApiViewer from "../components/ApiViewer";
 import GroupedApiSelect from "../components/GroupedApiSelect";
+import MermaidDiagram from "../components/MermaidDiagram";
 import { cn } from "../lib/utils";
-import { useStore } from "../store/store";
+import { useStore, pageFromHash, chatIdFromHash } from "../store/store";
 import type { ChatMsg } from "../store/store";
 import EpCard from "../components/EpCard";
 import { Button } from "../components/ui/button";
 import { usePanelRef } from "react-resizable-panels";
 
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "../components/ui/resizable";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
 SyntaxHighlighter.registerLanguage("typescript", typescript);
 SyntaxHighlighter.registerLanguage("javascript", typescript);
@@ -39,6 +42,10 @@ SyntaxHighlighter.registerLanguage("yaml", yaml);
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+type ChatListItem =
+  | { kind: "message"; msg: ChatMsg; msgIndex: number }
+  | { kind: "boundary" };
 
 interface CopyBtnProps {
   text: string;
@@ -92,6 +99,7 @@ interface DebugPanelProps {
   entries: Record<string, unknown>[];
   model?: string;
   compactedTokens?: number;
+  compactedHistory?: Array<{ role: string; content: string }>;
   onClose: () => void;
 }
 
@@ -111,6 +119,8 @@ interface ChatMessageProps {
   i: number;
   onSelectEndpoint: (ep: EndpointCard) => void;
   onShowDebug: (idx: number) => void;
+  onRetry: (idx: number) => void;
+  onQuickAction: (msgIdx: number, action: "diagram" | "code", diagramType?: string) => void;
   loadingGif?: string | null;
 }
 
@@ -151,14 +161,14 @@ const ANTHROPIC_PRICING: Record<string, [number, number]> = {
 const PERSONALITY_COLOR: Record<Personality, string> = {
   greg: "var(--g-green)",
   explanatory: "var(--g-method-put-text)",
-  curt: "var(--g-method-post)",
+  quick: "var(--g-method-post)",
   casual: "var(--g-method-patch)",
 };
 
 const BUBBLE_STYLES: Record<Personality, { bg: string; border: string }> = {
   greg: { bg: "color-mix(in srgb, var(--g-green) 6%, transparent)", border: "color-mix(in srgb, var(--g-green) 20%, transparent)" },
   explanatory: { bg: "color-mix(in srgb, var(--g-method-put) 6%, transparent)", border: "color-mix(in srgb, var(--g-method-put) 20%, transparent)" },
-  curt: { bg: "color-mix(in srgb, var(--g-method-post) 6%, transparent)", border: "color-mix(in srgb, var(--g-method-post) 20%, transparent)" },
+  quick: { bg: "color-mix(in srgb, var(--g-method-post) 6%, transparent)", border: "color-mix(in srgb, var(--g-method-post) 20%, transparent)" },
   casual: { bg: "color-mix(in srgb, var(--g-method-patch) 6%, transparent)", border: "color-mix(in srgb, var(--g-method-patch) 20%, transparent)" },
 };
 
@@ -307,7 +317,7 @@ const isApiPath = (code: string): boolean => {
  */
 const getGreeting = (personality: Personality): string => {
   if (personality === "explanatory") return "Ready to explain your APIs in depth. What would you like to understand?";
-  if (personality === "curt") return "What can I help you with?";
+  if (personality === "quick") return "What can I help you with?";
   if (personality === "casual") return "ok";
   return GREG_GREETINGS[Math.floor(Math.random() * GREG_GREETINGS.length)]!;
 };
@@ -371,6 +381,21 @@ const stripCodeBlocks = (text: string): string =>
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
+// Max chars to keep per assistant message in auto-compact mode
+const AUTO_COMPACT_MAX_CHARS = 800;
+
+/**
+ * Aggressively compacts an assistant message for inclusion in API history.
+ * Strips code blocks first, then truncates long prose to AUTO_COMPACT_MAX_CHARS.
+ */
+const compactMessage = (text: string): string => {
+  const stripped = stripCodeBlocks(text);
+  if (stripped.length <= AUTO_COMPACT_MAX_CHARS) return stripped;
+  // Truncate at a word boundary near the limit
+  const cutoff = stripped.lastIndexOf(" ", AUTO_COMPACT_MAX_CHARS);
+  return stripped.slice(0, cutoff > 0 ? cutoff : AUTO_COMPACT_MAX_CHARS) + "\n[…]";
+};
+
 /**
  * Token counter with color-coded context health, an info popover, and a compact button at red.
  */
@@ -383,13 +408,16 @@ const TokenCounter = ({ chatMessages, provider, onCompact }: { chatMessages: Cha
   const warnAt = isOllama ? 60_000 : 100_000;
   const redAt  = isOllama ? 100_000 : 150_000;
 
-  // Use API-reported usage data as source of truth; fall back to text estimate for messages without it
-  const totalIn  = msgsWithUsage.reduce((s, m) => s + (m.usage?.input ?? 0), 0);
-  const totalOut = msgsWithUsage.reduce((s, m) => s + (m.usage?.output ?? 0), 0);
-  const total = msgsWithUsage.length > 0
-    ? totalIn + totalOut
+  // Context size = last assistant's input tokens (that's what the model actually received)
+  // Summing all turns' usage.input overcounts since each turn includes the full prior history.
+  const lastAsst = msgsWithUsage[msgsWithUsage.length - 1];
+  const lastIn   = lastAsst?.usage?.input ?? 0;
+  const lastOut  = lastAsst?.usage?.output ?? 0;
+  const total = lastAsst
+    ? lastIn + lastOut
     : chatMessages.reduce((s, m) => s + Math.ceil(m.text.length / 4), 0);
-  const isRed  = total >= redAt;
+
+  const isRed = total >= redAt;
   // Lerp from yellow (#CA8A04) to red (#DC2626) between warnAt and redAt
   const lerpColor = (): string => {
     if (total < warnAt) return "var(--g-text-dim)";
@@ -400,8 +428,8 @@ const TokenCounter = ({ chatMessages, provider, onCompact }: { chatMessages: Cha
     const b = Math.round(4   + (38  - 4)   * t);
     return `rgb(${r},${g},${b})`;
   };
-  const color  = lerpColor();
-  const fmt    = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
+  const color = lerpColor();
+  const fmt   = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
 
   return (
     <div className="relative flex items-center gap-1">
@@ -430,9 +458,9 @@ const TokenCounter = ({ chatMessages, provider, onCompact }: { chatMessages: Cha
         <div className="absolute bottom-full left-0 mb-2 w-72 rounded-lg border border-(--g-border-hover) bg-(--g-surface) shadow-lg p-4 z-50 text-xs leading-[1.55] text-(--g-text-muted)">
           <div className="text-sm font-semibold text-(--g-text) mb-2">Context window usage</div>
           <p className="mb-2">
-            <span className="font-mono text-(--g-text)">{totalIn.toLocaleString()}</span> in &nbsp;·&nbsp; <span className="font-mono text-(--g-text)">{totalOut.toLocaleString()}</span> out
+            <span className="font-mono text-(--g-text)">{lastIn.toLocaleString()}</span> in &nbsp;·&nbsp; <span className="font-mono text-(--g-text)">{lastOut.toLocaleString()}</span> out
           </p>
-          <p className="mb-2.5">As the conversation grows the model receives the full history every turn. Once the context fills, responses become less reliable — earlier instructions get ignored and the model loses track of prior details.</p>
+          <p className="mb-2.5">Tracks the last turn's actual token count — what the model received in its most recent call. As the conversation grows this number increases; once the context fills, earlier instructions get ignored.</p>
           <div className="flex flex-col gap-1 border-t border-(--g-border) pt-2">
             <span style={{ color: "var(--g-text-dim)" }}>● Gray — healthy</span>
             <span style={{ color: "#CA8A04" }}>● Yellow — getting full, consider a new chat ({warnAt / 1000}k+)</span>
@@ -596,6 +624,7 @@ const mdComponents = (msgKey: number | string, langMap: Record<string, string>, 
 
     if (match || code.includes("\n")) {
       const rawLang = match?.[1] ?? "text";
+      if (rawLang === "mermaid") return <MermaidDiagram code={code} isDark={isDark} />;
       const lang = langMap[rawLang] ?? rawLang;
       const trimmed = code.trimStart();
       const looksLikeJson = !match && (trimmed.startsWith("{") || trimmed.startsWith("["));
@@ -961,7 +990,8 @@ const DebugPanelEntries = ({ entries }: DebugPanelEntriesProps): JSX.Element => 
 /**
  * Side panel showing the full debug trace for a completed assistant message.
  */
-const DebugPanel = memo(({ entries, model, compactedTokens, onClose }: DebugPanelProps): JSX.Element => {
+const DebugPanel = memo(({ entries, model, compactedTokens, compactedHistory, onClose }: DebugPanelProps): JSX.Element => {
+  const [showHistory, setShowHistory] = useState(true);
 
   const rounds = entries.filter((e) => (e as { event: string }).event === "round");
   const lastRound = rounds[rounds.length - 1] as { totalInput?: number; totalOutput?: number; inputTokens?: number; outputTokens?: number } | undefined;
@@ -1002,6 +1032,27 @@ const DebugPanel = memo(({ entries, model, compactedTokens, onClose }: DebugPane
           ) : (
             <DebugPanelEntries entries={entries} />
           )}
+          {compactedHistory && compactedHistory.length > 0 && (
+            <div className="mt-3 border-t border-(--g-border) pt-2.5">
+              <button
+                onClick={() => setShowHistory((v) => !v)}
+                className={cn(collapseBtn, "text-[0.625rem] font-mono text-(--g-text-dim) hover:text-(--g-text-muted) mb-1.5")}
+              >
+                <span className={cn("transition-transform duration-150", showHistory ? "rotate-90" : "rotate-0")}>▶</span>
+                <span className="ml-1">context sent ({compactedHistory.length} messages{compactedTokens ? `, -${compactedTokens.toLocaleString()} tok` : ""})</span>
+              </button>
+              {showHistory && (
+                <div className="flex flex-col gap-2">
+                  {[...compactedHistory].reverse().map((m, i) => (
+                    <div key={i} className="text-[0.625rem] font-mono">
+                      <span className={cn("font-semibold", m.role === "user" ? "text-(--g-accent)" : "text-(--g-method-patch-text)")}>{m.role}</span>
+                      <pre className="whitespace-pre-wrap break-all mt-0.5 text-(--g-text-dim) leading-[1.5]">{m.content}</pre>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Token bar */}
@@ -1018,9 +1069,9 @@ const DebugPanel = memo(({ entries, model, compactedTokens, onClose }: DebugPane
             <span className={cn(debugEntry, "text-(--g-text-dim)")}>
               <span className="text-(--g-text-muted)">{toolCallCount}</span> tools
             </span>
-            {compactedTokens && compactedTokens > 0 ? (
-              <span className={cn(debugEntry, "text-(--g-method-patch-text)")}>
-                compacted: {compactedTokens.toLocaleString()}
+            {compactedTokens !== undefined ? (
+              <span className={cn(debugEntry, compactedTokens > 0 ? "text-(--g-method-patch-text)" : "text-(--g-text-dim)")}>
+                auto-compact: {compactedTokens > 0 ? `-${compactedTokens.toLocaleString()} tok` : "on"}
               </span>
             ) : null}
           </div>
@@ -1114,11 +1165,180 @@ const VerificationBadge = ({ text, usage, msgKey, streaming }: VerificationBadge
  * Single chat message bubble — user messages are right-aligned, assistant messages left-aligned.
  * Shows model name, debug button, endpoint cards, and verification badge for assistant messages.
  */
-const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, loadingGif }: ChatMessageProps): JSX.Element => {
+const DIAGRAM_OPTIONS: Array<{ label: string; type: string; title: string }> = [
+  { label: "Flowchart",    type: "flowchart", title: "flowchart LR — data / service flows" },
+  { label: "Sequence",     type: "sequence",  title: "sequenceDiagram — step-by-step call chains" },
+  { label: "ER Diagram",   type: "er",        title: "erDiagram — entity / object relationships" },
+  { label: "State",        type: "state",     title: "stateDiagram-v2 — resource lifecycle states" },
+  { label: "Architecture", type: "c4",        title: "C4Context — which services call which" },
+];
+
+const CODE_OPTIONS: Array<{ label: string; type: string }> = [
+  { label: "cURL",       type: "curl" },
+  { label: "Python",     type: "python" },
+  { label: "JavaScript", type: "javascript" },
+];
+
+// ---------------------------------------------------------------------------
+// QuickActionBar — diagram + code dropdowns
+// Extracted so its open/close state never causes ChatMessage (and GregMarkdown)
+// to re-render. Only this small component re-renders on dropdown toggle.
+// ---------------------------------------------------------------------------
+
+interface QuickActionBarProps {
+  msgText: string;
+  msgIdx: number;
+  onQuickAction: (msgIdx: number, action: "diagram" | "code", subType?: string) => void;
+  // null/undefined means relevance hasn't been judged yet — keep buttons enabled
+  quickActions?: { diagram: boolean; code: boolean };
+}
+
+const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: QuickActionBarProps): JSX.Element => {
+  const [diagramOpen, setDiagramOpen] = useState(false);
+  const [codeOpen, setCodeOpen] = useState(false);
+  const diagramRef = useRef<HTMLDivElement>(null);
+  const codeRef = useRef<HTMLDivElement>(null);
+
+  // 🔧 perf: memoized — avoids regex on every render, recomputes only when text changes
+  const hasDiagram = useMemo(() => /```mermaid/i.test(msgText), [msgText]);
+  const hasCode = useMemo(() => /```(?!mermaid)\w/.test(msgText), [msgText]);
+
+  // Disable when (a) already present in reply, (b) relevance not yet judged
+  // (gray out by default to avoid a race where the user clicks before the
+  // verdict lands), or (c) AI judged it not relevant.
+  const judged = quickActions !== undefined;
+  const diagramIrrelevant = quickActions?.diagram === false;
+  const codeIrrelevant = quickActions?.code === false;
+  const diagramDisabled = hasDiagram || !judged || diagramIrrelevant;
+  const codeDisabled = hasCode || !judged || codeIrrelevant;
+
+  useEffect(() => {
+    if (!diagramOpen && !codeOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (diagramOpen && diagramRef.current && !diagramRef.current.contains(e.target as Node)) setDiagramOpen(false);
+      if (codeOpen && codeRef.current && !codeRef.current.contains(e.target as Node)) setCodeOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [diagramOpen, codeOpen]);
+
+  return (
+    <div className="flex gap-1.5 mt-2">
+      {/* Diagram dropdown */}
+      <div ref={diagramRef} className="relative">
+        <button
+          onClick={() => !diagramDisabled && setDiagramOpen((v) => !v)}
+          className={cn(
+            "flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-xs font-medium transition-colors",
+            diagramDisabled
+              ? "border-(--g-border) text-(--g-text-dim) bg-(--g-surface) opacity-40 cursor-not-allowed"
+              : "border-(--g-border) text-(--g-text-muted) bg-(--g-surface) hover:text-(--g-accent) hover:border-(--g-border-accent) hover:bg-(--g-accent-dim)",
+          )}
+          title={
+            hasDiagram
+              ? "Diagram already in this response — ask explicitly if you want a different one"
+              : !judged
+                ? "Checking whether a diagram fits this response…"
+                : diagramIrrelevant
+                  ? "A diagram doesn't fit this response — ask explicitly if you want one anyway"
+                  : "Generate a mermaid diagram from this response"
+          }
+        >
+          <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" />
+          </svg>
+          diagram
+          <svg width={8} height={8} viewBox="0 0 10 10" fill="none" className={cn("transition-transform duration-150", diagramOpen ? "rotate-180" : "rotate-0")}>
+            <path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {diagramOpen && (
+          <div className="absolute bottom-full mb-1.5 left-0 z-50 min-w-[10rem] rounded-lg border border-(--g-border) bg-(--g-surface) shadow-lg overflow-hidden py-1">
+            {DIAGRAM_OPTIONS.map((opt) => (
+              <button
+                key={opt.type}
+                title={opt.title}
+                onClick={() => { setDiagramOpen(false); onQuickAction(msgIdx, "diagram", opt.type); }}
+                className="flex w-full items-center px-3 py-1.5 text-xs text-left text-(--g-text-muted) hover:bg-(--g-surface-hover) hover:text-(--g-text) transition-colors"
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Code dropdown */}
+      <div ref={codeRef} className="relative">
+        <button
+          onClick={() => !codeDisabled && setCodeOpen((v) => !v)}
+          className={cn(
+            "flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-xs font-medium transition-colors",
+            codeDisabled
+              ? "border-(--g-border) text-(--g-text-dim) bg-(--g-surface) opacity-40 cursor-not-allowed"
+              : "border-(--g-border) text-(--g-text-muted) bg-(--g-surface) hover:text-(--g-accent) hover:border-(--g-border-accent) hover:bg-(--g-accent-dim)",
+          )}
+          title={
+            hasCode
+              ? "Code already in this response — ask explicitly if you want a different language"
+              : !judged
+                ? "Checking whether code fits this response…"
+                : codeIrrelevant
+                  ? "A code snippet doesn't fit this response — ask explicitly if you want one anyway"
+                  : "Generate code from this response"
+          }
+        >
+          <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
+          </svg>
+          code
+          <svg width={8} height={8} viewBox="0 0 10 10" fill="none" className={cn("transition-transform duration-150", codeOpen ? "rotate-180" : "rotate-0")}>
+            <path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {codeOpen && (
+          <div className="absolute bottom-full mb-1.5 left-0 z-50 min-w-[8rem] rounded-lg border border-(--g-border) bg-(--g-surface) shadow-lg overflow-hidden py-1">
+            {CODE_OPTIONS.map((opt) => (
+              <button
+                key={opt.type}
+                onClick={() => { setCodeOpen(false); onQuickAction(msgIdx, "code", opt.type); }}
+                className="flex w-full items-center px-3 py-1.5 text-xs text-left text-(--g-text-muted) hover:bg-(--g-surface-hover) hover:text-(--g-text) transition-colors"
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Inline status while the relevance verdict is still in flight */}
+      {!judged && !hasDiagram && !hasCode && (
+        <span className="flex items-center gap-1.5 text-[0.6875rem] italic text-(--g-text-dim) select-none">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-(--g-text-dim) animate-pulse" />
+          checking whether a diagram or code snippet would help here…
+        </span>
+      )}
+    </div>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// ChatMessage
+// ---------------------------------------------------------------------------
+
+const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, onRetry, onQuickAction, loadingGif }: ChatMessageProps): JSX.Element => {
   const p = msg.personality ?? "greg";
   const bubbleStyle = (BUBBLE_STYLES[p] ?? BUBBLE_STYLES["greg"])!;
+
+  // 🔧 perf: stable style objects — avoids new object references on every render
+  const bubbleStyle_ = useMemo(() => ({
+    background: msg.role === "user" ? "var(--g-user-bg)" : bubbleStyle.bg,
+    border: `1px solid ${msg.role === "user" ? "var(--g-border-accent)" : bubbleStyle.border}`,
+    color: "var(--g-text)",
+  }), [msg.role, bubbleStyle.bg, bubbleStyle.border]);
+
   return (
-    <div className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+    <div className={`group/msg flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
       <div className="max-w-[85%]">
         {msg.role === "assistant" && (
           <div className="flex items-center gap-2 mb-1.5">
@@ -1126,7 +1346,7 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, loadingGif }:
             {msg.model && (
               <span className="font-mono text-[0.6875rem] text-(--g-text-dim)">{msg.model}</span>
             )}
-            {msg.debug && msg.debug.length > 0 && !msg.streaming && (
+            {((msg.debug && msg.debug.length > 0) || msg.compactedHistory) && !msg.streaming && (
               <Button
                 variant="ghost"
                 size="icon-xs"
@@ -1141,11 +1361,7 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, loadingGif }:
         )}
         <div
           className={`px-4 ${msg.role === "user" ? "py-3 rounded-[12px_12px_2px_12px]" : "py-2.5 rounded-[0.625rem]"} text-[0.9375rem] leading-[1.6]`}
-          style={{
-            background: msg.role === "user" ? "var(--g-user-bg)" : bubbleStyle.bg,
-            border: `1px solid ${msg.role === "user" ? "var(--g-border-accent)" : bubbleStyle.border}`,
-            color: "var(--g-text)",
-          }}
+          style={bubbleStyle_}
         >
           {msg.role === "user" ? (
             msg.text
@@ -1163,6 +1379,32 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, loadingGif }:
             <VerificationBadge text={msg.verificationText ?? ""} {...(msg.verificationUsage !== undefined && { usage: msg.verificationUsage })} msgKey={i} {...(msg.verificationStreaming !== undefined && { streaming: msg.verificationStreaming })} />
           )}
         </div>
+        {msg.role === "user" && (
+          <div className="flex justify-end mt-1 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-150">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => onRetry(i)}
+              title="Retry"
+              className="opacity-60 hover:opacity-100 hover:text-(--g-accent)"
+            >
+              {/* refresh/retry icon */}
+              <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                <path d="M3 3v5h5" />
+              </svg>
+            </Button>
+          </div>
+        )}
+        {/* 🔧 perf: extracted to own component — dropdown state changes don't re-render GregMarkdown */}
+        {msg.role === "assistant" && !msg.streaming && (
+          <QuickActionBar
+            msgText={msg.text}
+            msgIdx={i}
+            onQuickAction={onQuickAction}
+            {...(msg.quickActions !== undefined && { quickActions: msg.quickActions })}
+          />
+        )}
         {msg.endpoints && msg.endpoints.length > 0 && (
           <EndpointDropdown endpoints={msg.endpoints} onSelect={onSelectEndpoint} />
         )}
@@ -1338,13 +1580,29 @@ const GregPage = (): JSX.Element => {
 
   const handleCompact = useCallback(() => {
     const msgs = useStore.getState().chatMessages;
-    const compacted = msgs.map((m) => ({
-      role: m.role,
-      text: stripCodeBlocks(m.text),
-      ...(m.personality !== undefined && { personality: m.personality }),
-      ...(m.model !== undefined && { model: m.model }),
-      ...(m.usage !== undefined && { usage: m.usage }),
-    })) as ChatMsg[];
+    let charsStripped = 0;
+    const compacted = msgs.map((m) => {
+      const stripped = stripCodeBlocks(m.text);
+      charsStripped += Math.max(0, m.text.length - stripped.length);
+      return {
+        role: m.role,
+        text: stripped,
+        ...(m.personality !== undefined && { personality: m.personality }),
+        ...(m.model !== undefined && { model: m.model }),
+        ...(m.usage !== undefined && { usage: m.usage }),
+        ...(m.compactedTokens !== undefined && { compactedTokens: m.compactedTokens }),
+      };
+    }) as ChatMsg[];
+    // Tag the last assistant message with approximately how many tokens were stripped
+    const approxTokens = Math.ceil(charsStripped / 4);
+    if (approxTokens > 0) {
+      for (let i = compacted.length - 1; i >= 0; i--) {
+        if (compacted[i]!.role === "assistant") {
+          compacted[i] = { ...compacted[i]!, compactedTokens: (compacted[i]!.compactedTokens ?? 0) + approxTokens };
+          break;
+        }
+      }
+    }
     setChatMessages(compacted);
   }, [setChatMessages]);
 
@@ -1360,6 +1618,18 @@ const GregPage = (): JSX.Element => {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [followUpSuggestions, setFollowUpSuggestions] = useState<string[]>([]);
   const [generatingFollowUps, setGeneratingFollowUps] = useState(false);
+  // All indices where context was cleared — dividers render at each, history built from the last one
+  const [contextBoundaries, setContextBoundaries] = useState<number[]>([]);
+
+  const chatItems = useMemo<ChatListItem[]>(() => {
+    const items: ChatListItem[] = [];
+    for (let i = 0; i < chatMessages.length; i++) {
+      if (contextBoundaries.includes(i)) items.push({ kind: "boundary" });
+      items.push({ kind: "message", msg: chatMessages[i]!, msgIndex: i });
+    }
+    if (contextBoundaries.includes(chatMessages.length)) items.push({ kind: "boundary" });
+    return items;
+  }, [chatMessages, contextBoundaries]);
   const [autoCompact, setAutoCompact] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem("greg-auto-compact");
@@ -1375,7 +1645,9 @@ const GregPage = (): JSX.Element => {
   useEffect(() => { try { localStorage.setItem("greg-chat-zoom", String(chatZoom)); } catch {} }, [chatZoom]);
   const [personalityOpen, setPersonalityOpen] = useState(false);
   const personalityRef = useRef<HTMLDivElement>(null);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("greg-panel-open") !== "false"; } catch { return false; }
+  });
   const [panelAnchor, setPanelAnchor] = useState<{ api: string; method?: string; path?: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -1383,6 +1655,7 @@ const GregPage = (): JSX.Element => {
   useEffect(() => { fetchSuggestions().then(setSuggestions).catch(() => {}); }, []);
   useEffect(() => { setGreetingText(getGreeting(personality)); }, [personality]);
   useEffect(() => { try { localStorage.setItem("greg-auto-compact", String(autoCompact)); } catch {} }, [autoCompact]);
+  useEffect(() => { try { localStorage.setItem("greg-panel-open", String(panelOpen)); } catch {} }, [panelOpen]);
   // If provider is ollama and the user has never explicitly set a preference, default auto-compact ON
   useEffect(() => {
     try {
@@ -1415,17 +1688,23 @@ const GregPage = (): JSX.Element => {
   }, []);
   // Animate swagger panel open/close via resize()/collapse() on state change.
   // ⚠️ resize() treats bare numbers as pixels — pass "25%" to get a percentage.
+  // Only resize to 25% if currently collapsed — don't override the user's resized width.
   useEffect(() => {
     const p = swaggerPanelRef.current;
     if (!p) return;
-    if (panelOpen) p.resize("25%");
+    if (panelOpen) { if (p.isCollapsed()) p.resize("25%"); }
     else p.collapse();
   }, [panelOpen]);
   useEffect(() => {
     const p = debugPanelRef.current;
     if (!p) return;
-    if (debugMsgIdx !== null) p.resize("15%");
-    else p.collapse();
+    if (debugMsgIdx !== null) {
+      // Only set the initial size when the panel is actually collapsed — don't
+      // override the user's manually resized width when switching between messages
+      if (p.isCollapsed()) p.resize("15%");
+    } else {
+      p.collapse();
+    }
   }, [debugMsgIdx]);
 
   const fetchGreetingGif = useCallback(() => {
@@ -1437,6 +1716,7 @@ const GregPage = (): JSX.Element => {
 
   const handleNewChat = useCallback(() => {
     newChat();
+    setContextBoundaries([]);
     setGreetingGif(null);
     fetchSuggestions().then(setSuggestions).catch(() => {});
     if (isGregLike) fetchGreetingGif();
@@ -1450,41 +1730,91 @@ const GregPage = (): JSX.Element => {
   const handleCloseSwagger = useCallback(() => { setPanelOpen(false); setPanelAnchor(null); }, []);
   const handleCloseDebug = useCallback(() => setDebugMsgIdx(null), []);
 
+  const handleRetry = useCallback((msgIdx: number): void => {
+    if (chatLoading) return;
+    const msg = chatMessages[msgIdx];
+    if (!msg || msg.role !== "user") return;
+    const trimmed = chatMessages.slice(0, msgIdx);
+    setChatMessages(trimmed);
+    setFollowUpSuggestions([]);
+    // If context boundary was beyond the retry point, reset it
+    // Drop boundaries beyond the retry point; keep those at or before it
+    setContextBoundaries((prev) => prev.filter((b) => b <= msgIdx));
+    // Pass the trimmed array directly so handleSend uses it for history,
+    // not the stale closure value that hasn't updated yet
+    handleSend(msg.text, trimmed);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatLoading, chatMessages, contextBoundaries, setChatMessages]);
+
+  const DIAGRAM_PROMPTS: Record<string, string> = {
+    flowchart: "show the above as a mermaid flowchart diagram (flowchart LR). Include the actual endpoint methods and paths (e.g. GET /users/{id}) as node labels — do not use generic descriptions.",
+    sequence:  "show the above as a mermaid sequence diagram (sequenceDiagram). Label each arrow with the actual HTTP method and path (e.g. POST /orders) — do not use generic descriptions.",
+    er:        "show the above as a mermaid ER diagram (erDiagram). Use the actual resource names from the API paths and include the key fields from request/response schemas.",
+    state:     "show the above as a mermaid state diagram (stateDiagram-v2). Label transitions with the actual endpoint that triggers each state change (e.g. PUT /orders/{id}/cancel).",
+    c4:        "show the above as a mermaid C4 context diagram (C4Context). Label each relationship with the actual endpoint paths being called.",
+  };
+
+  const CODE_PROMPTS: Record<string, string> = {
+    curl:       "show me cURL for the above",
+    python:     "show me Python for the above",
+    javascript: "show me JavaScript (no TypeScript types) for the above",
+  };
+
+  const handleQuickAction = useCallback((msgIdx: number, action: "diagram" | "code", subType?: string): void => {
+    if (chatLoading) return;
+    const prompt = action === "diagram"
+      ? (DIAGRAM_PROMPTS[subType ?? "flowchart"] ?? DIAGRAM_PROMPTS["flowchart"]!)
+      : (CODE_PROMPTS[subType ?? "javascript"] ?? CODE_PROMPTS["javascript"]!);
+    // Context trimmed to just up to this message so the AI knows exactly what to diagram/code.
+    const context = chatMessages.slice(0, msgIdx + 1);
+    handleSend(prompt, context);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatLoading, chatMessages]);
+
+  const handleRefreshFollowUps = useCallback((): void => {
+    const lastUser = [...chatMessages].reverse().find((m) => m.role === "user");
+    const lastAssistant = [...chatMessages].reverse().find((m) => m.role === "assistant");
+    if (!lastUser || !lastAssistant || generatingFollowUps) return;
+    setGeneratingFollowUps(true);
+    setFollowUpSuggestions([]);
+    const opts: { model?: string; provider?: "anthropic" | "ollama" } = {
+      ...(selectedModel ? { model: selectedModel } : {}),
+      ...(selectedProvider === "ollama" || selectedProvider === "anthropic" ? { provider: selectedProvider as "ollama" | "anthropic" } : {}),
+    };
+    generateFollowUpSuggestions(lastUser.text, lastAssistant.text, opts)
+      .then((s) => { setFollowUpSuggestions(s); setGeneratingFollowUps(false); })
+      .catch(() => { setGeneratingFollowUps(false); });
+    analyzeQuickActionRelevance(lastUser.text, lastAssistant.text, opts)
+      .then((qa) => { updateLastAssistant((m) => ({ ...m, quickActions: qa })); })
+      .catch(() => { /* leave buttons enabled on failure */ });
+  }, [chatMessages, generatingFollowUps, selectedModel, selectedProvider, updateLastAssistant]);
+
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [userScrolled, setUserScrolled] = useState(false);
   const userScrolledRef = useRef(false);
 
-  // Check if user has scrolled up — use ref to avoid re-render storms
-  const handleScroll = useCallback(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
-    if (userScrolledRef.current !== !atBottom) {
-      userScrolledRef.current = !atBottom;
-      setUserScrolled(!atBottom);
-    }
-  }, []);
-
-  // Auto-scroll only if user hasn't scrolled up
-  useEffect(() => {
-    if (!userScrolledRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [chatMessages]);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToBottom = useCallback(() => {
+    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "smooth", align: "end" });
     userScrolledRef.current = false;
     setUserScrolled(false);
-  };
+  }, []);
 
-  const handleSend = async (overrideText?: string): Promise<void> => {
+  const handleSend = async (overrideText?: string, baseMessages?: ChatMsg[]): Promise<void> => {
     const text = (overrideText ?? inputRef.current?.value ?? "").trim();
     if (!text || chatLoading) return;
 
     if (inputRef.current) { inputRef.current.value = ""; inputRef.current.style.height = "auto"; }
+
+    // Slash commands
+    if (text === "/clear") {
+      // Keep messages visible but record a new boundary so subsequent
+      // sends only include messages after this point
+      setContextBoundaries((prev) => [...prev, chatMessages.length]);
+      setFollowUpSuggestions([]);
+      setGeneratingFollowUps(false);
+      return;
+    }
     setUserScrolled(false);
     setFollowUpSuggestions([]);
     setGeneratingFollowUps(false);
@@ -1499,13 +1829,24 @@ const GregPage = (): JSX.Element => {
     // Auto-compact strips code blocks from prior assistant messages in the
     // outgoing request only — state still holds the full text so the UI keeps
     // rendering code. This saves tokens without hiding content from the user.
+    // baseMessages is supplied by handleRetry so we use the already-sliced array
+    // rather than the stale closure value. For normal sends, slice from the last
+    // context boundary so /clear'd messages aren't included in the API history.
+    const lastBoundary = contextBoundaries.length > 0 ? contextBoundaries[contextBoundaries.length - 1]! : 0;
+    const historyBase = baseMessages ?? chatMessages.slice(lastBoundary);
+    let autoCompactedChars = 0;
     const history = [
-      ...chatMessages.map((m) => ({
-        role: m.role,
-        content: m.role === "assistant" && autoCompactRef.current ? stripCodeBlocks(m.text) : m.text,
-      })),
+      ...historyBase.map((m) => {
+        if (m.role === "assistant" && autoCompactRef.current) {
+          const compacted = compactMessage(m.text);
+          autoCompactedChars += Math.max(0, m.text.length - compacted.length);
+          return { role: m.role, content: compacted };
+        }
+        return { role: m.role, content: m.text };
+      }),
       { role: "user" as const, content: text },
     ];
+    const autoCompactedTokens = Math.ceil(autoCompactedChars / 4);
 
     let accumulated = "";
     let verificationText = "";
@@ -1514,6 +1855,13 @@ const GregPage = (): JSX.Element => {
     let doneVerificationUsage: { input: number; output: number } | undefined;
     const endpointMap = new Map<string, EndpointCard>();
     const debugLog: Record<string, unknown>[] = [];
+
+    // Batch text updates to one per animation frame to avoid thrashing the reconciler
+    let rafPending = false;
+    const flushText = () => {
+      updateLastAssistant((m) => ({ ...m, text: accumulated }));
+      rafPending = false;
+    };
 
     try {
       const customPrompt = personality === "greg" ? customGregPrompt : personality === "explanatory" ? customExplainerPrompt : personality === "casual" ? customCasualPrompt : customProPrompt;
@@ -1533,7 +1881,7 @@ const GregPage = (): JSX.Element => {
         switch (event.type) {
           case "text":
             accumulated += event.text ?? "";
-            updateLastAssistant((m) => ({ ...m, text: accumulated }));
+            if (!rafPending) { rafPending = true; requestAnimationFrame(flushText); }
             break;
           case "endpoints":
             // Deduplicate by method+path, keep highest score
@@ -1624,16 +1972,27 @@ const GregPage = (): JSX.Element => {
       ...(doneVerificationUsage !== undefined && { verificationUsage: doneVerificationUsage }),
       ...(verificationText ? { verificationText } : {}),
       ...(debugLog.length > 0 ? { debug: debugLog } : {}),
+      // Always record compaction data when auto-compact is on so the debug panel can display the status
+      ...(autoCompactRef.current ? { compactedTokens: autoCompactedTokens, compactedHistory: history } : {}),
     }));
 
     saveChat();
     setChatLoading(false);
     if (accumulated) {
       setGeneratingFollowUps(true);
-      generateFollowUpSuggestions(text, accumulated, {
+      const opts: { model?: string; provider?: "anthropic" | "ollama" } = {
         ...(selectedModel ? { model: selectedModel } : {}),
-        ...(selectedProvider === "ollama" || selectedProvider === "anthropic" ? { provider: selectedProvider } : {}),
-      }).then((s) => { setFollowUpSuggestions(s); setGeneratingFollowUps(false); }).catch(() => { setGeneratingFollowUps(false); });
+        ...(selectedProvider === "ollama" || selectedProvider === "anthropic" ? { provider: selectedProvider as "ollama" | "anthropic" } : {}),
+      };
+      generateFollowUpSuggestions(text, accumulated, opts)
+        .then((s) => { setFollowUpSuggestions(s); setGeneratingFollowUps(false); })
+        .catch(() => { setGeneratingFollowUps(false); });
+      // Judge diagram/code relevance in parallel — patch the last assistant
+      // message when the verdict comes back so the QuickActionBar can gray
+      // out actions that don't make sense for this reply.
+      analyzeQuickActionRelevance(text, accumulated, opts)
+        .then((qa) => { updateLastAssistant((m) => ({ ...m, quickActions: qa })); })
+        .catch(() => { /* leave buttons enabled on failure */ });
     }
   };
 
@@ -1668,7 +2027,7 @@ const GregPage = (): JSX.Element => {
             return (
               <div
                 key={chat.id}
-                onClick={() => { loadChat(chat.id); setFollowUpSuggestions([]); }}
+                onClick={() => { loadChat(chat.id); setFollowUpSuggestions([]); setContextBoundaries([]); }}
                 className="flex items-center gap-1.5 mb-0.5 px-2 py-1 rounded-md cursor-pointer transition-colors duration-100"
                 style={{
                   background: isActive ? "var(--g-surface-active)" : "transparent",
@@ -1762,51 +2121,99 @@ const GregPage = (): JSX.Element => {
                 </button>
               )}
             </div>
-            <div
-              ref={scrollContainerRef}
-              onScroll={handleScroll}
-              className="relative flex flex-col flex-1 gap-3 overflow-auto"
-            >
-              <div className={cn("flex flex-col items-center gap-4 text-(--g-text-dim)", chatMessages.length === 0 ? "flex-1 justify-center" : "pt-6 pb-2")}>
-                <img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
-                <span className="text-lg">
-                  {greeting}
-                </span>
-                {suggestions.length > 0 && chatMessages.length === 0 && (
-                  <div className="flex flex-wrap justify-center gap-2 max-w-[35rem]">
-                    {suggestions.map((s, i) => (
-                      <button
-                        key={i}
-                        onClick={() => handleSuggestion(s)}
-                        className="px-3.5 py-1.5 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.8125rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
-                      >
-                        {s}
-                      </button>
-                    ))}
+            <Virtuoso
+              ref={virtuosoRef}
+              className="flex-1 min-h-0"
+              data={chatItems}
+              // "auto" (instant) — not "smooth" — during streaming. Smooth queues
+              // a ~300ms animation per token chunk, and overlapping animations
+              // cause the chat to visibly jump up and down as the model writes.
+              followOutput={(isAtBottom) => isAtBottom ? "auto" : false}
+              atBottomStateChange={(atBottom) => {
+                userScrolledRef.current = !atBottom;
+                setUserScrolled(!atBottom);
+              }}
+              components={{
+                Header: () => (
+                  <div className={cn("flex flex-col items-center gap-4 text-(--g-text-dim) px-6", chatMessages.length === 0 ? "min-h-full justify-center" : "pt-6 pb-2")}>
+                    <img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
+                    <span className="text-lg">{greeting}</span>
+                    {suggestions.length > 0 && chatMessages.length === 0 && (
+                      <div className="flex flex-wrap justify-center gap-2 max-w-[35rem]">
+                        {suggestions.map((s, i) => (
+                          <button
+                            key={i}
+                            onClick={() => handleSuggestion(s)}
+                            className="px-3.5 py-1.5 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.8125rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
+                          >
+                            {/* hide route hints from the visible label — full
+                                text (with routes) is still sent on click */}
+                            {stripRoutes(s)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-              {chatMessages.map((msg, i) => (
-                <ChatMessage key={i} msg={msg} i={i} onSelectEndpoint={handleSelectEndpoint} onShowDebug={setDebugMsgIdx} loadingGif={msg.streaming ? loadingGif : null} />
-              ))}
-              {generatingFollowUps && followUpSuggestions.length === 0 && (
-                <span className="mt-1 ml-0.5 text-[0.6875rem] text-(--g-text-dim) animate-pulse">generating follow-ups…</span>
-              )}
-              {followUpSuggestions.length > 0 && (
-                <div className="flex flex-col gap-1.5 mt-1 ml-0.5">
-                  {followUpSuggestions.map((s, i) => (
-                    <button
-                      key={i}
-                      onClick={() => handleSuggestion(s)}
-                      className="self-start px-3 py-1 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.75rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
+                ),
+                Footer: () => (
+                  <div className="px-6 pb-3">
+                    {generatingFollowUps && followUpSuggestions.length === 0 && (
+                      <span className="mt-1 ml-0.5 text-[0.6875rem] text-(--g-text-dim) animate-pulse">generating follow-ups…</span>
+                    )}
+                    {followUpSuggestions.length > 0 && (
+                      <div className="flex flex-col gap-1.5 mt-1 ml-0.5">
+                        {followUpSuggestions.map((s, i) => (
+                          <button
+                            key={i}
+                            onClick={() => handleSuggestion(s)}
+                            className="self-start px-3 py-1 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.75rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
+                          >
+                            {stripRoutes(s)}
+                          </button>
+                        ))}
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={handleRefreshFollowUps}
+                          title="Refresh follow-up suggestions"
+                          className={cn("self-start mt-0.5 opacity-40 hover:opacity-100 hover:text-(--g-accent)", generatingFollowUps && "animate-spin opacity-60")}
+                          disabled={generatingFollowUps}
+                        >
+                          <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                            <path d="M3 3v5h5" />
+                          </svg>
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ),
+              }}
+              itemContent={(_index, item) => {
+                if (item.kind === "boundary") {
+                  return (
+                    <div className="flex items-center gap-2 my-1 px-6">
+                      <div className="flex-1 h-px bg-(--g-border)" />
+                      <span className="text-[0.6875rem] text-(--g-text-dim) select-none">context cleared</span>
+                      <div className="flex-1 h-px bg-(--g-border)" />
+                    </div>
+                  );
+                }
+                return (
+                  <div className="px-6 py-1.5">
+                    <ChatMessage
+                      msg={item.msg}
+                      i={item.msgIndex}
+                      onSelectEndpoint={handleSelectEndpoint}
+                      onShowDebug={setDebugMsgIdx}
+                      onRetry={handleRetry}
+                      onQuickAction={handleQuickAction}
+                      loadingGif={item.msg.streaming ? loadingGif : null}
+                    />
+                  </div>
+                );
+              }}
+            />
 
             {/* Scroll to bottom button */}
             {userScrolled && (
@@ -1830,8 +2237,14 @@ const GregPage = (): JSX.Element => {
                   placeholder={isGregLike ? "talk to greg..." : chatMessages.length > 0 ? "Reply..." : "How can I help?"}
                   onChange={(e) => { const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; }}
                   onKeyDown={handleKeyDown}
-                  className="w-full min-h-7 p-0 resize-none border-none bg-transparent outline-none font-[inherit] text-base text-(--g-text) leading-[1.55] mb-2"
+                  className="w-full min-h-7 p-0 resize-none border-none bg-transparent outline-none font-[inherit] text-base text-(--g-text) leading-[1.55] mb-1"
                 />
+                <div className="flex items-center mb-1.5">
+                  <span className="text-[0.6875rem] text-(--g-text-dim) select-none">
+                    <kbd className="font-mono opacity-70">/clear</kbd>
+                    <span className="ml-1 opacity-50">— clear context</span>
+                  </span>
+                </div>
                 {/* Bottom row: personality + model + send */}
                 <div className="flex items-center gap-2 pt-2" style={{ borderTop: "1px solid var(--g-border)" }}>
                   {/* Personality dropup */}
@@ -1849,7 +2262,7 @@ const GregPage = (): JSX.Element => {
                     </button>
                     {personalityOpen && (
                       <div className="absolute bottom-full mb-1.5 left-0 z-50 min-w-[9rem] rounded-lg border border-(--g-border) bg-(--g-surface) shadow-lg overflow-hidden">
-                        {(["greg", "casual", "curt", "explanatory"] as const satisfies Personality[]).map((p, i) => (
+                        {(["greg", "casual", "quick", "explanatory"] as const satisfies Personality[]).map((p, i) => (
                           <React.Fragment key={p}>
                             <button
                               onClick={() => { setPersonality(p); setPersonalityOpen(false); }}
@@ -1897,7 +2310,7 @@ const GregPage = (): JSX.Element => {
                       </optgroup>
                     )}
                   </select>
-                  <TokenCounter chatMessages={chatMessages} provider={selectedProvider} onCompact={handleCompact} />
+                  <TokenCounter chatMessages={chatMessages.slice(contextBoundaries.length > 0 ? contextBoundaries[contextBoundaries.length - 1]! : 0)} provider={selectedProvider} onCompact={handleCompact} />
 
                   <span className="flex-1" />
 
@@ -1964,9 +2377,9 @@ const GregPage = (): JSX.Element => {
               defaultSize={panelOpen ? 25 : 0}
               collapsible
               collapsedSize={0}
-              className="transition-all duration-300 ease-in-out"
+              className="transition-all duration-300 ease-in-out overflow-hidden"
             >
-              <SwaggerPanel anchor={panelAnchor} onClose={handleCloseSwagger} />
+              {panelOpen && <SwaggerPanel anchor={panelAnchor} onClose={handleCloseSwagger} />}
             </ResizablePanel>
           </ResizablePanelGroup>
         </ResizablePanel>
@@ -1988,7 +2401,8 @@ const GregPage = (): JSX.Element => {
               <DebugPanel
                 entries={msg?.debug ?? EMPTY_DEBUG}
                 {...(msg?.model !== undefined && { model: msg.model })}
-                {...(msg?.compactedTokens ? { compactedTokens: msg.compactedTokens } : {})}
+                {...(msg?.compactedTokens !== undefined ? { compactedTokens: msg.compactedTokens } : {})}
+                {...(msg?.compactedHistory !== undefined ? { compactedHistory: msg.compactedHistory } : {})}
                 onClose={handleCloseDebug}
               />
             );

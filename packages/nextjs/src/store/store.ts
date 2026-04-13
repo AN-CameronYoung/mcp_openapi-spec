@@ -23,6 +23,8 @@ export interface ChatMsg {
 	verificationStreaming?: boolean;
 	debug?: Record<string, unknown>[];
 	compactedTokens?: number;
+	compactedHistory?: Array<{ role: string; content: string }>;
+	quickActions?: { diagram: boolean; code: boolean };
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +94,21 @@ export const pageFromHash = (hash = typeof window !== "undefined" ? window.locat
 	return VALID_PAGES.has(seg)
 		? (seg as AppState["page"])
 		: null;
+};
+
+/**
+ * Extracts a chat ID from the URL hash when on the greg page.
+ * Expects the format `#/greg/<chatId>` or `#/<chatId>`.
+ *
+ * @param hash - The hash string to parse; defaults to the current window hash
+ * @returns The chat ID string, or null if none is present
+ */
+export const chatIdFromHash = (hash = typeof window !== "undefined" ? window.location.hash : ""): string | null => {
+	const segs = hash.replace(/^#\/?/, "").split("/");
+	const page = segs[0] || "greg";
+	// Accept both `#/greg/<id>` and `#/<id>` (when page segment is the chat id itself)
+	const candidate = page === "greg" ? segs[1] : null;
+	return (candidate && candidate.startsWith("chat-")) ? candidate : null;
 };
 
 type AppState = {
@@ -188,11 +205,17 @@ export const useStore = create<AppState>()((set) => ({
 
 	page: "greg",
 	setPage: (p) => {
-		set({ page: p, ...(p !== "docs" && { docsAnchor: null }) });
-		if (typeof window !== "undefined") {
-			const hash = p === "greg" ? "/" : `/${p}`;
-			window.history.pushState(null, "", `#${hash}`);
-		}
+		set((s) => {
+			if (typeof window !== "undefined") {
+				// Preserve the chat ID in the URL when navigating to/from greg
+				const chatId = s.activeChatId;
+				const hash = p === "greg"
+					? (chatId ? `/greg/${chatId}` : "/")
+					: `/${p}`;
+				window.history.pushState(null, "", `#${hash}`);
+			}
+			return { page: p, ...(p !== "docs" && { docsAnchor: null }) };
+		});
 	},
 
 	apis: [],
@@ -231,18 +254,27 @@ export const useStore = create<AppState>()((set) => ({
 		try { localStorage.setItem("greg-model", model); localStorage.setItem("greg-provider", provider); } catch {}
 		set({ selectedModel: model, selectedProvider: provider });
 	},
-	clearChat: () => set((s) => { s.saveChat(); return { chatMessages: [], chatLoading: false, activeChatId: null }; }),
+	clearChat: () => set((s) => {
+		s.saveChat();
+		if (typeof window !== "undefined") window.history.replaceState(null, "", "#/");
+		return { chatMessages: [], chatLoading: false, activeChatId: null };
+	}),
 
 	chatHistory: [] as Array<{ id: string; title: string; messages: ChatMsg[]; ts: number }>,
 	activeChatId: null,
 	saveChat: () => set((s) => {
 		if (s.chatMessages.length === 0) return {};
+		const isNew = s.activeChatId === null;
 		const id = s.activeChatId ?? `chat-${Date.now()}`;
 		const userMsg = s.chatMessages.find((m) => m.role === "user")?.text ?? "";
 		const title = userMsg.slice(0, 50) || "New chat";
 		const existing = s.chatHistory.filter((c) => c.id !== id);
 		const history = [{ id, title, messages: s.chatMessages, ts: Date.now() }, ...existing].slice(0, 50);
 		try { localStorage.setItem("greg-history", JSON.stringify(history)); } catch {}
+		// Stamp the chat ID into the URL the first time this chat is saved
+		if (isNew && typeof window !== "undefined") {
+			window.history.replaceState(null, "", `#/greg/${id}`);
+		}
 		// Generate a better title async
 		if (userMsg) {
 			generateTitle(userMsg).then(({ title: t }) => {
@@ -258,16 +290,25 @@ export const useStore = create<AppState>()((set) => ({
 	loadChat: (id) => set((s) => {
 		const chat = s.chatHistory.find((c) => c.id === id);
 		if (!chat) return {};
+		if (typeof window !== "undefined") window.history.pushState(null, "", `#/greg/${id}`);
 		return { chatMessages: chat.messages, activeChatId: id };
 	}),
 	deleteChat: (id) => set((s) => {
 		const history = s.chatHistory.filter((c) => c.id !== id);
 		try { localStorage.setItem("greg-history", JSON.stringify(history)); } catch {}
 		const updates: Partial<AppState> = { chatHistory: history };
-		if (s.activeChatId === id) { updates.chatMessages = []; updates.activeChatId = null; }
+		if (s.activeChatId === id) {
+			updates.chatMessages = [];
+			updates.activeChatId = null;
+			if (typeof window !== "undefined") window.history.replaceState(null, "", "#/");
+		}
 		return updates;
 	}),
-	newChat: () => set((s) => { s.saveChat(); return { chatMessages: [], activeChatId: null }; }),
+	newChat: () => set((s) => {
+		s.saveChat();
+		if (typeof window !== "undefined") window.history.pushState(null, "", "#/");
+		return { chatMessages: [], activeChatId: null };
+	}),
 
 	doubleCheck: false,
 	setDoubleCheck: (v) => { try { localStorage.setItem("greg-double-check", String(v)); } catch {} set({ doubleCheck: v }); },
@@ -313,19 +354,26 @@ export const useStore = create<AppState>()((set) => ({
 			// Read persisted values
 			const theme = (localStorage.getItem("greg-theme") as ThemePref) ?? "system";
 			const pv = localStorage.getItem("greg-personality");
-			const PERSONALITIES: Personality[] = ["greg", "explanatory", "curt", "casual"];
+			const PERSONALITIES: Personality[] = ["greg", "explanatory", "quick", "casual"];
 			const personality = (pv !== null && (PERSONALITIES as string[]).includes(pv))
 				? pv
-				: localStorage.getItem("greg-mode") === "false" ? "curt" : "greg";
+				: localStorage.getItem("greg-mode") === "false" ? "quick" : "greg";
 			const selectedModel = localStorage.getItem("greg-model") ?? "";
 			const selectedProvider = localStorage.getItem("greg-provider") ?? "";
-			const chatHistory = JSON.parse(localStorage.getItem("greg-history") ?? "[]");
+			const chatHistory = JSON.parse(localStorage.getItem("greg-history") ?? "[]") as Array<{ id: string; title: string; messages: ChatMsg[]; ts: number }>;
 			const doubleCheck = localStorage.getItem("greg-double-check") === "true";
 			const page = pageFromHash() ?? "greg";
 
+			// Restore active chat from URL hash (e.g. #/greg/chat-1234)
+			const chatId = chatIdFromHash();
+			const chatFromUrl = chatId ? chatHistory.find((c) => c.id === chatId) : null;
+
 			// Apply and commit
 			applyTheme(theme);
-			set({ theme, personality: personality as Personality, selectedModel, selectedProvider, chatHistory, doubleCheck, page });
+			set({
+				theme, personality: personality as Personality, selectedModel, selectedProvider, chatHistory, doubleCheck, page,
+				...(chatFromUrl ? { chatMessages: chatFromUrl.messages, activeChatId: chatFromUrl.id } : {}),
+			});
 		} catch {}
 	},
 }));

@@ -30,15 +30,25 @@ bun run main.ts serve
 bun run main.ts serve --transport http --port 3000
 ```
 
-### Frontend (React SPA)
+### Frontend (Next.js)
 
 ```bash
-cd ui
+cd packages/nextjs
 bun install
-bun run dev
+bun run dev   # runs on port 3001
 ```
 
 The frontend proxies `/openapi/*` to the backend on port 3000. Start the backend first with `--transport http`.
+
+The UI is a chat-first interface named **greg** with:
+- Multiple AI personalities: `greg` (casual), `explanatory`, `curt`, `casual`
+- Provider/model selection: Anthropic or Ollama
+- Persistent chat history (localStorage)
+- Endpoint search and inline result cards
+- Mermaid diagram rendering
+- Double-check (verification pass) toggle
+- Theme switcher: system / light / dark / claude
+- Ingest job UI with live progress
 
 ## MCP Configuration
 
@@ -130,4 +140,4 @@ bun run scripts/debugStore.ts
 - **Database**: ChromaDB
 - **Embeddings**: Ollama or ChromaDB built-in
 - **Validation**: Zod
-- **Frontend**: React + Vite + Tailwind CSS + Zustand + React Router
+- **Frontend**: Next.js 15 + React 18 + Tailwind CSS v4 + Zustand + shadcn/ui

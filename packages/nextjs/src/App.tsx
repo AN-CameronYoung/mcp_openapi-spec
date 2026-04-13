@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { listApis } from "./lib/api";
-import { useStore, pageFromHash } from "./store/store";
+import { useStore, pageFromHash, chatIdFromHash } from "./store/store";
 import Header from "./components/Header";
 import GregPage from "./pages/GregPage";
 import SearchPage from "./pages/SearchPage";
@@ -42,11 +42,23 @@ const App = (): JSX.Element => {
 			.catch(() => {});
 	}, []);
 
-	// Sync browser back/forward with page state
+	// Sync browser back/forward with page + chat state
 	useEffect(() => {
 		const handlePopState = () => {
 			const p = pageFromHash();
 			if (p) useStore.setState({ page: p });
+
+			// Restore the chat that the URL now points to (or clear if none)
+			if (p === "greg" || p === null) {
+				const chatId = chatIdFromHash();
+				const { chatHistory } = useStore.getState();
+				const chat = chatId ? chatHistory.find((c) => c.id === chatId) : null;
+				if (chat) {
+					useStore.setState({ chatMessages: chat.messages, activeChatId: chat.id });
+				} else {
+					useStore.setState({ chatMessages: [], activeChatId: null });
+				}
+			}
 		};
 		window.addEventListener("popstate", handlePopState);
 		return () => window.removeEventListener("popstate", handlePopState);
