@@ -18,7 +18,6 @@ import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
 import { streamChat, listModels, fetchSuggestions, generateFollowUpSuggestions, analyzeQuickActionRelevance, getEndpoint } from "../lib/api";
 import type { EndpointCard, Personality } from "../lib/api";
-import { stripRoutes } from "../actions/suggestions";
 import ApiViewer from "../components/ApiViewer";
 import GroupedApiSelect from "../components/GroupedApiSelect";
 import MermaidDiagram from "../components/MermaidDiagram";
@@ -1223,7 +1222,7 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: Q
   }, [diagramOpen, codeOpen]);
 
   return (
-    <div className="flex gap-1.5 mt-2">
+    <div className="flex items-center gap-1.5 mt-2">
       {/* Diagram dropdown */}
       <div ref={diagramRef} className="relative">
         <button
@@ -1313,9 +1312,8 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: Q
 
       {/* Inline status while the relevance verdict is still in flight */}
       {!judged && !hasDiagram && !hasCode && (
-        <span className="flex items-center gap-1.5 text-[0.6875rem] italic text-(--g-text-dim) select-none">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-(--g-text-dim) animate-pulse" />
-          checking whether a diagram or code snippet would help here…
+        <span className="ml-1 text-[0.6875rem] text-(--g-text-dim) animate-pulse select-none">
+          checking whether a diagram or code snippet fits here…
         </span>
       )}
     </div>
@@ -2146,9 +2144,7 @@ const GregPage = (): JSX.Element => {
                             onClick={() => handleSuggestion(s)}
                             className="px-3.5 py-1.5 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.8125rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
                           >
-                            {/* hide route hints from the visible label — full
-                                text (with routes) is still sent on click */}
-                            {stripRoutes(s)}
+                            {s}
                           </button>
                         ))}
                       </div>
@@ -2168,7 +2164,7 @@ const GregPage = (): JSX.Element => {
                             onClick={() => handleSuggestion(s)}
                             className="self-start px-3 py-1 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.75rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
                           >
-                            {stripRoutes(s)}
+                            {s}
                           </button>
                         ))}
                         <Button
