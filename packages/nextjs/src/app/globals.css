@@ -43,7 +43,7 @@
 	--g-user-bg:          color-mix(in srgb, var(--g-accent) 8%, transparent);
 	--g-greg-bg:          color-mix(in srgb, var(--g-text) 4%, var(--g-bg));
 	--g-code-bg:          var(--g-bg);
-	--g-inline-code-text: #121212;
+	--g-inline-code-text: var(--g-danger);
 	--g-logo-text: #FFFFFF;
 
 	/* Derived — method badges (GET=blue, POST=green, matching Swagger UI) */
@@ -114,7 +114,7 @@
 	--g-method-post:     #3A6B9B;
 	--g-method-put:      #9A7820;
 	--g-method-patch:    #7A5EA0;
-	--g-inline-code-text: #121212;
+	--g-inline-code-text: var(--g-danger);
 
 	color-scheme: light;
 }

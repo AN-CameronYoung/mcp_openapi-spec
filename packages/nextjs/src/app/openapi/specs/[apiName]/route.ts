@@ -65,6 +65,7 @@ export interface OAOperation {
 	parameters: OAParameter[];
 	requestBody?: OARequestBody;
 	responses: OAResponse[];
+	scopes?: string[];
 }
 
 export interface OAGroup {
@@ -239,6 +240,8 @@ function buildGroups(spec: Record<string, unknown>): OAGroup[] {
 			const tags = (op.tags as string[] | undefined) ?? [];
 			const primaryTag = tags[0] ?? "default";
 
+			const scopes = extractScopes(op.security as Record<string, unknown>[] | undefined);
+
 			const operation: OAOperation = {
 				method: method.toUpperCase(),
 				path: pathStr,
@@ -252,6 +255,7 @@ function buildGroups(spec: Record<string, unknown>): OAGroup[] {
 					? normalizeRequestBody(op.requestBody) ?? undefined
 					: undefined,
 				responses: normalizeResponses((op.responses ?? {}) as Record<string, unknown>),
+				...(scopes.length > 0 && { scopes }),
 			};
 
 			const list = groupMap.get(primaryTag) ?? [];
@@ -396,6 +400,21 @@ function mergeParams(
 	for (const p of pathParams) map.set(`${p.in}:${p.name}`, p);
 	for (const p of opParams) map.set(`${p.in}:${p.name}`, p);
 	return Array.from(map.values());
+}
+
+function extractScopes(security: Record<string, unknown>[] | undefined): string[] {
+	if (!security) return [];
+	const seen = new Set<string>();
+	for (const req of security) {
+		for (const scopes of Object.values(req)) {
+			if (Array.isArray(scopes)) {
+				for (const s of scopes) {
+					if (typeof s === "string") seen.add(s);
+				}
+			}
+		}
+	}
+	return Array.from(seen);
 }
 
 // ---------------------------------------------------------------------------

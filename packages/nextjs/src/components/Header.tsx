@@ -72,13 +72,13 @@ const ThemeToggle = (): JSX.Element => {
           {isDark ? <MoonIcon /> : <SunIcon />}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" sideOffset={6} className="w-32 gap-0 p-1">
+      <PopoverContent align="end" sideOffset={6} className="w-36 gap-0 p-1">
         {THEME_OPTS.map((o) => (
           <button
             key={o.value}
             onClick={() => setTheme(o.value)}
             className={cn(
-              "w-full rounded px-3 py-1.5 text-left text-[0.5625rem] transition-colors",
+              "w-full rounded px-3 py-1.5 text-left text-sm transition-colors",
               theme === o.value
                 ? "bg-accent text-primary font-medium"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -113,10 +113,10 @@ const Header = (): JSX.Element => {
 
       {/* Stats + theme toggle */}
       <div className="flex items-center gap-[0.6875rem] ml-auto">
-        <span className="flex items-center gap-1 text-[0.5625rem] text-muted-foreground">
+        <span className="flex items-center gap-1 text-xs text-muted-foreground">
           {Ic.server()} {apis.length} APIs
         </span>
-        <span className="text-[0.5625rem] text-muted-foreground">{totalEndpoints} endpoints</span>
+        <span className="text-xs text-muted-foreground">{totalEndpoints} endpoints</span>
         <AutoIngestIndicator />
         <ThemeToggle />
         <Button

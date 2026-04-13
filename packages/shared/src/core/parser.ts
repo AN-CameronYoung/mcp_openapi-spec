@@ -40,6 +40,7 @@ export const loadSpec = async (source: string): Promise<Record<string, unknown>>
 	}
 
 	sanitizeObject(data);
+	stubMissingRefs(data, source);
 
 	try {
 		// Disable external resolution — $ref to file/URL paths would bypass all
@@ -72,6 +73,7 @@ export const parseSpecContent = async (
 			: YAML.parse(raw, { maxAliasCount: MAX_YAML_ALIASES });
 
 	sanitizeObject(data);
+	stubMissingRefs(data, "<upload>");
 
 	try {
 		const resolved = await $RefParser.dereference(data, {
@@ -268,6 +270,86 @@ const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 /**
  * Recursively strips prototype-pollution keys from a parsed spec object in place.
  */
+// ---------------------------------------------------------------------------
+// $ref stubbing — replace unresolvable internal refs with placeholder schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * Decodes a single JSON Pointer reference token per RFC 6901.
+ */
+const decodeJsonPointerToken = (token: string): string =>
+	token.replace(/~1/g, "/").replace(/~0/g, "~");
+
+/**
+ * Resolves a JSON Pointer (RFC 6901) against the root document.
+ * Returns null if any token along the path is missing.
+ */
+const resolveJsonPointer = (root: unknown, pointer: string): unknown => {
+	if (pointer === "" || pointer === "#") return root;
+	const path = pointer.startsWith("#/") ? pointer.slice(2) : pointer.startsWith("/") ? pointer.slice(1) : pointer;
+	const tokens = path.split("/").map(decodeJsonPointerToken);
+
+	let current: unknown = root;
+	for (const token of tokens) {
+		if (current === null || typeof current !== "object") return null;
+		const container = current as Record<string, unknown> | unknown[];
+		if (Array.isArray(container)) {
+			const idx = Number(token);
+			if (!Number.isInteger(idx) || idx < 0 || idx >= container.length) return null;
+			current = container[idx];
+		} else {
+			if (!Object.prototype.hasOwnProperty.call(container, token)) return null;
+			current = container[token];
+		}
+	}
+	return current;
+};
+
+/**
+ * Walks the parsed spec and replaces any unresolvable internal `$ref` object with
+ * a placeholder schema so `$RefParser.dereference` won't abort the entire load.
+ * External refs (e.g. `http://...`, `./other.yaml`) are left alone — those are
+ * blocked by the resolver config and any failure there is intentional.
+ */
+const stubMissingRefs = (root: unknown, source: string): void => {
+	if (root === null || typeof root !== "object") return;
+
+	let stubbed = 0;
+	const missing = new Set<string>();
+
+	const walk = (node: unknown): void => {
+		if (node === null || typeof node !== "object") return;
+
+		if (Array.isArray(node)) {
+			for (const item of node) walk(item);
+			return;
+		}
+
+		const record = node as Record<string, unknown>;
+		const ref = record.$ref;
+		if (typeof ref === "string" && ref.startsWith("#")) {
+			if (resolveJsonPointer(root, ref) == null) {
+				missing.add(ref);
+				stubbed++;
+				for (const key of Object.keys(record)) delete record[key];
+				record.type = "object";
+				record.description = `unresolved $ref: ${ref}`;
+				return;
+			}
+		}
+
+		for (const key of Object.keys(record)) walk(record[key]);
+	};
+
+	walk(root);
+
+	if (stubbed > 0) {
+		const sample = [...missing].slice(0, 3).join(", ");
+		const suffix = missing.size > 3 ? `, +${missing.size - 3} more` : "";
+		console.warn(`[parser] ${source}: stubbed ${stubbed} unresolved $ref${stubbed === 1 ? "" : "s"} (${missing.size} unique: ${sample}${suffix})`);
+	}
+};
+
 const sanitizeObject = (obj: unknown): void => {
 	if (obj === null || typeof obj !== "object") return;
 

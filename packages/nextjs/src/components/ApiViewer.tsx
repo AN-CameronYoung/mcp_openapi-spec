@@ -8,8 +8,30 @@ import {
 	useState,
 } from "react";
 
+import ReactMarkdown from "react-markdown";
+import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
+import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
+import python from "react-syntax-highlighter/dist/esm/languages/prism/python";
+import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
+import json from "react-syntax-highlighter/dist/esm/languages/prism/json";
+import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
+import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import rehypeRaw from "rehype-raw";
+import remarkGfm from "remark-gfm";
+
 import { METHOD_COLORS } from "@/lib/constants";
+import { useStore } from "@/store/store";
 import { cn } from "@/lib/utils";
+
+SyntaxHighlighter.registerLanguage("typescript", typescript);
+SyntaxHighlighter.registerLanguage("javascript", typescript);
+SyntaxHighlighter.registerLanguage("python", python);
+SyntaxHighlighter.registerLanguage("bash", bash);
+SyntaxHighlighter.registerLanguage("sh", bash);
+SyntaxHighlighter.registerLanguage("shell", bash);
+SyntaxHighlighter.registerLanguage("json", json);
+SyntaxHighlighter.registerLanguage("yaml", yaml);
+SyntaxHighlighter.registerLanguage("yml", yaml);
 
 // ---------------------------------------------------------------------------
 // Types (mirrored from /openapi/specs/[apiName]/route.ts — keep in sync)
@@ -67,6 +89,7 @@ interface OAOperation {
 	parameters: OAParameter[];
 	requestBody?: OARequestBody;
 	responses: OAResponse[];
+	scopes?: string[];
 }
 
 interface OAGroup {
@@ -250,6 +273,75 @@ const ExampleBlock = ({ example }: { example: unknown }): JSX.Element => {
 };
 
 // ---------------------------------------------------------------------------
+// Markdown — shared renderer for all description fields in the spec
+// ---------------------------------------------------------------------------
+
+const stripMarkup = (text: string | undefined): string =>
+	(text ?? "").replace(/<[^>]+>/g, "").replace(/[*_`]/g, "").replace(/\s+/g, " ").trim();
+
+const renderPath = (path: string): JSX.Element[] => {
+	const parts = path.split(/(\{[^}]+\})/);
+	return parts.map((part, i) =>
+		part.startsWith("{") && part.endsWith("}") ? (
+			<span key={i} className="text-(--g-method-put-text)">{part}</span>
+		) : (
+			<span key={i}>{part}</span>
+		),
+	);
+};
+
+const MD_CLASSES = "[&_p]:my-0 [&_p+p]:mt-1.5 [&_a]:text-(--g-accent) [&_a]:underline [&_a:hover]:opacity-80 [&_:not(pre)>code]:font-mono [&_:not(pre)>code]:text-[0.8em] [&_:not(pre)>code]:text-(--g-inline-code-text) [&_:not(pre)>code]:bg-(--g-surface) [&_:not(pre)>code]:rounded [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-px [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:my-1 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:my-1 [&_li]:my-0.5 [&_strong]:text-(--g-text) [&_strong]:font-semibold [&_em]:italic [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-(--g-text) [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-(--g-text) [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-(--g-text) [&_h3]:mt-2 [&_h3]:mb-1 [&_blockquote]:border-l-2 [&_blockquote]:border-(--g-border) [&_blockquote]:pl-2 [&_blockquote]:text-(--g-text-dim) [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_th]:text-left [&_th]:font-semibold [&_th]:text-(--g-text) [&_th]:px-2 [&_th]:py-1 [&_th]:border-b [&_th]:border-(--g-border) [&_td]:px-2 [&_td]:py-1 [&_td]:border-b [&_td]:border-(--g-border) [&_td]:text-(--g-text-muted)";
+
+const LANG_ALIASES: Record<string, string> = {
+	ts: "typescript",
+	js: "javascript",
+	py: "python",
+	sh: "bash",
+	shell: "bash",
+	yml: "yaml",
+};
+
+const Markdown = ({ children, className }: { children: string; className?: string }): JSX.Element => {
+	const theme = useStore((s) => s.theme);
+	const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+	const syntaxStyle = isDark ? oneDark : oneLight;
+
+	const components = useMemo(() => ({
+		code({ className: cls, children: kids }: { className?: string; children?: React.ReactNode }) {
+			const match = /language-(\w+)/.exec(cls ?? "");
+			const code = String(kids ?? "").replace(/\n$/, "");
+			if (match || code.includes("\n")) {
+				const rawLang = match?.[1] ?? "text";
+				const lang = LANG_ALIASES[rawLang] ?? rawLang;
+				return (
+					<SyntaxHighlighter
+						style={syntaxStyle}
+						language={lang}
+						PreTag="div"
+						customStyle={{ background: "var(--g-bg)", borderRadius: 6, fontSize: 12, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto", margin: "6px 0" }}
+						codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre" } }}
+					>
+						{code}
+					</SyntaxHighlighter>
+				);
+			}
+			return <code className={cls}>{kids}</code>;
+		},
+		pre({ children: kids }: { children?: React.ReactNode }) {
+			return <>{kids}</>;
+		},
+	}), [syntaxStyle]);
+
+	return (
+		<div className={cn("leading-relaxed", MD_CLASSES, className)}>
+			<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={components as never}>
+				{children}
+			</ReactMarkdown>
+		</div>
+	);
+};
+
+// ---------------------------------------------------------------------------
 // ParamTable — parameter list
 // ---------------------------------------------------------------------------
 
@@ -260,32 +352,104 @@ const IN_BADGE: Record<string, string> = {
 	cookie: "bg-(--g-surface) text-(--g-text-dim)",
 };
 
-const ParamTable = ({ params }: { params: OAParameter[] }): JSX.Element => (
-	<div className="space-y-0.5">
-		{params.map((p) => (
-			<div
-				key={`${p.in}:${p.name}`}
-				className="flex flex-wrap items-center gap-1.5 rounded px-2 py-1.5 text-xs odd:bg-(--g-surface)"
-			>
-				<span className={cn("px-1.5 py-0.5 rounded font-mono text-[0.625rem] uppercase tracking-wide shrink-0", IN_BADGE[p.in] ?? "")}>
-					{p.in}
+const ParamRow = ({ p }: { p: OAParameter }): JSX.Element => (
+	<div className="rounded px-2 py-1.5 text-xs odd:bg-(--g-surface)">
+		<div className="flex flex-wrap items-center gap-1.5">
+			<span className={cn("px-1.5 py-0.5 rounded font-mono text-[0.625rem] uppercase tracking-wide shrink-0", IN_BADGE[p.in] ?? "")}>
+				{p.in}
+			</span>
+			<code className="font-mono font-medium text-(--g-text) shrink-0">{p.name}</code>
+			{p.required && (
+				<span className="text-[0.625rem] text-(--g-danger) shrink-0">required</span>
+			)}
+			{p.schema?.type && (
+				<span className="font-mono text-(--g-text-dim) text-[0.6875rem] shrink-0">
+					{p.schema.type}{p.schema.format ? `<${p.schema.format}>` : ""}
 				</span>
-				<code className="font-mono font-medium text-(--g-text) shrink-0">{p.name}</code>
-				{p.required && (
-					<span className="text-[0.625rem] text-(--g-danger) shrink-0">required</span>
-				)}
-				{p.schema?.type && (
-					<span className="font-mono text-(--g-text-dim) text-[0.6875rem] shrink-0">
-						{p.schema.type}{p.schema.format ? `<${p.schema.format}>` : ""}
-					</span>
-				)}
-				{p.description && (
-					<span className="text-(--g-text-dim) text-[0.6875rem] ml-auto">{p.description}</span>
-				)}
-			</div>
-		))}
+			)}
+		</div>
+		{p.description && (
+			<Markdown className="text-(--g-text-dim) text-[0.6875rem] mt-1">{p.description}</Markdown>
+		)}
 	</div>
 );
+
+const CompactParamRow = ({ p }: { p: OAParameter }): JSX.Element => {
+	const typeStr = p.schema?.type
+		? `${p.schema.type}${p.schema.format ? `<${p.schema.format}>` : ""}`
+		: "";
+	return (
+		<div className="flex items-baseline gap-2 px-2 py-1 text-xs odd:bg-(--g-surface) rounded">
+			<span className="font-mono text-(--g-text) shrink-0">
+				<span className="font-medium">{p.name}</span>
+				{typeStr && (
+					<>
+						<span className="text-(--g-text-dim)">: </span>
+						<span className="text-(--g-text-dim) text-[0.6875rem]">{typeStr}</span>
+					</>
+				)}
+			</span>
+			{p.required && (
+				<span className="text-[0.625rem] text-(--g-danger) shrink-0">required</span>
+			)}
+			{p.description && (
+				<Markdown className="text-(--g-text-dim) text-[0.6875rem] ml-auto text-right min-w-0 flex-1">
+					{p.description}
+				</Markdown>
+			)}
+		</div>
+	);
+};
+
+const ParamGroup = ({ label, group, params }: { label: string; group: string; params: OAParameter[] }): JSX.Element => {
+	const [open, setOpen] = useState(true);
+	return (
+		<div className="rounded border border-(--g-border) overflow-hidden">
+			<button
+				onClick={() => setOpen((v) => !v)}
+				className="flex items-center gap-2 w-full px-2.5 py-1.5 text-xs text-left hover:bg-(--g-surface-hover) cursor-pointer"
+			>
+				<span className={cn("px-1.5 py-0.5 rounded font-mono text-[0.625rem] uppercase tracking-wide shrink-0", IN_BADGE[group] ?? "")}>
+					{label}
+				</span>
+				<span className="text-(--g-text-muted) shrink-0">{params.length} parameter{params.length === 1 ? "" : "s"}</span>
+				{params.some((p) => p.required) && (
+					<span className="text-[0.625rem] text-(--g-danger) shrink-0">required</span>
+				)}
+				<span className={cn("flex text-(--g-text-dim) shrink-0 transition-transform duration-150 ml-auto", open ? "rotate-180" : "")}>
+					<svg width={8} height={8} viewBox="0 0 10 10" fill="none">
+						<path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+					</svg>
+				</span>
+			</button>
+			{open && (
+				<div className="px-2 py-1.5 border-t border-(--g-border) space-y-0.5">
+					{params.map((p) => (
+						<CompactParamRow key={`${p.in}:${p.name}`} p={p} />
+					))}
+				</div>
+			)}
+		</div>
+	);
+};
+
+const ParamTable = ({ params }: { params: OAParameter[] }): JSX.Element => {
+	const pathParams = params.filter((p) => p.in === "path");
+	const queryParams = params.filter((p) => p.in === "query");
+	const headerParams = params.filter((p) => p.in === "header");
+	const otherParams = params.filter((p) => p.in !== "path" && p.in !== "query" && p.in !== "header");
+
+	return (
+		<div className="space-y-1">
+			{pathParams.length > 0 && <ParamGroup label="path" group="path" params={pathParams} />}
+			{queryParams.length > 0 && <ParamGroup label="query" group="query" params={queryParams} />}
+			{headerParams.length > 0 && <ParamGroup label="header" group="header" params={headerParams} />}
+			{otherParams.map((p) => (
+				<ParamRow key={`${p.in}:${p.name}`} p={p} />
+			))}
+		</div>
+	);
+};
 
 // ---------------------------------------------------------------------------
 // schemaToJson — generate a representative JSON value from a schema node
@@ -377,9 +541,25 @@ function statusColor(code: string): string {
 	return "bg-(--g-surface) text-(--g-text-dim)";
 }
 
+const isEmptyPreview = (value: unknown): boolean => {
+	if (value == null) return true;
+	if (typeof value === "string") return value.length === 0;
+	if (Array.isArray(value)) return value.length === 0;
+	if (typeof value === "object") return Object.keys(value as object).length === 0;
+	return false;
+};
+
 const ResponsesSection = ({ responses }: { responses: OAResponse[] }): JSX.Element => {
+	const previews = useMemo(
+		() =>
+			new Map(
+				responses.map((r) => [r.statusCode, r.example ?? (r.schema ? schemaToJson(r.schema) : null)] as const),
+			),
+		[responses],
+	);
+
 	const [open, setOpen] = useState<Set<string>>(
-		() => new Set(responses.filter((r) => r.schema != null || r.example != null).map((r) => r.statusCode)),
+		() => new Set(responses.filter((r) => !isEmptyPreview(previews.get(r.statusCode))).map((r) => r.statusCode)),
 	);
 
 	const toggle = (code: string): void =>
@@ -393,7 +573,8 @@ const ResponsesSection = ({ responses }: { responses: OAResponse[] }): JSX.Eleme
 		<div className="space-y-1">
 			{responses.map((r) => {
 				const isOpen = open.has(r.statusCode);
-				const hasDetail = r.schema != null || r.example != null;
+				const preview = previews.get(r.statusCode);
+				const hasDetail = !isEmptyPreview(preview);
 				return (
 					<div key={r.statusCode} className="rounded border border-(--g-border) overflow-hidden">
 						<button
@@ -406,7 +587,7 @@ const ResponsesSection = ({ responses }: { responses: OAResponse[] }): JSX.Eleme
 							<span className={cn("px-1.5 py-0.5 rounded font-mono font-bold text-[0.625rem] shrink-0", statusColor(r.statusCode))}>
 								{r.statusCode}
 							</span>
-							<span className="text-(--g-text-muted) flex-1 min-w-0 truncate">{r.description}</span>
+							<span className="text-(--g-text-muted) flex-1 min-w-0 truncate">{stripMarkup(r.description)}</span>
 							{r.contentType && (
 								<span className="font-mono text-[0.5625rem] text-(--g-text-dim) shrink-0">{r.contentType}</span>
 							)}
@@ -418,16 +599,11 @@ const ResponsesSection = ({ responses }: { responses: OAResponse[] }): JSX.Eleme
 								</span>
 							)}
 						</button>
-						{isOpen && (
+						{isOpen && hasDetail && (
 							<div className="px-2.5 pb-2.5 pt-1 border-t border-(--g-border)">
-								{(() => {
-									const preview = r.example ?? (r.schema ? schemaToJson(r.schema) : null);
-									return preview != null ? (
-										<div className="overflow-y-auto max-h-[calc(20*1.375rem)] rounded">
-											<ExampleBlock example={preview} />
-										</div>
-									) : null;
-								})()}
+								<div className="overflow-y-auto max-h-[calc(20*1.375rem)] rounded">
+									<ExampleBlock example={preview} />
+								</div>
 							</div>
 						)}
 					</div>
@@ -443,13 +619,17 @@ const ResponsesSection = ({ responses }: { responses: OAResponse[] }): JSX.Eleme
 
 const OpDetail = ({ op }: { op: OAOperation }): JSX.Element => (
 	<div className="border-t border-(--g-border) px-3.5 py-3 space-y-4">
+		<div className="flex items-baseline gap-2 font-mono text-[0.75rem] leading-snug">
+			<span className="font-semibold shrink-0 text-(--g-text-dim)">URI:</span>
+			<code className="text-(--g-text) break-all min-w-0">{renderPath(op.path)}</code>
+		</div>
 		{op.description && (
-			<p className="text-xs text-(--g-text-muted) leading-relaxed">{op.description}</p>
+			<Markdown className="text-xs text-(--g-text-muted)">{op.description}</Markdown>
 		)}
 		{op.parameters.length > 0 && (
 			<div>
 				<div className="text-[0.625rem] font-semibold text-(--g-text-dim) uppercase tracking-widest mb-1.5">
-					Parameters
+					Inputs
 				</div>
 				<ParamTable params={op.parameters} />
 			</div>
@@ -470,7 +650,24 @@ const OpDetail = ({ op }: { op: OAOperation }): JSX.Element => (
 				<ResponsesSection responses={op.responses} />
 			</div>
 		)}
-		{!op.description && !op.parameters.length && !op.requestBody && !op.responses.length && (
+		{op.scopes && op.scopes.length > 0 && (
+			<div>
+				<div className="text-[0.625rem] font-semibold text-(--g-text-dim) uppercase tracking-widest mb-1.5">
+					Required scopes
+				</div>
+				<div className="flex flex-wrap gap-1.5">
+					{op.scopes.map((scope) => (
+						<code
+							key={scope}
+							className="font-mono text-xs px-1.5 py-0.5 rounded bg-(--g-surface) border border-(--g-border) text-(--g-accent)"
+						>
+							{scope}
+						</code>
+					))}
+				</div>
+			</div>
+		)}
+		{!op.description && !op.parameters.length && !op.requestBody && !op.responses.length && !op.scopes?.length && (
 			<p className="text-xs text-(--g-text-dim)">No additional details.</p>
 		)}
 	</div>
@@ -515,13 +712,13 @@ const OpRow = ({
 				className="flex items-center gap-2 w-full px-3.5 py-2.5 text-left hover:bg-(--g-surface-hover) transition-colors"
 			>
 				<span
-					className="method-badge shrink-0"
+					className="method-badge shrink-0 w-[3.75rem] text-center"
 					style={{ background: m.bg, color: m.text, border: `1px solid ${m.border}` }}
 				>
 					{op.method}
 				</span>
 				<code className="font-mono text-[0.8125rem] text-(--g-text) flex-1 min-w-0 truncate">
-					{op.path}
+					{renderPath(op.path)}
 				</code>
 				{op.deprecated && (
 					<span className="text-[0.5625rem] text-(--g-danger) border border-(--g-danger)/50 px-1 rounded shrink-0">
@@ -737,17 +934,15 @@ const ApiViewer = ({
 		>
 			{/* Spec header */}
 			{info && (
-				<div className="mb-4 px-0.5">
-					<div className="flex items-baseline gap-2 flex-wrap">
-						<h1 className="text-sm font-semibold text-(--g-text)">{info.title}</h1>
+				<div className="mb-5 px-0.5">
+					<div className="flex items-baseline gap-2.5 flex-wrap">
+						<h1 className="text-xl font-semibold text-(--g-text)">{info.title}</h1>
 						{info.version && (
-							<span className="text-[0.6875rem] text-(--g-text-dim) font-mono">{info.version}</span>
+							<span className="text-sm text-(--g-text-dim) font-mono">{info.version}</span>
 						)}
 					</div>
 					{info.description && (
-						<p className="text-xs text-(--g-text-muted) mt-1 leading-relaxed line-clamp-3">
-							{info.description}
-						</p>
+						<Markdown className="text-sm text-(--g-text-muted) mt-2">{info.description}</Markdown>
 					)}
 				</div>
 			)}

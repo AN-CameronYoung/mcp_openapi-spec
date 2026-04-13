@@ -129,21 +129,38 @@ const MenuItem = ({ label, detail, selected, onClick, className }: MenuItemProps
  * A grouped row that reveals a flyout sub-menu of child APIs on hover.
  * The sub-menu is portalled to document.body to escape any overflow/clip containers.
  */
+const FLYOUT_GAP = 6;
+const VIEWPORT_MARGIN = 8;
+
 const FlyoutGroup = ({ entry, value, onSelect, fontSize }: FlyoutGroupProps): JSX.Element => {
   const [hovered, setHovered] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
-  const [flyoutPos, setFlyoutPos] = useState({ top: 0, left: 0 });
+  const flyoutRef = useRef<HTMLDivElement>(null);
+  const [flyoutPos, setFlyoutPos] = useState({ top: 0, left: 0, flipped: false });
   const hasSelected = entry.children.some((c) => c.name === value);
 
   const handleMouseEnter = () => {
     if (rowRef.current) {
       const rect = rowRef.current.getBoundingClientRect();
-      setFlyoutPos({ top: rect.top, left: rect.right + 6 });
+      setFlyoutPos({ top: rect.top, left: rect.right + FLYOUT_GAP, flipped: false });
     }
     setHovered(true);
   };
 
   const handleMouseLeave = () => setHovered(false);
+
+  // After the flyout mounts, measure it and flip to the left side
+  // if it would overflow the right edge of the viewport.
+  useEffect(() => {
+    if (!hovered || !rowRef.current || !flyoutRef.current) return;
+    const rowRect = rowRef.current.getBoundingClientRect();
+    const flyoutRect = flyoutRef.current.getBoundingClientRect();
+    const wouldOverflow = rowRect.right + FLYOUT_GAP + flyoutRect.width > window.innerWidth - VIEWPORT_MARGIN;
+    if (wouldOverflow) {
+      const leftFlipped = Math.max(VIEWPORT_MARGIN, rowRect.left - flyoutRect.width - FLYOUT_GAP);
+      setFlyoutPos({ top: rowRect.top, left: leftFlipped, flipped: true });
+    }
+  }, [hovered]);
 
   return (
     <div
@@ -165,10 +182,18 @@ const FlyoutGroup = ({ entry, value, onSelect, fontSize }: FlyoutGroupProps): JS
 
       {hovered && createPortal(
         <div
+          ref={flyoutRef}
           style={{ position: "fixed", top: flyoutPos.top, left: flyoutPos.left, zIndex: 200, fontSize }}
           className="min-w-44 rounded-lg border border-border bg-popover p-1 shadow-md"
         >
-          <div className="absolute -left-[5px] top-2.5 size-2.5 rotate-45 border-l border-b border-border bg-popover" />
+          <div
+            className={cn(
+              "absolute top-2.5 size-2.5 rotate-45 bg-popover",
+              flyoutPos.flipped
+                ? "-right-[5px] border-r border-t border-border"
+                : "-left-[5px] border-l border-b border-border",
+            )}
+          />
           {entry.children.map((child) => (
             <MenuItem
               key={child.name}

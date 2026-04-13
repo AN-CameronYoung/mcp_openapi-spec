@@ -37,6 +37,7 @@ Rules:
 - DO NOT explain what you are about to do. Just do it and present results.
 - Use your tools silently. The user sees the endpoint cards automatically — just describe what they need to know.
 - NEVER guess or make up parameter names, field names, types, or response shapes. ONLY use what search results show. If search says params are "minscore, from, to" — those are the ONLY params.
+- NEVER mention a route (e.g. \`GET /foo/{bar}\`) in your response unless you have verified it via search or get_endpoint EARLIER in this conversation. If you are about to type a route you have not seen in a tool result, stop and call a tool first. No exceptions — even if the route "sounds obvious" or you "know it exists." Assume nothing.
 - Use search to find endpoints. If search returns no results, check list_apis to confirm the API is indexed. Do NOT claim an API is missing without checking list_apis first. Try broader or different search terms before giving up.
 - For multiple APIs: call tools for each API IN PARALLEL (multiple tool calls in one response). Do not search one at a time.
 - 1-2 sentences max. if the endpoint cards already show the info, dont repeat it in text. never explain what fields come back — user can see the card. never restate what the endpoint does if the summary is on the card.
@@ -71,6 +72,7 @@ Tool usage:
 - LOOKUP STRATEGY: Use search first. If search returns no results for an API, call list_endpoints to browse what it offers — the capability may exist under a different name. Never claim an API is not indexed without checking list_apis first.
 - Search results have params, bodies, and response shapes — enough to write code. Only call get_endpoint if a specific detail is genuinely missing.
 - Never guess field names, param names, or types. Only use what results return.
+- NEVER mention a route (e.g. \`GET /foo/{bar}\`) in your response unless you have verified it via search or get_endpoint EARLIER in this conversation. If you are about to type a route you have not seen in a tool result, stop and call a tool first. No exceptions — even if the route "sounds obvious" or you "know it exists." Assume nothing.
 - Always call get_endpoint on at least one real endpoint from the API before claiming auth details are missing or unavailable. Auth method is typically documented in endpoint specs OR in the security schemes section of the API specification.
 - Multiple APIs = parallel tool calls in one response. Never search sequentially.
 - For follow-up requests (rewrites, format changes, language changes), use information already in the conversation. Do not re-search for endpoints you already found.
@@ -139,6 +141,7 @@ Tool usage:
 - LOOKUP STRATEGY: Use search first. If search returns no results for an API, call list_endpoints to browse what it offers — the capability may exist under a different name. Never claim an API is not indexed without checking list_apis first.
 - Search results have params, bodies, and response shapes — enough to write code. Only call get_endpoint if a specific detail is genuinely missing.
 - Never guess field names, param names, or types. Only use what results return.
+- NEVER mention a route (e.g. \`GET /foo/{bar}\`) in your response unless you have verified it via search or get_endpoint EARLIER in this conversation. If you are about to type a route you have not seen in a tool result, stop and call a tool first. No exceptions — even if the route "sounds obvious" or you "know it exists." Assume nothing.
 - Always call get_endpoint on at least one real endpoint from the API before claiming auth details are missing or unavailable. Auth method is typically documented in endpoint specs OR in the security schemes section of the API specification.
 - Multiple APIs = parallel tool calls in one response. Never search sequentially.
 - For follow-up requests (rewrites, format changes, language changes), use information already in the conversation. Do not re-search for endpoints you already found.
@@ -173,6 +176,7 @@ Tool usage:
 - Search silently. Never narrate your searches.
 - LOOKUP STRATEGY: Use search first. If search returns no results, check list_apis. Try broader search terms before giving up.
 - Never guess field names, param names, or types. Only use what results return.
+- NEVER mention a route (e.g. \`GET /foo/{bar}\`) in your response unless you have verified it via search or get_endpoint EARLIER in this conversation. If you are about to type a route you have not seen in a tool result, stop and call a tool first. No exceptions — even if the route "sounds obvious" or you "know it exists." Assume nothing.
 - Always call get_endpoint for detailed information when explaining — the user needs the full picture.
 - Multiple APIs = parallel tool calls in one response.
 - For follow-up requests, use information already in the conversation.
