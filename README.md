@@ -43,9 +43,12 @@ The frontend proxies `/openapi/*` to the backend on port 3000. Start the backend
 The UI is a chat-first interface named **greg** with:
 - Multiple AI personalities: `greg` (casual), `explanatory`, `curt`, `casual`
 - Provider/model selection: Anthropic or Ollama
-- Persistent chat history (localStorage)
-- Endpoint search and inline result cards
-- Mermaid diagram rendering
+- Persistent chat history (localStorage), with chat ID stamped into the URL hash
+- Endpoint search and inline result cards (parsed from `<endpoint/>` tags the model emits)
+- Mermaid diagram rendering with SVG / PNG / PDF / clipboard export
+- "Diagram" and "Code" quick-action buttons under each reply — the model emits a hidden `<quickActions/>` tag that grays out actions it judges irrelevant for the response
+- Auto-generated follow-up question suggestions after each reply
+- Retry from any user message — always uses the **current** personality and model, not the one that produced the original reply
 - Double-check (verification pass) toggle
 - Theme switcher: system / light / dark / claude
 - Ingest job UI with live progress

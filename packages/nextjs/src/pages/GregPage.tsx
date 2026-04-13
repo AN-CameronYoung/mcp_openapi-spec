@@ -16,7 +16,7 @@ import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
 
 import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
-import { streamChat, listModels, fetchSuggestions, generateFollowUpSuggestions, analyzeQuickActionRelevance, getEndpoint } from "../lib/api";
+import { streamChat, listModels, fetchSuggestions, generateFollowUpSuggestions, getEndpoint } from "../lib/api";
 import type { EndpointCard, Personality } from "../lib/api";
 import ApiViewer from "../components/ApiViewer";
 import GroupedApiSelect from "../components/GroupedApiSelect";
@@ -241,6 +241,7 @@ const cleanText = (raw: string): string => {
   // These operate on fenced blocks themselves, so they have to run first.
   const pre = raw
     .replace(/<endpoint[^>]*\/?>/g, "")
+    .replace(/<quickActions[^>]*\/?>/g, "")
     .replace(/```[^\n]*\n([\s\S]*?)```/g, (match, inner: string) => {
       const lines = inner.trim().split("\n").filter((l: string) => l.trim());
       const isTable = lines.length >= 2 && lines.every((l: string) => l.trimStart().startsWith("|"));
@@ -1188,7 +1189,8 @@ interface QuickActionBarProps {
   msgText: string;
   msgIdx: number;
   onQuickAction: (msgIdx: number, action: "diagram" | "code", subType?: string) => void;
-  // null/undefined means relevance hasn't been judged yet — keep buttons enabled
+  // Verdict from the model's <quickActions/> tag. Undefined = the model didn't
+  // emit it (older history, smaller model) — fail-open and leave buttons usable.
   quickActions?: { diagram: boolean; code: boolean };
 }
 
@@ -1202,14 +1204,12 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: Q
   const hasDiagram = useMemo(() => /```mermaid/i.test(msgText), [msgText]);
   const hasCode = useMemo(() => /```(?!mermaid)\w/.test(msgText), [msgText]);
 
-  // Disable when (a) already present in reply, (b) relevance not yet judged
-  // (gray out by default to avoid a race where the user clicks before the
-  // verdict lands), or (c) AI judged it not relevant.
-  const judged = quickActions !== undefined;
+  // Disable when (a) already present in reply or (b) the model judged it not
+  // relevant via the inline <quickActions/> tag. Missing tag = fail-open.
   const diagramIrrelevant = quickActions?.diagram === false;
   const codeIrrelevant = quickActions?.code === false;
-  const diagramDisabled = hasDiagram || !judged || diagramIrrelevant;
-  const codeDisabled = hasCode || !judged || codeIrrelevant;
+  const diagramDisabled = hasDiagram || diagramIrrelevant;
+  const codeDisabled = hasCode || codeIrrelevant;
 
   useEffect(() => {
     if (!diagramOpen && !codeOpen) return;
@@ -1236,11 +1236,9 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: Q
           title={
             hasDiagram
               ? "Diagram already in this response — ask explicitly if you want a different one"
-              : !judged
-                ? "Checking whether a diagram fits this response…"
-                : diagramIrrelevant
-                  ? "A diagram doesn't fit this response — ask explicitly if you want one anyway"
-                  : "Generate a mermaid diagram from this response"
+              : diagramIrrelevant
+                ? "A diagram doesn't fit this response — ask explicitly if you want one anyway"
+                : "Generate a mermaid diagram from this response"
           }
         >
           <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -1280,11 +1278,9 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: Q
           title={
             hasCode
               ? "Code already in this response — ask explicitly if you want a different language"
-              : !judged
-                ? "Checking whether code fits this response…"
-                : codeIrrelevant
-                  ? "A code snippet doesn't fit this response — ask explicitly if you want one anyway"
-                  : "Generate code from this response"
+              : codeIrrelevant
+                ? "A code snippet doesn't fit this response — ask explicitly if you want one anyway"
+                : "Generate code from this response"
           }
         >
           <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -1310,12 +1306,6 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: Q
         )}
       </div>
 
-      {/* Inline status while the relevance verdict is still in flight */}
-      {!judged && !hasDiagram && !hasCode && (
-        <span className="ml-1 text-[0.6875rem] text-(--g-text-dim) animate-pulse select-none">
-          checking whether a diagram or code snippet fits here…
-        </span>
-      )}
     </div>
   );
 });
@@ -1728,6 +1718,11 @@ const GregPage = (): JSX.Element => {
   const handleCloseSwagger = useCallback(() => { setPanelOpen(false); setPanelAnchor(null); }, []);
   const handleCloseDebug = useCallback(() => setDebugMsgIdx(null), []);
 
+  // Keep a ref to the latest handleSend so handleRetry always picks up the
+  // current personality/model/provider — not whatever was in scope when the
+  // original message was sent. Assigned below, after handleSend is declared.
+  const handleSendRef = useRef<((overrideText?: string, baseMessages?: ChatMsg[]) => Promise<void>) | null>(null);
+
   const handleRetry = useCallback((msgIdx: number): void => {
     if (chatLoading) return;
     const msg = chatMessages[msgIdx];
@@ -1740,7 +1735,7 @@ const GregPage = (): JSX.Element => {
     setContextBoundaries((prev) => prev.filter((b) => b <= msgIdx));
     // Pass the trimmed array directly so handleSend uses it for history,
     // not the stale closure value that hasn't updated yet
-    handleSend(msg.text, trimmed);
+    handleSendRef.current?.(msg.text, trimmed);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatLoading, chatMessages, contextBoundaries, setChatMessages]);
 
@@ -1782,10 +1777,7 @@ const GregPage = (): JSX.Element => {
     generateFollowUpSuggestions(lastUser.text, lastAssistant.text, opts)
       .then((s) => { setFollowUpSuggestions(s); setGeneratingFollowUps(false); })
       .catch(() => { setGeneratingFollowUps(false); });
-    analyzeQuickActionRelevance(lastUser.text, lastAssistant.text, opts)
-      .then((qa) => { updateLastAssistant((m) => ({ ...m, quickActions: qa })); })
-      .catch(() => { /* leave buttons enabled on failure */ });
-  }, [chatMessages, generatingFollowUps, selectedModel, selectedProvider, updateLastAssistant]);
+  }, [chatMessages, generatingFollowUps, selectedModel, selectedProvider]);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -1960,6 +1952,11 @@ const GregPage = (): JSX.Element => {
       mentionedKeys.has(`${ep.method}:${ep.path}`) ? { ...ep, score: 1 } : ep,
     );
 
+    // Parse the trailing <quickActions diagram="..." code="..."/> tag the model emits
+    // per the system prompt. Failure to find it = leave buttons enabled (fail-open).
+    const qaMatch = accumulated.match(/<quickActions\s+diagram="(true|false)"\s+code="(true|false)"\s*\/?>/i);
+    const quickActions = qaMatch ? { diagram: qaMatch[1] === "true", code: qaMatch[2] === "true" } : undefined;
+
     updateLastAssistant((m) => ({
       ...m,
       streaming: false,
@@ -1970,6 +1967,7 @@ const GregPage = (): JSX.Element => {
       ...(doneVerificationUsage !== undefined && { verificationUsage: doneVerificationUsage }),
       ...(verificationText ? { verificationText } : {}),
       ...(debugLog.length > 0 ? { debug: debugLog } : {}),
+      ...(quickActions !== undefined && { quickActions }),
       // Always record compaction data when auto-compact is on so the debug panel can display the status
       ...(autoCompactRef.current ? { compactedTokens: autoCompactedTokens, compactedHistory: history } : {}),
     }));
@@ -1985,14 +1983,12 @@ const GregPage = (): JSX.Element => {
       generateFollowUpSuggestions(text, accumulated, opts)
         .then((s) => { setFollowUpSuggestions(s); setGeneratingFollowUps(false); })
         .catch(() => { setGeneratingFollowUps(false); });
-      // Judge diagram/code relevance in parallel — patch the last assistant
-      // message when the verdict comes back so the QuickActionBar can gray
-      // out actions that don't make sense for this reply.
-      analyzeQuickActionRelevance(text, accumulated, opts)
-        .then((qa) => { updateLastAssistant((m) => ({ ...m, quickActions: qa })); })
-        .catch(() => { /* leave buttons enabled on failure */ });
     }
   };
+
+  // Refresh the ref every render so handleRetry always invokes the
+  // latest handleSend closure (with current personality/model/provider).
+  handleSendRef.current = handleSend;
 
   const handleSuggestion = (q: string): void => { handleSend(q); };
 
