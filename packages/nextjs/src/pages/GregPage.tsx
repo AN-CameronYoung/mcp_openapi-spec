@@ -32,7 +32,6 @@ import { ForkContext } from "../components/chat/ForkContext";
 import { usePanelRef } from "react-resizable-panels";
 
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "../components/ui/resizable";
-import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
 SyntaxHighlighter.registerLanguage("typescript", typescript);
 SyntaxHighlighter.registerLanguage("javascript", typescript);
@@ -1842,8 +1841,7 @@ const GregPage = (): JSX.Element => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatLoading, chatMessages]);
 
-  // Refs so handleRefreshFollowUps (and the memoized Virtuoso components that
-  // close over it) keep a stable identity across renders — reading chatMessages
+  // Refs so handleRefreshFollowUps keeps a stable identity across renders — reading chatMessages
   // directly would invalidate the memo on every streaming token.
   const refreshDepsRef = useRef({ chatMessages, generatingFollowUps, selectedModel, selectedProvider });
   refreshDepsRef.current = { chatMessages, generatingFollowUps, selectedModel, selectedProvider };
@@ -1864,22 +1862,40 @@ const GregPage = (): JSX.Element => {
   }, []);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [userScrolled, setUserScrolled] = useState(false);
   const userScrolledRef = useRef(false);
 
   const scrollToBottom = useCallback(() => {
-    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "smooth", align: "end" });
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     userScrolledRef.current = false;
     setUserScrolled(false);
   }, []);
 
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    userScrolledRef.current = !atBottom;
+    setUserScrolled(!atBottom);
+  }, []);
+
   // Jump to bottom whenever the active conversation changes (tab switch / URL restore).
   useEffect(() => {
-    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto", align: "end" });
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
     userScrolledRef.current = false;
     setUserScrolled(false);
   }, [activeConversationId]);
+
+  // Auto-scroll during streaming and on new messages, unless user has scrolled up.
+  useEffect(() => {
+    if (userScrolledRef.current) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [chatMessages]);
 
   const handleFork = useCallback((msgIdx: number): void => {
     const id = forkConversation(msgIdx);
@@ -2119,8 +2135,7 @@ const GregPage = (): JSX.Element => {
   // latest handleSend closure (with current personality/model/provider).
   handleSendRef.current = handleSend;
 
-  // Stable identity — routed through handleSendRef so the Virtuoso components
-  // memo doesn't invalidate every render.
+  // Stable identity — routed through handleSendRef so renders don't recreate it.
   const handleSuggestion = useCallback((q: string): void => {
     handleSendRef.current?.(q);
   }, []);
@@ -2132,41 +2147,7 @@ const GregPage = (): JSX.Element => {
     }
   };
 
-  // Memoize Virtuoso's `components` so Footer/Header keep a stable identity.
-  // Without this the inline Footer is a new function every render — Virtuoso
-  // treats it as a new component type and remounts it, which makes the
-  // follow-up suggestions flash in then vanish.
   const hasChatMessages = chatMessages.length > 0;
-  const virtuosoComponents = useMemo(() => ({
-    Header: () => (
-      isBranchActive ? (
-        <ForkContext parentName={parentConversation?.name ?? "Main"} excerpt={forkExcerpt} />
-      ) : (
-        <div className={cn("flex flex-col items-center gap-4 text-(--g-text-dim) px-6", hasChatMessages ? "pt-6 pb-2" : "min-h-full justify-center")}>
-          <img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
-          <span className="text-lg">{greeting}</span>
-          {suggestions.length > 0 && !hasChatMessages && (
-            <div className="flex flex-wrap justify-center gap-2 max-w-[35rem]">
-              {suggestions.map((s, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleSuggestion(s)}
-                  className="px-3.5 py-1.5 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.8125rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )
-    ),
-    // Keep the Footer minimal and stable in identity. Follow-up suggestions
-    // used to live here, but their height changed when they arrived (inline
-    // from the stream) and Virtuoso would compensate by nudging the scroll
-    // up ~one message's worth. They now render outside Virtuoso, below.
-    Footer: () => <div className="h-3" />,
-  }), [hasChatMessages, greeting, suggestions, handleSuggestion, isBranchActive, parentConversation, forkExcerpt]);
 
   return (
     <div className="flex h-[calc(100%-2.75rem)]">
@@ -2295,23 +2276,39 @@ const GregPage = (): JSX.Element => {
                 />
               </div>
             )}
-            <Virtuoso
-              ref={virtuosoRef}
-              className="flex-1 min-h-0"
-              data={chatItems}
-              // "auto" (instant) — not "smooth" — during streaming. Smooth queues
-              // a ~300ms animation per token chunk, and overlapping animations
-              // cause the chat to visibly jump up and down as the model writes.
-              followOutput={(isAtBottom) => isAtBottom ? "auto" : false}
-              atBottomStateChange={(atBottom) => {
-                userScrolledRef.current = !atBottom;
-                setUserScrolled(!atBottom);
-              }}
-              components={virtuosoComponents}
-              itemContent={(_index, item) => {
+            <div
+              ref={scrollRef}
+              className="flex-1 min-h-0 overflow-y-auto"
+              onScroll={handleScroll}
+            >
+              {/* Greeting / fork context header */}
+              {isBranchActive ? (
+                <ForkContext parentName={parentConversation?.name ?? "Main"} excerpt={forkExcerpt} />
+              ) : (
+                <div className={cn("flex flex-col items-center gap-4 text-(--g-text-dim) px-6", hasChatMessages ? "pt-6 pb-2" : "min-h-full justify-center")}>
+                  <img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
+                  <span className="text-lg">{greeting}</span>
+                  {suggestions.length > 0 && !hasChatMessages && (
+                    <div className="flex flex-wrap justify-center gap-2 max-w-[35rem]">
+                      {suggestions.map((s, i) => (
+                        <button
+                          key={i}
+                          onClick={() => handleSuggestion(s)}
+                          className="px-3.5 py-1.5 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.8125rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Messages */}
+              {chatItems.map((item, index) => {
                 if (item.kind === "boundary") {
                   return (
-                    <div className="flex items-center gap-2 my-1 px-6">
+                    <div key={`b-${index}`} className="flex items-center gap-2 my-1 px-6">
                       <div className="flex-1 h-px bg-(--g-border)" />
                       <span className="text-[0.6875rem] text-(--g-text-dim) select-none">context cleared</span>
                       <div className="flex-1 h-px bg-(--g-border)" />
@@ -2319,7 +2316,7 @@ const GregPage = (): JSX.Element => {
                   );
                 }
                 return (
-                  <div className="px-6 py-1.5">
+                  <div key={`m-${item.msgIndex}`} className="px-6 py-1.5">
                     <ChatMessage
                       msg={item.msg}
                       i={item.msgIndex}
@@ -2333,8 +2330,47 @@ const GregPage = (): JSX.Element => {
                     />
                   </div>
                 );
-              }}
-            />
+              })}
+
+              {/* Follow-up suggestions — inside the scroll container so they
+                  don't resize the scrollable area and cause position jumps. */}
+              {(generatingFollowUps || followUpSuggestions.length > 0) && (
+                <div className="px-6 pb-2">
+                  {generatingFollowUps && followUpSuggestions.length === 0 && (
+                    <span className="ml-0.5 text-[0.6875rem] text-(--g-text-dim) animate-pulse">generating follow-ups…</span>
+                  )}
+                  {followUpSuggestions.length > 0 && (
+                    <div className="flex flex-col gap-1.5 ml-0.5">
+                      {followUpSuggestions.map((s, i) => (
+                        <button
+                          key={i}
+                          onClick={() => handleSuggestion(s)}
+                          className="self-start max-w-[70%] px-3 py-1 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-left text-[0.75rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
+                        >
+                          {s}
+                        </button>
+                      ))}
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={handleRefreshFollowUps}
+                        title="Refresh follow-up suggestions"
+                        className={cn("self-start mt-0.5 opacity-40 hover:opacity-100 hover:text-(--g-accent)", generatingFollowUps && "animate-spin opacity-60")}
+                        disabled={generatingFollowUps}
+                      >
+                        <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                          <path d="M3 3v5h5" />
+                        </svg>
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Bottom spacer */}
+              <div className="h-3" />
+            </div>
 
             {/* Scroll to bottom button */}
             {userScrolled && (
@@ -2347,42 +2383,6 @@ const GregPage = (): JSX.Element => {
                 </svg>
                 Scroll to bottom
               </button>
-            )}
-
-            {/* Follow-up suggestions — rendered outside Virtuoso so their
-                height changes don't perturb the scroll position. */}
-            {(generatingFollowUps || followUpSuggestions.length > 0) && (
-              <div className="px-6 pb-2 shrink-0">
-                {generatingFollowUps && followUpSuggestions.length === 0 && (
-                  <span className="ml-0.5 text-[0.6875rem] text-(--g-text-dim) animate-pulse">generating follow-ups…</span>
-                )}
-                {followUpSuggestions.length > 0 && (
-                  <div className="flex flex-col gap-1.5 ml-0.5">
-                    {followUpSuggestions.map((s, i) => (
-                      <button
-                        key={i}
-                        onClick={() => handleSuggestion(s)}
-                        className="self-start max-w-[70%] px-3 py-1 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-left text-[0.75rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
-                      >
-                        {s}
-                      </button>
-                    ))}
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={handleRefreshFollowUps}
-                      title="Refresh follow-up suggestions"
-                      className={cn("self-start mt-0.5 opacity-40 hover:opacity-100 hover:text-(--g-accent)", generatingFollowUps && "animate-spin opacity-60")}
-                      disabled={generatingFollowUps}
-                    >
-                      <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                        <path d="M3 3v5h5" />
-                      </svg>
-                    </Button>
-                  </div>
-                )}
-              </div>
             )}
 
             {/* Input */}
