@@ -22,10 +22,13 @@ import ApiViewer from "../components/ApiViewer";
 import GroupedApiSelect from "../components/GroupedApiSelect";
 import MermaidDiagram from "../components/MermaidDiagram";
 import { cn } from "../lib/utils";
-import { useStore, pageFromHash, chatIdFromHash } from "../store/store";
+import { useStore, pageFromHash, chatIdFromHash, getActiveConversation } from "../store/store";
 import type { ChatMsg } from "../store/store";
 import EpCard from "../components/EpCard";
 import { Button } from "../components/ui/button";
+import { TabBar } from "../components/chat/TabBar";
+import { ForkButton } from "../components/chat/ForkButton";
+import { ForkContext } from "../components/chat/ForkContext";
 import { usePanelRef } from "react-resizable-panels";
 
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "../components/ui/resizable";
@@ -120,6 +123,8 @@ interface ChatMessageProps {
   onShowDebug: (idx: number) => void;
   onRetry: (idx: number) => void;
   onQuickAction: (msgIdx: number, action: "diagram" | "code", diagramType?: string) => void;
+  onFork?: (msgIdx: number) => void;
+  onDelete: (idx: number) => void;
   loadingGif?: string | null;
 }
 
@@ -242,6 +247,10 @@ const cleanText = (raw: string): string => {
   const pre = raw
     .replace(/<endpoint[^>]*\/?>/g, "")
     .replace(/<quickActions[^>]*\/?>/g, "")
+    // Safety net: the server stripper handles <followups> during streaming,
+    // but older persisted history or an interrupted stream could still carry
+    // the tag through. Drop it (and its payload) before markdown parsing.
+    .replace(/<followups>[\s\S]*?<\/followups>/g, "")
     .replace(/```[^\n]*\n([\s\S]*?)```/g, (match, inner: string) => {
       const lines = inner.trim().split("\n").filter((l: string) => l.trim());
       const isTable = lines.length >= 2 && lines.every((l: string) => l.trimStart().startsWith("|"));
@@ -609,6 +618,12 @@ const ApiPathCode = ({ code }: ApiPathCodeProps): JSX.Element => {
 // Markdown component map
 // ---------------------------------------------------------------------------
 
+// Hoisted so its identity is stable across renders — used as a `useMemo` dep
+// key when building the react-markdown components map. A new object each render
+// would invalidate the memo and remount every child (including MermaidDiagram),
+// which wiped the rendered SVG on any post-stream update.
+const LANG_MAP: Record<string, string> = { ts: "typescript", js: "javascript", py: "python", sh: "bash", yml: "yaml" };
+
 /**
  * Builds the react-markdown component map for a given message key and language alias map.
  *
@@ -745,6 +760,7 @@ const LiDropdown = ({ children, index }: LiDropdownProps): JSX.Element => {
  */
 const SectionDropdown = ({ title, body, msgKey, langMap, defaultOpen, isDark }: SectionDropdownProps): JSX.Element => {
   const [open, setOpen] = useState(defaultOpen);
+  const components = useMemo(() => mdComponents(msgKey, langMap, isDark), [msgKey, langMap, isDark]);
 
   if (!body.trim()) {
     return <div className="mb-1.5"><span className="text-xl font-semibold text-(--g-text)">{title}</span></div>;
@@ -766,7 +782,7 @@ const SectionDropdown = ({ title, body, msgKey, langMap, defaultOpen, isDark }: 
       </button>
       {open && (
         <div className="pl-[1.125rem] text-sm">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap, isDark) as never}>{body}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={components as never}>{body}</ReactMarkdown>
         </div>
       )}
     </div>
@@ -781,9 +797,10 @@ const SectionDropdown = ({ title, body, msgKey, langMap, defaultOpen, isDark }: 
  * Renders assistant markdown, splitting into collapsible section dropdowns when 2+ headings are present.
  */
 const GregMarkdown = ({ text, msgKey }: GregMarkdownProps): JSX.Element => {
-  const langMap: Record<string, string> = { ts: "typescript", js: "javascript", py: "python", sh: "bash", yml: "yaml" };
+  const langMap = LANG_MAP;
   const theme = useStore((s) => s.theme);
   const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const components = useMemo(() => mdComponents(msgKey, langMap, isDark), [msgKey, langMap, isDark]);
 
   // Split into sections by headings — only use dropdowns if 2+ headings
   // Replace code block content with spaces (preserving length) so # comments inside don't match as headings
@@ -812,7 +829,7 @@ const GregMarkdown = ({ text, msgKey }: GregMarkdownProps): JSX.Element => {
     return (
       <>
         {sections.preamble && (
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap, isDark) as never}>{sections.preamble}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={components as never}>{sections.preamble}</ReactMarkdown>
         )}
         {sections.items.map((s, i) => (
           <SectionDropdown key={i} title={s.title} body={s.body} msgKey={msgKey} langMap={langMap} defaultOpen={true} isDark={isDark} />
@@ -822,7 +839,7 @@ const GregMarkdown = ({ text, msgKey }: GregMarkdownProps): JSX.Element => {
   }
 
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap, isDark) as never}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components as never}>
       {text}
     </ReactMarkdown>
   );
@@ -1189,12 +1206,10 @@ interface QuickActionBarProps {
   msgText: string;
   msgIdx: number;
   onQuickAction: (msgIdx: number, action: "diagram" | "code", subType?: string) => void;
-  // Verdict from the model's <quickActions/> tag. Undefined = the model didn't
-  // emit it (older history, smaller model) — fail-open and leave buttons usable.
-  quickActions?: { diagram: boolean; code: boolean };
+  onFork?: (msgIdx: number) => void;
 }
 
-const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: QuickActionBarProps): JSX.Element => {
+const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, onFork }: QuickActionBarProps): JSX.Element => {
   const [diagramOpen, setDiagramOpen] = useState(false);
   const [codeOpen, setCodeOpen] = useState(false);
   const diagramRef = useRef<HTMLDivElement>(null);
@@ -1204,12 +1219,10 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: Q
   const hasDiagram = useMemo(() => /```mermaid/i.test(msgText), [msgText]);
   const hasCode = useMemo(() => /```(?!mermaid)\w/.test(msgText), [msgText]);
 
-  // Disable when (a) already present in reply or (b) the model judged it not
-  // relevant via the inline <quickActions/> tag. Missing tag = fail-open.
-  const diagramIrrelevant = quickActions?.diagram === false;
-  const codeIrrelevant = quickActions?.code === false;
-  const diagramDisabled = hasDiagram || diagramIrrelevant;
-  const codeDisabled = hasCode || codeIrrelevant;
+  // Only gate on whether the content is already present in the reply. The user
+  // can always ask for a diagram or code — even when it makes no sense.
+  const diagramDisabled = hasDiagram;
+  const codeDisabled = hasCode;
 
   useEffect(() => {
     if (!diagramOpen && !codeOpen) return;
@@ -1236,9 +1249,7 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: Q
           title={
             hasDiagram
               ? "Diagram already in this response — ask explicitly if you want a different one"
-              : diagramIrrelevant
-                ? "A diagram doesn't fit this response — ask explicitly if you want one anyway"
-                : "Generate a mermaid diagram from this response"
+              : "Generate a mermaid diagram from this response"
           }
         >
           <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -1278,9 +1289,7 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: Q
           title={
             hasCode
               ? "Code already in this response — ask explicitly if you want a different language"
-              : codeIrrelevant
-                ? "A code snippet doesn't fit this response — ask explicitly if you want one anyway"
-                : "Generate code from this response"
+              : "Generate code from this response"
           }
         >
           <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -1306,6 +1315,8 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: Q
         )}
       </div>
 
+      {/* Fork — only rendered on Main-tab messages */}
+      {onFork && <ForkButton msgIdx={msgIdx} onFork={onFork} />}
     </div>
   );
 });
@@ -1314,7 +1325,7 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, quickActions }: Q
 // ChatMessage
 // ---------------------------------------------------------------------------
 
-const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, onRetry, onQuickAction, loadingGif }: ChatMessageProps): JSX.Element => {
+const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, onRetry, onQuickAction, onFork, onDelete, loadingGif }: ChatMessageProps): JSX.Element => {
   const p = msg.personality ?? "greg";
   const bubbleStyle = (BUBBLE_STYLES[p] ?? BUBBLE_STYLES["greg"])!;
 
@@ -1345,6 +1356,22 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, onRetry, onQu
                 {Ic.bug(12)}
               </Button>
             )}
+            {!msg.streaming && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => onDelete(i)}
+                title="Delete message"
+                className="ml-auto opacity-0 group-hover/msg:opacity-60 hover:!opacity-100 text-(--g-danger)"
+              >
+                <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  <path d="M10 11v6" /><path d="M14 11v6" />
+                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                </svg>
+              </Button>
+            )}
           </div>
         )}
         <div
@@ -1368,7 +1395,7 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, onRetry, onQu
           )}
         </div>
         {msg.role === "user" && (
-          <div className="flex justify-end mt-1 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-150">
+          <div className="flex justify-end gap-0.5 mt-1 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-150">
             <Button
               variant="ghost"
               size="icon-xs"
@@ -1382,6 +1409,20 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, onRetry, onQu
                 <path d="M3 3v5h5" />
               </svg>
             </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => onDelete(i)}
+              title="Delete message"
+              className="opacity-60 hover:opacity-100 text-(--g-danger)"
+            >
+              <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6" /><path d="M14 11v6" />
+                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+              </svg>
+            </Button>
           </div>
         )}
         {/* 🔧 perf: extracted to own component — dropdown state changes don't re-render GregMarkdown */}
@@ -1390,7 +1431,7 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, onRetry, onQu
             msgText={msg.text}
             msgIdx={i}
             onQuickAction={onQuickAction}
-            {...(msg.quickActions !== undefined && { quickActions: msg.quickActions })}
+            {...(onFork && { onFork })}
           />
         )}
         {msg.endpoints && msg.endpoints.length > 0 && (
@@ -1519,11 +1560,12 @@ const SwaggerPanel = memo(({ anchor, onClose }: SwaggerPanelProps): JSX.Element 
  */
 const GregPage = (): JSX.Element => {
   const {
-    chatMessages,
+    conversations,
+    activeConversationId,
     personality,
     chatLoading,
-    addChatMessage,
-    updateLastAssistant,
+    addChatMessageTo,
+    updateLastAssistantIn,
     setPersonality,
     setChatLoading,
     customGregPrompt,
@@ -1541,12 +1583,20 @@ const GregPage = (): JSX.Element => {
     setDoubleCheck,
     clearChat,
     setChatMessages,
+    addContextBoundary,
+    setContextBoundaries,
+    forkConversation,
+    switchConversation,
+    closeConversation,
+    renameConversation,
+    deleteMessage,
   } = useStore(useShallow((s) => ({
-    chatMessages: s.chatMessages,
+    conversations: s.conversations,
+    activeConversationId: s.activeConversationId,
     personality: s.personality,
     chatLoading: s.chatLoading,
-    addChatMessage: s.addChatMessage,
-    updateLastAssistant: s.updateLastAssistant,
+    addChatMessageTo: s.addChatMessageTo,
+    updateLastAssistantIn: s.updateLastAssistantIn,
     setPersonality: s.setPersonality,
     setChatLoading: s.setChatLoading,
     customGregPrompt: s.customGregPrompt,
@@ -1564,10 +1614,41 @@ const GregPage = (): JSX.Element => {
     setDoubleCheck: s.setDoubleCheck,
     clearChat: s.clearChat,
     setChatMessages: s.setChatMessages,
+    addContextBoundary: s.addContextBoundary,
+    setContextBoundaries: s.setContextBoundaries,
+    forkConversation: s.forkConversation,
+    switchConversation: s.switchConversation,
+    closeConversation: s.closeConversation,
+    renameConversation: s.renameConversation,
+    deleteMessage: s.deleteMessage,
   })));
 
+  const activeConversation = useMemo(
+    () => conversations.find((c) => c.id === activeConversationId) ?? conversations[0]!,
+    [conversations, activeConversationId],
+  );
+  const chatMessages = activeConversation.messages;
+  const contextBoundaries = activeConversation.contextBoundaries;
+  const isMainActive = conversations[0]?.id === activeConversationId;
+  const parentConversation = useMemo(
+    () => (activeConversation.parentId ? conversations.find((c) => c.id === activeConversation.parentId) ?? null : null),
+    [activeConversation.parentId, conversations],
+  );
+  const isBranchActive = parentConversation !== null && activeConversation.forkIndex !== null;
+  const forkExcerpt = isBranchActive
+    ? (parentConversation!.messages[activeConversation.forkIndex!]?.text ?? "")
+    : "";
+  const tokenCounterMessages = useMemo(() => {
+    const lastBoundary = contextBoundaries.length > 0 ? contextBoundaries[contextBoundaries.length - 1]! : 0;
+    const local = chatMessages.slice(lastBoundary);
+    if (!isBranchActive) return local;
+    // Include inherited messages so the token estimate reflects what's actually sent
+    const inherited = parentConversation!.messages.slice(0, activeConversation.forkIndex! + 1);
+    return [...inherited, ...local];
+  }, [chatMessages, contextBoundaries, isBranchActive, parentConversation, activeConversation.forkIndex]);
+
   const handleCompact = useCallback(() => {
-    const msgs = useStore.getState().chatMessages;
+    const msgs = getActiveConversation(useStore.getState()).messages;
     let charsStripped = 0;
     const compacted = msgs.map((m) => {
       const stripped = stripCodeBlocks(m.text);
@@ -1606,8 +1687,6 @@ const GregPage = (): JSX.Element => {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [followUpSuggestions, setFollowUpSuggestions] = useState<string[]>([]);
   const [generatingFollowUps, setGeneratingFollowUps] = useState(false);
-  // All indices where context was cleared — dividers render at each, history built from the last one
-  const [contextBoundaries, setContextBoundaries] = useState<number[]>([]);
 
   const chatItems = useMemo<ChatListItem[]>(() => {
     const items: ChatListItem[] = [];
@@ -1637,7 +1716,7 @@ const GregPage = (): JSX.Element => {
     try { return localStorage.getItem("greg-panel-open") !== "false"; } catch { return false; }
   });
   const [panelAnchor, setPanelAnchor] = useState<{ api: string; method?: string; path?: string } | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const abortRef = useRef<{ controller: AbortController; convId: string } | null>(null);
 
   useEffect(() => { listModels().then(setModels).catch(() => {}); }, []);
   useEffect(() => { fetchSuggestions().then(setSuggestions).catch(() => {}); }, []);
@@ -1704,7 +1783,6 @@ const GregPage = (): JSX.Element => {
 
   const handleNewChat = useCallback(() => {
     newChat();
-    setContextBoundaries([]);
     setGreetingGif(null);
     fetchSuggestions().then(setSuggestions).catch(() => {});
     if (isGregLike) fetchGreetingGif();
@@ -1732,7 +1810,7 @@ const GregPage = (): JSX.Element => {
     setFollowUpSuggestions([]);
     // If context boundary was beyond the retry point, reset it
     // Drop boundaries beyond the retry point; keep those at or before it
-    setContextBoundaries((prev) => prev.filter((b) => b <= msgIdx));
+    setContextBoundaries(contextBoundaries.filter((b) => b <= msgIdx));
     // Pass the trimmed array directly so handleSend uses it for history,
     // not the stale closure value that hasn't updated yet
     handleSendRef.current?.(msg.text, trimmed);
@@ -1764,20 +1842,26 @@ const GregPage = (): JSX.Element => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatLoading, chatMessages]);
 
+  // Refs so handleRefreshFollowUps (and the memoized Virtuoso components that
+  // close over it) keep a stable identity across renders — reading chatMessages
+  // directly would invalidate the memo on every streaming token.
+  const refreshDepsRef = useRef({ chatMessages, generatingFollowUps, selectedModel, selectedProvider });
+  refreshDepsRef.current = { chatMessages, generatingFollowUps, selectedModel, selectedProvider };
   const handleRefreshFollowUps = useCallback((): void => {
-    const lastUser = [...chatMessages].reverse().find((m) => m.role === "user");
-    const lastAssistant = [...chatMessages].reverse().find((m) => m.role === "assistant");
-    if (!lastUser || !lastAssistant || generatingFollowUps) return;
+    const { chatMessages: msgs, generatingFollowUps: gen, selectedModel: model, selectedProvider: provider } = refreshDepsRef.current;
+    const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+    const lastAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
+    if (!lastUser || !lastAssistant || gen) return;
     setGeneratingFollowUps(true);
     setFollowUpSuggestions([]);
     const opts: { model?: string; provider?: "anthropic" | "ollama" } = {
-      ...(selectedModel ? { model: selectedModel } : {}),
-      ...(selectedProvider === "ollama" || selectedProvider === "anthropic" ? { provider: selectedProvider as "ollama" | "anthropic" } : {}),
+      ...(model ? { model } : {}),
+      ...(provider === "ollama" || provider === "anthropic" ? { provider: provider as "ollama" | "anthropic" } : {}),
     };
     generateFollowUpSuggestions(lastUser.text, lastAssistant.text, opts)
       .then((s) => { setFollowUpSuggestions(s); setGeneratingFollowUps(false); })
       .catch(() => { setGeneratingFollowUps(false); });
-  }, [chatMessages, generatingFollowUps, selectedModel, selectedProvider]);
+  }, []);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -1790,6 +1874,39 @@ const GregPage = (): JSX.Element => {
     setUserScrolled(false);
   }, []);
 
+  // Jump to bottom whenever the active conversation changes (tab switch / URL restore).
+  useEffect(() => {
+    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto", align: "end" });
+    userScrolledRef.current = false;
+    setUserScrolled(false);
+  }, [activeConversationId]);
+
+  const handleFork = useCallback((msgIdx: number): void => {
+    const id = forkConversation(msgIdx);
+    if (id) { setFollowUpSuggestions([]); }
+  }, [forkConversation]);
+
+  const handleSwitchTab = useCallback((id: string): void => {
+    switchConversation(id);
+    setFollowUpSuggestions([]);
+  }, [switchConversation]);
+
+  const handleDelete = useCallback((msgIdx: number): void => {
+    deleteMessage(msgIdx);
+  }, [deleteMessage]);
+
+  const handleCloseTab = useCallback((id: string): void => {
+    // If an in-flight stream targets this conversation, abort it — otherwise
+    // it would keep hitting the server with no UI to write to.
+    const pending = abortRef.current;
+    if (pending && pending.convId === id) {
+      pending.controller.abort();
+      abortRef.current = null;
+      setChatLoading(false);
+    }
+    closeConversation(id);
+  }, [closeConversation, setChatLoading]);
+
   const handleSend = async (overrideText?: string, baseMessages?: ChatMsg[]): Promise<void> => {
     const text = (overrideText ?? inputRef.current?.value ?? "").trim();
     if (!text || chatLoading) return;
@@ -1800,7 +1917,7 @@ const GregPage = (): JSX.Element => {
     if (text === "/clear") {
       // Keep messages visible but record a new boundary so subsequent
       // sends only include messages after this point
-      setContextBoundaries((prev) => [...prev, chatMessages.length]);
+      addContextBoundary();
       setFollowUpSuggestions([]);
       setGeneratingFollowUps(false);
       return;
@@ -1809,8 +1926,11 @@ const GregPage = (): JSX.Element => {
     setFollowUpSuggestions([]);
     setGeneratingFollowUps(false);
     setLoadingGif(null);
-    addChatMessage({ role: "user", text, personality });
-    addChatMessage({ role: "assistant", text: "", streaming: true, ...(selectedModel && { model: selectedModel }), personality });
+    // Pin the conversation this stream belongs to — if the user switches tabs
+    // mid-generation, tokens keep writing to the originating convo.
+    const targetConvId = activeConversationId;
+    addChatMessageTo(targetConvId, { role: "user", text, personality });
+    addChatMessageTo(targetConvId, { role: "assistant", text: "", streaming: true, ...(selectedModel && { model: selectedModel }), personality });
     setChatLoading(true);
     if (isGregLike) {
       fetch("/api/greeting-gif").then((r) => r.json()).then((d) => setLoadingGif(d.url ?? null)).catch(() => {});
@@ -1823,7 +1943,16 @@ const GregPage = (): JSX.Element => {
     // rather than the stale closure value. For normal sends, slice from the last
     // context boundary so /clear'd messages aren't included in the API history.
     const lastBoundary = contextBoundaries.length > 0 ? contextBoundaries[contextBoundaries.length - 1]! : 0;
-    const historyBase = baseMessages ?? chatMessages.slice(lastBoundary);
+    const localBase = baseMessages ?? chatMessages.slice(lastBoundary);
+    // Branch: prepend inherited messages from parent up to the fork point.
+    // Always runs on a branch — retries and quick-actions pass baseMessages
+    // scoped to the branch's own messages, so the parent context would
+    // otherwise be dropped and the model loses the endpoints/schemas that
+    // were established before the fork.
+    const inherited = isBranchActive
+      ? parentConversation!.messages.slice(0, activeConversation.forkIndex! + 1)
+      : [];
+    const historyBase = [...inherited, ...localBase];
     let autoCompactedChars = 0;
     const history = [
       ...historyBase.map((m) => {
@@ -1849,14 +1978,14 @@ const GregPage = (): JSX.Element => {
     // Batch text updates to one per animation frame to avoid thrashing the reconciler
     let rafPending = false;
     const flushText = () => {
-      updateLastAssistant((m) => ({ ...m, text: accumulated }));
+      updateLastAssistantIn(targetConvId, (m) => ({ ...m, text: accumulated }));
       rafPending = false;
     };
 
     try {
       const customPrompt = personality === "greg" ? customGregPrompt : personality === "explanatory" ? customExplainerPrompt : personality === "casual" ? customCasualPrompt : customProPrompt;
       const abort = new AbortController();
-      abortRef.current = abort;
+      abortRef.current = { controller: abort, convId: targetConvId };
       for await (const event of streamChat(
         history,
         personality,
@@ -1883,21 +2012,31 @@ const GregPage = (): JSX.Element => {
               }
             }
             break;
+          case "followups": {
+            // Inline follow-ups emitted by the main LLM alongside the response.
+            // Replaces the prior post-stream generateFollowUpSuggestions call.
+            const list = event.followups ?? [];
+            if (list.length > 0) {
+              setFollowUpSuggestions(list);
+              setGeneratingFollowUps(false);
+            }
+            break;
+          }
           case "verification_text":
             // Arrives as one complete message (not streamed)
             verificationText = event.text ?? "";
-            updateLastAssistant((m) => ({ ...m, verificationText, verificationStreaming: false }));
+            updateLastAssistantIn(targetConvId, (m) => ({ ...m, verificationText, verificationStreaming: false }));
             break;
           case "error":
             accumulated += `\n[error: ${event.error}]`;
-            updateLastAssistant((m) => ({ ...m, text: accumulated }));
+            updateLastAssistantIn(targetConvId, (m) => ({ ...m, text: accumulated }));
             break;
           case "debug":
             debugLog.push(event as unknown as Record<string, unknown>);
             if (event.event === "verification_start") {
               // Greg is done, verification is starting — render Greg's markdown, show checking indicator
               const eps = relevantEndpoints([...endpointMap.values()]);
-              updateLastAssistant((m) => ({
+              updateLastAssistantIn(targetConvId, (m) => ({
                 ...m,
                 streaming: false,
                 ...(eps.length > 0 ? { endpoints: eps } : {}),
@@ -1915,7 +2054,7 @@ const GregPage = (): JSX.Element => {
       }
     } catch (err) {
       accumulated += `\n[connection error]`;
-      updateLastAssistant((m) => ({ ...m, text: accumulated }));
+      updateLastAssistantIn(targetConvId, (m) => ({ ...m, text: accumulated }));
     }
 
     abortRef.current = null;
@@ -1952,13 +2091,11 @@ const GregPage = (): JSX.Element => {
       mentionedKeys.has(`${ep.method}:${ep.path}`) ? { ...ep, score: 1 } : ep,
     );
 
-    // Parse the trailing <quickActions diagram="..." code="..."/> tag the model emits
-    // per the system prompt. Failure to find it = leave buttons enabled (fail-open).
-    const qaMatch = accumulated.match(/<quickActions\s+diagram="(true|false)"\s+code="(true|false)"\s*\/?>/i);
-    const quickActions = qaMatch ? { diagram: qaMatch[1] === "true", code: qaMatch[2] === "true" } : undefined;
-
-    updateLastAssistant((m) => ({
+    updateLastAssistantIn(targetConvId, (m) => ({
       ...m,
+      // Ensure the final accumulated text lands in state — a pending RAF flush
+      // may not have fired before saveChat() persists the message.
+      text: accumulated,
       streaming: false,
       verificationStreaming: false,
       ...(allEndpoints.length > 0 ? { endpoints: allEndpoints } : {}),
@@ -1967,30 +2104,26 @@ const GregPage = (): JSX.Element => {
       ...(doneVerificationUsage !== undefined && { verificationUsage: doneVerificationUsage }),
       ...(verificationText ? { verificationText } : {}),
       ...(debugLog.length > 0 ? { debug: debugLog } : {}),
-      ...(quickActions !== undefined && { quickActions }),
       // Always record compaction data when auto-compact is on so the debug panel can display the status
       ...(autoCompactRef.current ? { compactedTokens: autoCompactedTokens, compactedHistory: history } : {}),
     }));
 
     saveChat();
     setChatLoading(false);
-    if (accumulated) {
-      setGeneratingFollowUps(true);
-      const opts: { model?: string; provider?: "anthropic" | "ollama" } = {
-        ...(selectedModel ? { model: selectedModel } : {}),
-        ...(selectedProvider === "ollama" || selectedProvider === "anthropic" ? { provider: selectedProvider as "ollama" | "anthropic" } : {}),
-      };
-      generateFollowUpSuggestions(text, accumulated, opts)
-        .then((s) => { setFollowUpSuggestions(s); setGeneratingFollowUps(false); })
-        .catch(() => { setGeneratingFollowUps(false); });
-    }
+    // Follow-ups are emitted inline by the LLM via the "followups" SSE event
+    // during the stream — the switch case above has already populated state
+    // if the tag arrived. Nothing to do here.
   };
 
   // Refresh the ref every render so handleRetry always invokes the
   // latest handleSend closure (with current personality/model/provider).
   handleSendRef.current = handleSend;
 
-  const handleSuggestion = (q: string): void => { handleSend(q); };
+  // Stable identity — routed through handleSendRef so the Virtuoso components
+  // memo doesn't invalidate every render.
+  const handleSuggestion = useCallback((q: string): void => {
+    handleSendRef.current?.(q);
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1998,6 +2131,42 @@ const GregPage = (): JSX.Element => {
       handleSend();
     }
   };
+
+  // Memoize Virtuoso's `components` so Footer/Header keep a stable identity.
+  // Without this the inline Footer is a new function every render — Virtuoso
+  // treats it as a new component type and remounts it, which makes the
+  // follow-up suggestions flash in then vanish.
+  const hasChatMessages = chatMessages.length > 0;
+  const virtuosoComponents = useMemo(() => ({
+    Header: () => (
+      isBranchActive ? (
+        <ForkContext parentName={parentConversation?.name ?? "Main"} excerpt={forkExcerpt} />
+      ) : (
+        <div className={cn("flex flex-col items-center gap-4 text-(--g-text-dim) px-6", hasChatMessages ? "pt-6 pb-2" : "min-h-full justify-center")}>
+          <img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
+          <span className="text-lg">{greeting}</span>
+          {suggestions.length > 0 && !hasChatMessages && (
+            <div className="flex flex-wrap justify-center gap-2 max-w-[35rem]">
+              {suggestions.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleSuggestion(s)}
+                  className="px-3.5 py-1.5 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.8125rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )
+    ),
+    // Keep the Footer minimal and stable in identity. Follow-up suggestions
+    // used to live here, but their height changed when they arrived (inline
+    // from the stream) and Virtuoso would compensate by nudging the scroll
+    // up ~one message's worth. They now render outside Virtuoso, below.
+    Footer: () => <div className="h-3" />,
+  }), [hasChatMessages, greeting, suggestions, handleSuggestion, isBranchActive, parentConversation, forkExcerpt]);
 
   return (
     <div className="flex h-[calc(100%-2.75rem)]">
@@ -2021,7 +2190,7 @@ const GregPage = (): JSX.Element => {
             return (
               <div
                 key={chat.id}
-                onClick={() => { loadChat(chat.id); setFollowUpSuggestions([]); setContextBoundaries([]); }}
+                onClick={() => { loadChat(chat.id); setFollowUpSuggestions([]); }}
                 className="flex items-center gap-1.5 mb-0.5 px-2 py-1 rounded-md cursor-pointer transition-colors duration-100"
                 style={{
                   background: isActive ? "var(--g-surface-active)" : "transparent",
@@ -2115,6 +2284,17 @@ const GregPage = (): JSX.Element => {
                 </button>
               )}
             </div>
+            {conversations.length > 1 && (
+              <div className="mt-10 shrink-0">
+                <TabBar
+                  conversations={conversations}
+                  activeConversationId={activeConversationId}
+                  onSwitch={handleSwitchTab}
+                  onClose={handleCloseTab}
+                  onRename={renameConversation}
+                />
+              </div>
+            )}
             <Virtuoso
               ref={virtuosoRef}
               className="flex-1 min-h-0"
@@ -2127,60 +2307,7 @@ const GregPage = (): JSX.Element => {
                 userScrolledRef.current = !atBottom;
                 setUserScrolled(!atBottom);
               }}
-              components={{
-                Header: () => (
-                  <div className={cn("flex flex-col items-center gap-4 text-(--g-text-dim) px-6", chatMessages.length === 0 ? "min-h-full justify-center" : "pt-6 pb-2")}>
-                    <img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
-                    <span className="text-lg">{greeting}</span>
-                    {suggestions.length > 0 && chatMessages.length === 0 && (
-                      <div className="flex flex-wrap justify-center gap-2 max-w-[35rem]">
-                        {suggestions.map((s, i) => (
-                          <button
-                            key={i}
-                            onClick={() => handleSuggestion(s)}
-                            className="px-3.5 py-1.5 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.8125rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
-                          >
-                            {s}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ),
-                Footer: () => (
-                  <div className="px-6 pb-3">
-                    {generatingFollowUps && followUpSuggestions.length === 0 && (
-                      <span className="mt-1 ml-0.5 text-[0.6875rem] text-(--g-text-dim) animate-pulse">generating follow-ups…</span>
-                    )}
-                    {followUpSuggestions.length > 0 && (
-                      <div className="flex flex-col gap-1.5 mt-1 ml-0.5">
-                        {followUpSuggestions.map((s, i) => (
-                          <button
-                            key={i}
-                            onClick={() => handleSuggestion(s)}
-                            className="self-start px-3 py-1 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-[0.75rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
-                          >
-                            {s}
-                          </button>
-                        ))}
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={handleRefreshFollowUps}
-                          title="Refresh follow-up suggestions"
-                          className={cn("self-start mt-0.5 opacity-40 hover:opacity-100 hover:text-(--g-accent)", generatingFollowUps && "animate-spin opacity-60")}
-                          disabled={generatingFollowUps}
-                        >
-                          <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                            <path d="M3 3v5h5" />
-                          </svg>
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                ),
-              }}
+              components={virtuosoComponents}
               itemContent={(_index, item) => {
                 if (item.kind === "boundary") {
                   return (
@@ -2200,6 +2327,8 @@ const GregPage = (): JSX.Element => {
                       onShowDebug={setDebugMsgIdx}
                       onRetry={handleRetry}
                       onQuickAction={handleQuickAction}
+                      onDelete={handleDelete}
+                      {...(isMainActive && { onFork: handleFork })}
                       loadingGif={item.msg.streaming ? loadingGif : null}
                     />
                   </div>
@@ -2218,6 +2347,42 @@ const GregPage = (): JSX.Element => {
                 </svg>
                 Scroll to bottom
               </button>
+            )}
+
+            {/* Follow-up suggestions — rendered outside Virtuoso so their
+                height changes don't perturb the scroll position. */}
+            {(generatingFollowUps || followUpSuggestions.length > 0) && (
+              <div className="px-6 pb-2 shrink-0">
+                {generatingFollowUps && followUpSuggestions.length === 0 && (
+                  <span className="ml-0.5 text-[0.6875rem] text-(--g-text-dim) animate-pulse">generating follow-ups…</span>
+                )}
+                {followUpSuggestions.length > 0 && (
+                  <div className="flex flex-col gap-1.5 ml-0.5">
+                    {followUpSuggestions.map((s, i) => (
+                      <button
+                        key={i}
+                        onClick={() => handleSuggestion(s)}
+                        className="self-start max-w-[70%] px-3 py-1 rounded-[1.25rem] border border-(--g-border) bg-(--g-surface) cursor-pointer text-left text-[0.75rem] text-(--g-text-muted) transition-[border-color,color] duration-150 hover:border-(--g-border-accent) hover:text-(--g-text)"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={handleRefreshFollowUps}
+                      title="Refresh follow-up suggestions"
+                      className={cn("self-start mt-0.5 opacity-40 hover:opacity-100 hover:text-(--g-accent)", generatingFollowUps && "animate-spin opacity-60")}
+                      disabled={generatingFollowUps}
+                    >
+                      <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                        <path d="M3 3v5h5" />
+                      </svg>
+                    </Button>
+                  </div>
+                )}
+              </div>
             )}
 
             {/* Input */}
@@ -2302,7 +2467,7 @@ const GregPage = (): JSX.Element => {
                       </optgroup>
                     )}
                   </select>
-                  <TokenCounter chatMessages={chatMessages.slice(contextBoundaries.length > 0 ? contextBoundaries[contextBoundaries.length - 1]! : 0)} provider={selectedProvider} onCompact={handleCompact} />
+                  <TokenCounter chatMessages={tokenCounterMessages} provider={selectedProvider} onCompact={handleCompact} />
 
                   <span className="flex-1" />
 
@@ -2336,7 +2501,14 @@ const GregPage = (): JSX.Element => {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => { abortRef.current?.abort(); abortRef.current = null; setChatLoading(false); updateLastAssistant((m) => ({ ...m, streaming: false })); saveChat(); }}
+                      onClick={() => {
+                        const pending = abortRef.current;
+                        pending?.controller.abort();
+                        abortRef.current = null;
+                        setChatLoading(false);
+                        if (pending) updateLastAssistantIn(pending.convId, (m) => ({ ...m, streaming: false }));
+                        saveChat();
+                      }}
                       className="bg-(--g-danger-muted) text-(--g-danger) h-8 w-8"
                     >
                       <svg width={16} height={16} viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2" /></svg>
@@ -2385,10 +2557,10 @@ const GregPage = (): JSX.Element => {
           defaultSize={debugMsgIdx !== null ? 12 : 0}
           collapsible
           collapsedSize={0}
-          className="transition-all duration-300 ease-in-out"
+          className="transition-all duration-300 ease-in-out overflow-hidden"
         >
-          {(() => {
-            const msg = debugMsgIdx !== null ? chatMessages[debugMsgIdx] : null;
+          {debugMsgIdx !== null && (() => {
+            const msg = chatMessages[debugMsgIdx];
             return (
               <DebugPanel
                 entries={msg?.debug ?? EMPTY_DEBUG}

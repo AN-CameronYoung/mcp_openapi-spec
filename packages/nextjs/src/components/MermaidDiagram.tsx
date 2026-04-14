@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 
+import { cn } from "../lib/utils";
+
 type ExportFormat = "svg" | "png" | "pdf" | "clipboard";
 
 const EXPORT_OPTIONS: Array<{ value: ExportFormat; label: string }> = [
@@ -115,8 +117,12 @@ const copySvg = async (container: HTMLDivElement): Promise<void> => {
 
 /**
  * Small export dropdown — chevron pill button that opens a menu of export options.
+ *
+ * Receives a ref object (not a snapshot). Derefing at click time means the
+ * lightbox-mounted dropdown still works, since refs attach during commit but
+ * the dropdown itself is rendered in the same pass as its target container.
  */
-const ExportDropdown = ({ container }: { container: HTMLDivElement | null }): JSX.Element => {
+const ExportDropdown = ({ containerRef }: { containerRef: React.RefObject<HTMLDivElement | null> }): JSX.Element => {
     const [open, setOpen] = useState(false);
     const [copied, setCopied] = useState(false);
     const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
@@ -146,6 +152,7 @@ const ExportDropdown = ({ container }: { container: HTMLDivElement | null }): JS
     }, [open]);
 
     const handleSelect = useCallback(async (fmt: ExportFormat): Promise<void> => {
+        const container = containerRef.current;
         if (!container) return;
         setOpen(false);
         if (fmt === "svg") exportSvg(container);
@@ -156,7 +163,7 @@ const ExportDropdown = ({ container }: { container: HTMLDivElement | null }): JS
             setCopied(true);
             setTimeout(() => setCopied(false), 1500);
         }
-    }, [container]);
+    }, [containerRef]);
 
     return (
         <div onClick={(e) => e.stopPropagation()}>
@@ -196,6 +203,59 @@ const ExportDropdown = ({ container }: { container: HTMLDivElement | null }): JS
 
 // ---------------------------------------------------------------------------
 
+// chars that mermaid tokenises inside unquoted labels — if any appear,
+// wrap the label so it's treated as literal text
+const LABEL_SPECIAL = /[{}|"<>]/;
+const QUOTED_LABEL = /^\s*".*"\s*$/s;
+
+const escapeQuotes = (s: string): string => s.replace(/"/g, "#quot;");
+
+/**
+ * Wraps mermaid node/arrow labels that contain reserved punctuation
+ * (`{`, `}`, `|`, `"`, `<`, `>`) in double quotes so the parser treats
+ * them as literal text. LLMs frequently emit labels like
+ * `B[DELETE /sites/{id}]`, where `{` otherwise tokenises as DIAMOND_START
+ * and breaks the parse.
+ *
+ * @param src - Raw Mermaid source
+ * @returns Sanitised Mermaid source safe to pass to `mermaid.parse`
+ */
+const sanitizeMermaid = (src: string): string => {
+    let out = src;
+
+    // [label] — skip [[...]], [(...)], [/.../], [\...\]
+    out = out.replace(
+        /\b(\w+)\[(?![[(/\\])([^\]\n]*)\]/g,
+        (m, id: string, label: string) => {
+            if (QUOTED_LABEL.test(label)) return m;
+            if (!LABEL_SPECIAL.test(label)) return m;
+            return `${id}["${escapeQuotes(label)}"]`;
+        },
+    );
+
+    // (label) — skip ((...))
+    out = out.replace(
+        /\b(\w+)\((?!\()([^)\n]*)\)/g,
+        (m, id: string, label: string) => {
+            if (QUOTED_LABEL.test(label)) return m;
+            if (!LABEL_SPECIAL.test(label)) return m;
+            return `${id}("${escapeQuotes(label)}")`;
+        },
+    );
+
+    // |label| — arrow labels
+    out = out.replace(
+        /\|([^|\n]*)\|/g,
+        (m, label: string) => {
+            if (QUOTED_LABEL.test(label)) return m;
+            if (!LABEL_SPECIAL.test(label)) return m;
+            return `|"${escapeQuotes(label)}"|`;
+        },
+    );
+
+    return out;
+};
+
 /**
  * Renders a Mermaid diagram from a code string.
  * Dynamically imports mermaid to avoid SSR issues.
@@ -224,11 +284,21 @@ const MermaidDiagram = ({ code, isDark }: { code: string; isDark: boolean }): JS
                     theme: isDark ? "dark" : "default",
                     securityLevel: "loose",
                     fontFamily: "inherit",
+                    // defense-in-depth: also stop mermaid from drawing its built-in
+                    // "Syntax error in text / mermaid version X.Y.Z" fallback SVG.
+                    suppressErrorRendering: true,
                 });
 
-                // Fresh random ID per call — avoids conflicts if prior SVG is still in DOM.
+                // sanitise before parse — LLM output often contains unquoted `{...}` path
+                // params inside node labels, which mermaid tokenises as diamond shapes
+                const trimmed = sanitizeMermaid(code.trim());
+                // validate first — parse throws on bad syntax without touching the DOM,
+                // so streaming chunks (partial fences) never reach the renderer
+                await mermaid.parse(trimmed);
+
+                // fresh random id per call — avoids conflicts if a prior svg is still in the dom
                 const id = `mermaid-${Math.random().toString(36).slice(2)}`;
-                const { svg } = await mermaid.render(id, code.trim());
+                const { svg } = await mermaid.render(id, trimmed);
 
                 if (!cancelled && containerRef.current) {
                     containerRef.current.innerHTML = svg;
@@ -263,21 +333,32 @@ const MermaidDiagram = ({ code, isDark }: { code: string; isDark: boolean }): JS
         }
     }, [expanded]);
 
-    if (error) return null;
-
     return (
         <>
-            {/* Inline diagram — click to expand */}
+            {/* Inline diagram — click to expand. Kept mounted even on parse
+                errors so the ref stays wired; a later code update can then
+                write a valid SVG into the same container. */}
             <div
-                className="relative my-3 overflow-x-auto rounded-lg border border-(--g-border) bg-(--g-surface) p-4 cursor-zoom-in group"
-                onClick={() => ready && setExpanded(true)}
-                title="Click to expand"
+                className={cn(
+                    "relative my-3 overflow-x-auto rounded-lg border p-4 group",
+                    error
+                        ? "border-(--g-danger) bg-(--g-danger-muted)"
+                        : "border-(--g-border) bg-(--g-surface) cursor-zoom-in",
+                )}
+                onClick={() => !error && ready && setExpanded(true)}
+                title={error ? undefined : "Click to expand"}
             >
-                {!ready && <div className="h-16 animate-pulse rounded bg-(--g-surface-hover)" />}
-                <div ref={containerRef} className="flex justify-center [&_svg]:w-full [&_svg]:h-auto [&_svg]:max-h-[600px]" />
-                {ready && (
+                {!ready && !error && <div className="h-16 animate-pulse rounded bg-(--g-surface-hover)" />}
+                <div ref={containerRef} className={cn("flex justify-center [&_svg]:w-full [&_svg]:h-auto [&_svg]:max-h-[600px]", error && "hidden")} />
+                {error && (
+                    <div className="text-xs text-(--g-danger)">
+                        <div className="font-semibold mb-0.5">mermaid parse error</div>
+                        <pre className="whitespace-pre-wrap font-mono text-[10px] opacity-80">{error}</pre>
+                    </div>
+                )}
+                {ready && !error && (
                     <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <ExportDropdown container={containerRef.current} />
+                        <ExportDropdown containerRef={containerRef} />
                         <span className="text-[10px] text-(--g-text-dim) select-none pointer-events-none">click to expand</span>
                     </div>
                 )}
@@ -303,7 +384,7 @@ const MermaidDiagram = ({ code, isDark }: { code: string; isDark: boolean }): JS
                         />
                         {/* Lightbox controls */}
                         <div className="absolute top-3 right-3 flex items-center gap-1">
-                            <ExportDropdown container={expandedRef.current} />
+                            <ExportDropdown containerRef={expandedRef} />
                             <button
                                 className="flex items-center justify-center w-7 h-7 rounded-md text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors"
                                 onClick={() => setExpanded(false)}

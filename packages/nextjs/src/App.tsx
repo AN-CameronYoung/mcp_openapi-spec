@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { listApis } from "./lib/api";
-import { useStore, pageFromHash, chatIdFromHash } from "./store/store";
+import { useStore, pageFromHash, chatIdFromHash, branchIndexFromHash } from "./store/store";
 import Header from "./components/Header";
 import GregPage from "./pages/GregPage";
 import SearchPage from "./pages/SearchPage";
@@ -48,15 +48,23 @@ const App = (): JSX.Element => {
 			const p = pageFromHash();
 			if (p) useStore.setState({ page: p });
 
-			// Restore the chat that the URL now points to (or clear if none)
+			// Restore the chat (and branch) that the URL now points to (or clear if none)
 			if (p === "greg" || p === null) {
 				const chatId = chatIdFromHash();
 				const { chatHistory } = useStore.getState();
 				const chat = chatId ? chatHistory.find((c) => c.id === chatId) : null;
 				if (chat) {
-					useStore.setState({ chatMessages: chat.messages, activeChatId: chat.id });
+					const branchIdx = branchIndexFromHash();
+					const activeId = branchIdx > 0 && branchIdx < chat.conversations.length
+						? chat.conversations[branchIdx]!.id
+						: chat.activeConversationId;
+					useStore.setState({
+						conversations: chat.conversations,
+						activeConversationId: activeId,
+						activeChatId: chat.id,
+					});
 				} else {
-					useStore.setState({ chatMessages: [], activeChatId: null });
+					useStore.getState().clearChat();
 				}
 			}
 		};

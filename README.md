@@ -45,13 +45,17 @@ The UI is a chat-first interface named **greg** with:
 - Provider/model selection: Anthropic or Ollama
 - Persistent chat history (localStorage), with chat ID stamped into the URL hash
 - Endpoint search and inline result cards (parsed from `<endpoint/>` tags the model emits)
-- Mermaid diagram rendering with SVG / PNG / PDF / clipboard export
-- "Diagram" and "Code" quick-action buttons under each reply — the model emits a hidden `<quickActions/>` tag that grays out actions it judges irrelevant for the response
-- Auto-generated follow-up question suggestions after each reply
+- Mermaid diagram rendering with SVG / PNG / PDF / clipboard export, available from both the inline view and the expanded lightbox
+- "Diagram" and "Code" quick-action buttons under each reply, disabled only when the content is already present in the response
+- Structured follow-up question suggestions after each reply, in a fixed 4-slot shape: **security → high availability → failure modes → open**
 - Retry from any user message — always uses the **current** personality and model, not the one that produced the original reply
 - Double-check (verification pass) toggle
 - Theme switcher: system / light / dark / claude
 - Ingest job UI with live progress
+
+## Known Issues
+
+- **Follow-up suggestions don't render.** The structured 4-slot follow-up questions (security → HA → failure modes → open) are generated server-side but do not appear in the Virtuoso footer after an assistant reply completes. Likely caused by `react-virtuoso` not re-rendering `components.Footer` in response to closure-captured state changes. Next step: switch the Footer to receive state via Virtuoso's `context` prop rather than closure, or lift follow-up state into Zustand so the Footer can subscribe directly.
 
 ## MCP Configuration
 

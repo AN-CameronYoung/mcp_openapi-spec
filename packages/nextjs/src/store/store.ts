@@ -24,8 +24,78 @@ export interface ChatMsg {
 	debug?: Record<string, unknown>[];
 	compactedTokens?: number;
 	compactedHistory?: Array<{ role: string; content: string }>;
-	quickActions?: { diagram: boolean; code: boolean };
 }
+
+// ---------------------------------------------------------------------------
+// Conversation — single-depth branches inside a chat session
+// ---------------------------------------------------------------------------
+
+export interface Conversation {
+	id: string;
+	name: string;
+	parentId: string | null;       // null for Main; Main's id for branches
+	forkIndex: number | null;      // index into Main.messages; null for Main
+	messages: ChatMsg[];
+	contextBoundaries: number[];   // per-convo /clear markers
+	createdAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Chat history entry (persisted in localStorage key `greg-history`)
+// ---------------------------------------------------------------------------
+
+export interface ChatHistoryEntry {
+	id: string;
+	title: string;
+	conversations: Conversation[];
+	activeConversationId: string;
+	ts: number;
+}
+
+// Pre-branching shape, kept around for migration
+interface LegacyChatHistoryEntry {
+	id: string;
+	title: string;
+	messages: ChatMsg[];
+	ts: number;
+}
+
+let mainIdCounter = 0;
+
+const createMainConversation = (): Conversation => ({
+	id: `conv-main-${Date.now()}-${++mainIdCounter}`,
+	name: "Main",
+	parentId: null,
+	forkIndex: null,
+	messages: [],
+	contextBoundaries: [],
+	createdAt: Date.now(),
+});
+
+const randId = (): string => Math.random().toString(36).slice(2, 10);
+
+const migrateHistoryEntry = (raw: unknown): ChatHistoryEntry | null => {
+	if (!raw || typeof raw !== "object") return null;
+	const obj = raw as Partial<ChatHistoryEntry> & Partial<LegacyChatHistoryEntry>;
+	if (!obj.id || !obj.title || typeof obj.ts !== "number") return null;
+	if (Array.isArray(obj.conversations) && typeof obj.activeConversationId === "string") {
+		return { id: obj.id, title: obj.title, ts: obj.ts, conversations: obj.conversations, activeConversationId: obj.activeConversationId };
+	}
+	if (Array.isArray(obj.messages)) {
+		const mainId = `conv-${obj.id}`;
+		const main: Conversation = {
+			id: mainId,
+			name: "Main",
+			parentId: null,
+			forkIndex: null,
+			messages: obj.messages,
+			contextBoundaries: [],
+			createdAt: obj.ts,
+		};
+		return { id: obj.id, title: obj.title, ts: obj.ts, conversations: [main], activeConversationId: mainId };
+	}
+	return null;
+};
 
 // ---------------------------------------------------------------------------
 // Ingest job
@@ -98,7 +168,7 @@ export const pageFromHash = (hash = typeof window !== "undefined" ? window.locat
 
 /**
  * Extracts a chat ID from the URL hash when on the greg page.
- * Expects the format `#/greg/<chatId>` or `#/<chatId>`.
+ * Expects the format `#/greg/<chatId>` or `#/greg/<chatId>/<branchIdx>`.
  *
  * @param hash - The hash string to parse; defaults to the current window hash
  * @returns The chat ID string, or null if none is present
@@ -106,9 +176,72 @@ export const pageFromHash = (hash = typeof window !== "undefined" ? window.locat
 export const chatIdFromHash = (hash = typeof window !== "undefined" ? window.location.hash : ""): string | null => {
 	const segs = hash.replace(/^#\/?/, "").split("/");
 	const page = segs[0] || "greg";
-	// Accept both `#/greg/<id>` and `#/<id>` (when page segment is the chat id itself)
 	const candidate = page === "greg" ? segs[1] : null;
 	return (candidate && candidate.startsWith("chat-")) ? candidate : null;
+};
+
+/**
+ * Extracts the active branch index from the URL hash.
+ * Expects `#/greg/<chatId>/<n>` where n is a positive integer branch index.
+ * Returns 0 (Main) when no valid branch segment is present.
+ *
+ * @param hash - The hash string to parse; defaults to the current window hash
+ * @returns The branch index (0 for Main)
+ */
+export const branchIndexFromHash = (hash = typeof window !== "undefined" ? window.location.hash : ""): number => {
+	const segs = hash.replace(/^#\/?/, "").split("/");
+	if ((segs[0] || "greg") !== "greg") return 0;
+	if (!segs[1]?.startsWith("chat-")) return 0;
+	const raw = segs[2];
+	if (!raw) return 0;
+	const n = parseInt(raw, 10);
+	return Number.isInteger(n) && n > 0 ? n : 0;
+};
+
+/**
+ * Builds the URL hash path for the greg page given a chat id and branch index.
+ * Main (index 0) and unsaved chats omit the branch segment.
+ *
+ * @param chatId - The active chat id, or null for an unsaved chat
+ * @param branchIdx - Index of the active conversation (0 = Main)
+ */
+export const buildGregHash = (chatId: string | null, branchIdx: number): string => {
+	if (!chatId) return "/";
+	return branchIdx > 0 ? `/greg/${chatId}/${branchIdx}` : `/greg/${chatId}`;
+};
+
+// ---------------------------------------------------------------------------
+// Selectors (pure, derive-from-state helpers)
+// ---------------------------------------------------------------------------
+
+type ConvState = Pick<AppState, "conversations" | "activeConversationId">;
+
+/**
+ * Returns the currently active conversation, falling back to Main if the
+ * active id is missing (shouldn't happen, but keeps types tight).
+ */
+export const getActiveConversation = (s: ConvState): Conversation => {
+	return s.conversations.find((c) => c.id === s.activeConversationId) ?? s.conversations[0]!;
+};
+
+/**
+ * Returns the messages of the active conversation.
+ */
+export const getActiveMessages = (s: ConvState): ChatMsg[] => getActiveConversation(s).messages;
+
+/**
+ * Builds the full message history for the LLM. For Main this is just the
+ * conversation's own messages; for a branch it's Main's messages up to and
+ * including the fork point, followed by the branch's own messages.
+ */
+export const getFullHistory = (conversations: Conversation[], convId: string): ChatMsg[] => {
+	const conv = conversations.find((c) => c.id === convId);
+	if (!conv) return [];
+	if (!conv.parentId || conv.forkIndex === null) return [...conv.messages];
+	const parent = conversations.find((c) => c.id === conv.parentId);
+	if (!parent) return [...conv.messages];
+	const inherited = parent.messages.slice(0, conv.forkIndex + 1);
+	return [...inherited, ...conv.messages];
 };
 
 type AppState = {
@@ -130,8 +263,9 @@ type AppState = {
 	setDocsApi: (api: string) => void;
 	viewDocs: (api: string, method: string, path: string, operationId?: string, tag?: string) => void;
 
-	// Chat
-	chatMessages: ChatMsg[];
+	// Chat — multi-conversation model (single-depth branches)
+	conversations: Conversation[];
+	activeConversationId: string;
 	personality: Personality;
 	chatLoading: boolean;
 	selectedModel: string;
@@ -139,13 +273,27 @@ type AppState = {
 	setChatMessages: (msgs: ChatMsg[]) => void;
 	addChatMessage: (msg: ChatMsg) => void;
 	updateLastAssistant: (updater: (msg: ChatMsg) => ChatMsg) => void;
+	// Conversation-scoped variants — for in-flight streams that must stick to
+	// the originating tab even if the user switches the active conversation.
+	addChatMessageTo: (convId: string, msg: ChatMsg) => void;
+	updateLastAssistantIn: (convId: string, updater: (msg: ChatMsg) => ChatMsg) => void;
+	setChatMessagesIn: (convId: string, msgs: ChatMsg[]) => void;
+	deleteMessage: (msgIdx: number) => void;
+	addContextBoundary: () => void;
+	setContextBoundaries: (boundaries: number[]) => void;
 	setPersonality: (v: Personality) => void;
 	setChatLoading: (v: boolean) => void;
 	setModel: (model: string, provider: string) => void;
 	clearChat: () => void;
 
+	// Branching
+	forkConversation: (fromMessageIndex: number) => string | null;
+	switchConversation: (conversationId: string) => void;
+	closeConversation: (conversationId: string) => void;
+	renameConversation: (conversationId: string, name: string) => void;
+
 	// Chat history
-	chatHistory: Array<{ id: string; title: string; messages: ChatMsg[]; ts: number }>;
+	chatHistory: ChatHistoryEntry[];
 	activeChatId: string | null;
 	saveChat: () => void;
 	loadChat: (id: string) => void;
@@ -199,6 +347,12 @@ type AppState = {
 	hydrateFromStorage: () => void;
 };
 
+const INITIAL_MAIN = createMainConversation();
+
+// Update messages of the currently-active conversation.
+const mapActiveMessages = (s: ConvState, fn: (msgs: ChatMsg[]) => ChatMsg[]): Conversation[] =>
+	s.conversations.map((c) => (c.id === s.activeConversationId ? { ...c, messages: fn(c.messages) } : c));
+
 export const useStore = create<AppState>()((set) => ({
 	theme: "system" as ThemePref,
 	setTheme: (t) => { applyTheme(t); set({ theme: t }); },
@@ -207,11 +361,10 @@ export const useStore = create<AppState>()((set) => ({
 	setPage: (p) => {
 		set((s) => {
 			if (typeof window !== "undefined") {
-				// Preserve the chat ID in the URL when navigating to/from greg
+				// Preserve the chat ID + active branch when navigating to/from greg
 				const chatId = s.activeChatId;
-				const hash = p === "greg"
-					? (chatId ? `/greg/${chatId}` : "/")
-					: `/${p}`;
+				const branchIdx = s.conversations.findIndex((c) => c.id === s.activeConversationId);
+				const hash = p === "greg" ? buildGregHash(chatId, branchIdx > 0 ? branchIdx : 0) : `/${p}`;
 				window.history.pushState(null, "", `#${hash}`);
 			}
 			return { page: p, ...(p !== "docs" && { docsAnchor: null }) };
@@ -229,25 +382,72 @@ export const useStore = create<AppState>()((set) => ({
 		if (typeof window !== "undefined") window.history.pushState(null, "", "#/docs");
 	},
 
-	chatMessages: [],
+	conversations: [INITIAL_MAIN],
+	activeConversationId: INITIAL_MAIN.id,
 	personality: "greg" as Personality,
 	chatLoading: false,
 	selectedModel: "",
 	selectedProvider: "",
-	setChatMessages: (msgs) => set({ chatMessages: msgs }),
-	addChatMessage: (msg) => set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
+	setChatMessages: (msgs) => set((s) => ({ conversations: mapActiveMessages(s, () => msgs) })),
+	addChatMessage: (msg) => set((s) => ({ conversations: mapActiveMessages(s, (prev) => [...prev, msg]) })),
 	updateLastAssistant: (updater) =>
-		set((s) => {
-			const msgs = [...s.chatMessages];
-			for (let i = msgs.length - 1; i >= 0; i--) {
-				const msg = msgs[i];
+		set((s) => ({
+			conversations: mapActiveMessages(s, (prev) => {
+				const next = [...prev];
+				for (let i = next.length - 1; i >= 0; i--) {
+					const msg = next[i];
+					if (msg?.role === "assistant") {
+						next[i] = updater(msg);
+						break;
+					}
+				}
+				return next;
+			}),
+		})),
+	addChatMessageTo: (convId, msg) => set((s) => ({
+		conversations: s.conversations.map((c) => (c.id === convId ? { ...c, messages: [...c.messages, msg] } : c)),
+	})),
+	updateLastAssistantIn: (convId, updater) => set((s) => ({
+		conversations: s.conversations.map((c) => {
+			if (c.id !== convId) return c;
+			const next = [...c.messages];
+			for (let i = next.length - 1; i >= 0; i--) {
+				const msg = next[i];
 				if (msg?.role === "assistant") {
-					msgs[i] = updater(msg);
+					next[i] = updater(msg);
 					break;
 				}
 			}
-			return { chatMessages: msgs };
+			return { ...c, messages: next };
 		}),
+	})),
+	setChatMessagesIn: (convId, msgs) => set((s) => ({
+		conversations: s.conversations.map((c) => (c.id === convId ? { ...c, messages: msgs } : c)),
+	})),
+	deleteMessage: (msgIdx) => set((s) => ({
+		conversations: s.conversations.map((c) => {
+			if (c.id !== s.activeConversationId) return c;
+			if (msgIdx < 0 || msgIdx >= c.messages.length) return c;
+			const messages = [...c.messages.slice(0, msgIdx), ...c.messages.slice(msgIdx + 1)];
+			// Shift context boundaries that pointed past the removed index
+			const contextBoundaries = c.contextBoundaries
+				.map((b) => (b > msgIdx ? b - 1 : b))
+				.filter((b) => b >= 0 && b <= messages.length);
+			return { ...c, messages, contextBoundaries };
+		}),
+	})),
+	addContextBoundary: () => set((s) => ({
+		conversations: s.conversations.map((c) =>
+			c.id === s.activeConversationId
+				? { ...c, contextBoundaries: [...c.contextBoundaries, c.messages.length] }
+				: c,
+		),
+	})),
+	setContextBoundaries: (boundaries) => set((s) => ({
+		conversations: s.conversations.map((c) =>
+			c.id === s.activeConversationId ? { ...c, contextBoundaries: boundaries } : c,
+		),
+	})),
 	setPersonality: (v) => { try { localStorage.setItem("greg-personality", v); } catch {} set({ personality: v }); },
 	setChatLoading: (v) => set({ chatLoading: v }),
 	setModel: (model, provider) => {
@@ -256,24 +456,86 @@ export const useStore = create<AppState>()((set) => ({
 	},
 	clearChat: () => set((s) => {
 		s.saveChat();
+		const main = createMainConversation();
 		if (typeof window !== "undefined") window.history.replaceState(null, "", "#/");
-		return { chatMessages: [], chatLoading: false, activeChatId: null };
+		return { conversations: [main], activeConversationId: main.id, chatLoading: false, activeChatId: null };
 	}),
 
-	chatHistory: [] as Array<{ id: string; title: string; messages: ChatMsg[]; ts: number }>,
+	forkConversation: (fromMessageIndex) => {
+		let newId: string | null = null;
+		set((s) => {
+			const main = s.conversations[0];
+			if (!main) return {};
+			// Single-depth guard: can only fork from Main
+			if (s.activeConversationId !== main.id) return {};
+			if (fromMessageIndex < 0 || fromMessageIndex >= main.messages.length) return {};
+			const branchNumber = s.conversations.length + 1;
+			const id = `conv-${Date.now()}-${randId()}`;
+			newId = id;
+			const branch: Conversation = {
+				id,
+				name: `Branch ${branchNumber}`,
+				parentId: main.id,
+				forkIndex: fromMessageIndex,
+				messages: [],
+				contextBoundaries: [],
+				createdAt: Date.now(),
+			};
+			const conversations = [...s.conversations, branch];
+			if (typeof window !== "undefined" && s.activeChatId) {
+				window.history.replaceState(null, "", `#${buildGregHash(s.activeChatId, conversations.length - 1)}`);
+			}
+			return { conversations, activeConversationId: id };
+		});
+		return newId;
+	},
+	switchConversation: (id) => set((s) => {
+		const idx = s.conversations.findIndex((c) => c.id === id);
+		if (idx < 0) return {};
+		if (typeof window !== "undefined" && s.activeChatId) {
+			window.history.replaceState(null, "", `#${buildGregHash(s.activeChatId, idx)}`);
+		}
+		return { activeConversationId: id };
+	}),
+	closeConversation: (id) => set((s) => {
+		const main = s.conversations[0];
+		if (!main || id === main.id) return {};
+		const conversations = s.conversations.filter((c) => c.id !== id);
+		const activeConversationId = s.activeConversationId === id ? main.id : s.activeConversationId;
+		if (typeof window !== "undefined" && s.activeChatId) {
+			const idx = conversations.findIndex((c) => c.id === activeConversationId);
+			window.history.replaceState(null, "", `#${buildGregHash(s.activeChatId, idx > 0 ? idx : 0)}`);
+		}
+		return { conversations, activeConversationId };
+	}),
+	renameConversation: (id, name) => set((s) => ({
+		conversations: s.conversations.map((c) => (c.id === id ? { ...c, name } : c)),
+	})),
+
+	chatHistory: [] as ChatHistoryEntry[],
 	activeChatId: null,
 	saveChat: () => set((s) => {
-		if (s.chatMessages.length === 0) return {};
+		const hasAny = s.conversations.some((c) => c.messages.length > 0);
+		if (!hasAny) return {};
 		const isNew = s.activeChatId === null;
 		const id = s.activeChatId ?? `chat-${Date.now()}`;
-		const userMsg = s.chatMessages.find((m) => m.role === "user")?.text ?? "";
+		const main = s.conversations[0];
+		const userMsg = main?.messages.find((m) => m.role === "user")?.text ?? "";
 		const title = userMsg.slice(0, 50) || "New chat";
 		const existing = s.chatHistory.filter((c) => c.id !== id);
-		const history = [{ id, title, messages: s.chatMessages, ts: Date.now() }, ...existing].slice(0, 50);
+		const entry: ChatHistoryEntry = {
+			id,
+			title,
+			ts: Date.now(),
+			conversations: s.conversations,
+			activeConversationId: s.activeConversationId,
+		};
+		const history = [entry, ...existing].slice(0, 50);
 		try { localStorage.setItem("greg-history", JSON.stringify(history)); } catch {}
-		// Stamp the chat ID into the URL the first time this chat is saved
+		// Stamp the chat ID (and active branch) into the URL the first time this chat is saved
 		if (isNew && typeof window !== "undefined") {
-			window.history.replaceState(null, "", `#/greg/${id}`);
+			const idx = s.conversations.findIndex((c) => c.id === s.activeConversationId);
+			window.history.replaceState(null, "", `#${buildGregHash(id, idx > 0 ? idx : 0)}`);
 		}
 		// Generate a better title async
 		if (userMsg) {
@@ -290,15 +552,24 @@ export const useStore = create<AppState>()((set) => ({
 	loadChat: (id) => set((s) => {
 		const chat = s.chatHistory.find((c) => c.id === id);
 		if (!chat) return {};
-		if (typeof window !== "undefined") window.history.pushState(null, "", `#/greg/${id}`);
-		return { chatMessages: chat.messages, activeChatId: id };
+		const idx = chat.conversations.findIndex((c) => c.id === chat.activeConversationId);
+		if (typeof window !== "undefined") {
+			window.history.pushState(null, "", `#${buildGregHash(id, idx > 0 ? idx : 0)}`);
+		}
+		return {
+			conversations: chat.conversations,
+			activeConversationId: chat.activeConversationId,
+			activeChatId: id,
+		};
 	}),
 	deleteChat: (id) => set((s) => {
 		const history = s.chatHistory.filter((c) => c.id !== id);
 		try { localStorage.setItem("greg-history", JSON.stringify(history)); } catch {}
 		const updates: Partial<AppState> = { chatHistory: history };
 		if (s.activeChatId === id) {
-			updates.chatMessages = [];
+			const main = createMainConversation();
+			updates.conversations = [main];
+			updates.activeConversationId = main.id;
 			updates.activeChatId = null;
 			if (typeof window !== "undefined") window.history.replaceState(null, "", "#/");
 		}
@@ -306,8 +577,9 @@ export const useStore = create<AppState>()((set) => ({
 	}),
 	newChat: () => set((s) => {
 		s.saveChat();
+		const main = createMainConversation();
 		if (typeof window !== "undefined") window.history.pushState(null, "", "#/");
-		return { chatMessages: [], activeChatId: null };
+		return { conversations: [main], activeConversationId: main.id, activeChatId: null };
 	}),
 
 	doubleCheck: false,
@@ -360,19 +632,30 @@ export const useStore = create<AppState>()((set) => ({
 				: localStorage.getItem("greg-mode") === "false" ? "quick" : "greg";
 			const selectedModel = localStorage.getItem("greg-model") ?? "";
 			const selectedProvider = localStorage.getItem("greg-provider") ?? "";
-			const chatHistory = JSON.parse(localStorage.getItem("greg-history") ?? "[]") as Array<{ id: string; title: string; messages: ChatMsg[]; ts: number }>;
+			const rawHistory = JSON.parse(localStorage.getItem("greg-history") ?? "[]") as unknown[];
+			const chatHistory = rawHistory.map(migrateHistoryEntry).filter((e): e is ChatHistoryEntry => e !== null);
+			// Re-serialize if any legacy entries were migrated so the next read is clean
+			if (chatHistory.length > 0 && chatHistory.length === rawHistory.length) {
+				try { localStorage.setItem("greg-history", JSON.stringify(chatHistory)); } catch {}
+			}
 			const doubleCheck = localStorage.getItem("greg-double-check") === "true";
 			const page = pageFromHash() ?? "greg";
 
-			// Restore active chat from URL hash (e.g. #/greg/chat-1234)
+			// Restore active chat from URL hash (e.g. #/greg/chat-1234[/<branchIdx>])
 			const chatId = chatIdFromHash();
 			const chatFromUrl = chatId ? chatHistory.find((c) => c.id === chatId) : null;
+			const branchIdx = branchIndexFromHash();
+			const activeFromUrl = chatFromUrl && branchIdx > 0 && branchIdx < chatFromUrl.conversations.length
+				? chatFromUrl.conversations[branchIdx]!.id
+				: chatFromUrl?.activeConversationId;
 
 			// Apply and commit
 			applyTheme(theme);
 			set({
 				theme, personality: personality as Personality, selectedModel, selectedProvider, chatHistory, doubleCheck, page,
-				...(chatFromUrl ? { chatMessages: chatFromUrl.messages, activeChatId: chatFromUrl.id } : {}),
+				...(chatFromUrl
+					? { conversations: chatFromUrl.conversations, activeConversationId: activeFromUrl!, activeChatId: chatFromUrl.id }
+					: {}),
 			});
 		} catch {}
 	},

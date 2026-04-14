@@ -168,21 +168,82 @@ export const generateTitle = async (prompt: string): Promise<{ title: string }> 
 // ---------------------------------------------------------------------------
 
 /**
- * Strips markdown code fences and extracts the first JSON array found in a string.
+ * Extracts up to 4 short follow-up strings from a model response. Tolerates
+ * markdown code fences, prose around the JSON, trailing commas, single-quoted
+ * strings, and numbered/bulleted lists when the model ignores the JSON contract.
  */
 const extractJsonArray = (raw: string): string[] | null => {
-	// Strip ```json ... ``` or ``` ... ``` wrappers
 	const stripped = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-	// Find first [...] block in case of surrounding prose
-	const match = stripped.match(/\[[\s\S]*\]/);
-	if (!match) return null;
-	try {
-		const parsed = JSON.parse(match[0]) as unknown;
-		if (Array.isArray(parsed) && parsed.length >= 4) return (parsed as string[]).slice(0, 4);
-	} catch {
-		// ignore
+
+	const isStringArray = (v: unknown): v is string[] =>
+		Array.isArray(v) && v.length >= 1 && v.every((x) => typeof x === "string");
+
+	const tryParse = (s: string): string[] | null => {
+		try {
+			const parsed = JSON.parse(s) as unknown;
+			if (isStringArray(parsed)) return parsed.slice(0, 4);
+		} catch { /* ignore */ }
+		return null;
+	};
+
+	const direct = tryParse(stripped);
+	if (direct) return direct;
+
+	// Non-greedy scan — prose like "[security, HA, failure, open]" may appear
+	// before the real payload.
+	const brackets = [...stripped.matchAll(/\[[\s\S]*?\]/g)].map((m) => m[0]);
+	for (const frag of brackets) {
+		const ok = tryParse(frag);
+		if (ok) return ok;
 	}
+
+	// Repair common JSON quirks — smart quotes, trailing commas, single-quoted strings.
+	const repair = (s: string): string =>
+		s
+			.replace(/[\u201C\u201D]/g, "\"")
+			.replace(/[\u2018\u2019]/g, "'")
+			.replace(/,(\s*[\]}])/g, "$1")
+			.replace(/'([^']*)'/g, "\"$1\"");
+	for (const frag of [stripped, ...brackets]) {
+		const ok = tryParse(repair(frag));
+		if (ok) return ok;
+	}
+
+	// Last resort: numbered / bulleted / quoted / bare question lines.
+	const fromList: string[] = [];
+	for (const line of stripped.split(/\r?\n/)) {
+		const t = line.trim();
+		if (!t || t.length > 160) continue;
+		const m =
+			t.match(/^(?:\d+[.):\-]|[-*•])\s+(.+)$/)
+			?? t.match(/^"([^"]+)"[,]?$/)
+			?? (t.endsWith("?") ? [t, t] as RegExpMatchArray : null);
+		if (m?.[1]) fromList.push(m[1]);
+	}
+	const cleaned = fromList
+		.map((s) => s.replace(/^["'\s]+|["',\s]+$/g, ""))
+		.filter(Boolean)
+		.slice(0, 4);
+	if (cleaned.length >= 2) return cleaned;
+
 	return null;
+};
+
+const buildFollowUpInstruction = (userMsg: string, assistantMsg: string, mode: "strict" | "simple"): string => {
+	const ctx = `\n\nUser: ${userMsg.slice(0, 400)}\n\nAssistant: ${assistantMsg.slice(0, 600)}`;
+	if (mode === "simple") {
+		return `Based on this exchange, suggest exactly 4 short follow-up questions (4-8 words each) the user might want to ask next. Return ONLY a JSON array of 4 strings. No prose, no numbering, no code fences.${ctx}`;
+	}
+	return `Based on this exchange, suggest exactly 4 follow-up questions the user might want to ask next. The questions must be distinct and must follow this fixed ordering:
+
+1. SECURITY — authentication, authorization, scopes/permissions, rate limiting, input validation, data exposure, audit logging, secret handling, or similar.
+2. HIGH AVAILABILITY — redundancy, failover, replication, clustering, health checks, load balancing, quorum, backup/restore, or disaster recovery for the system(s) discussed above.
+3. FAILURE MODES — a "what can go wrong" question about specific failures, error responses, edge cases, race conditions, timeouts, quotas, partial failures, or degraded behaviour relevant to what was just discussed.
+4. OPEN — anything else plausibly useful: a deeper-dive question, a related workflow, a tooling/observability question, an optimisation, or a related capability.
+
+LENGTH: each question MUST be SHORT — at most 8 words, ideally 4-6. No preamble, no "Can you tell me…", no "What about…". Strip filler. Good: "auth scopes needed?", "how to back up configs?", "what errors on quota exceeded?", "rate limit headers?". Bad: "Could you explain which authentication scopes are required for this endpoint?".
+
+Each question must be a natural thing to ask in the context of the assistant's reply — do not produce generic questions that ignore the topic. Return ONLY a JSON array of exactly 4 strings in the order above, nothing else.${ctx}`;
 };
 
 /**
@@ -195,11 +256,10 @@ export const generateFollowUpSuggestions = async (
 	assistantMsg: string,
 	opts?: { model?: string; provider?: "anthropic" | "ollama" },
 ): Promise<string[]> => {
-	const instruction = `Based on this exchange, suggest exactly 4 short follow-up questions the user might want to ask next. One of the 4 must be a security-related question (e.g. about authentication, authorization, rate limiting, input validation, or data exposure). Return ONLY a JSON array of 4 strings, nothing else.\n\nUser: ${userMsg.slice(0, 400)}\n\nAssistant: ${assistantMsg.slice(0, 600)}`;
-
 	const preferOllama = opts?.provider === "ollama" || (!opts?.provider && !!config.OLLAMA_URL);
 
-	// Try Ollama
+	// Try Ollama — reuse the chat model so it stays warm in VRAM; loading a
+	// separate summary model alongside a large chat model blows past VRAM limits.
 	if (preferOllama && config.OLLAMA_URL) {
 		try {
 			const model = opts?.model ?? config.OLLAMA_CHAT_SUMMARY_MODEL ?? config.LLM_MODEL;
@@ -208,10 +268,10 @@ export const generateFollowUpSuggestions = async (
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					model,
-					messages: [{ role: "user", content: instruction }],
+					messages: [{ role: "user", content: buildFollowUpInstruction(userMsg, assistantMsg, "simple") }],
 					stream: false,
 				}),
-				signal: AbortSignal.timeout(10_000),
+				signal: AbortSignal.timeout(60_000),
 			});
 			if (res.ok) {
 				const data = await res.json() as { message: { content: string } };
@@ -219,14 +279,17 @@ export const generateFollowUpSuggestions = async (
 				if (raw) {
 					const result = extractJsonArray(raw);
 					if (result) return result;
+					console.warn("[followups] ollama returned unparseable output:", raw.slice(0, 300));
 				}
+			} else {
+				console.warn("[followups] ollama http status:", res.status);
 			}
-		} catch {
-			// fallthrough to Anthropic
+		} catch (err) {
+			console.warn("[followups] ollama request failed:", err);
 		}
 	}
 
-	// Try Anthropic
+	// Try Anthropic with the structured taxonomy prompt.
 	if (config.ANTHROPIC_API_KEY) {
 		try {
 			const { default: Anthropic } = await import("@anthropic-ai/sdk");
@@ -234,16 +297,17 @@ export const generateFollowUpSuggestions = async (
 			const msg = await client.messages.create({
 				model: opts?.provider !== "ollama" && opts?.model ? opts.model : "claude-haiku-4-5-20251001",
 				max_tokens: 256,
-				messages: [{ role: "user", content: instruction }],
+				messages: [{ role: "user", content: buildFollowUpInstruction(userMsg, assistantMsg, "strict") }],
 			});
 			const block = msg.content.find((b: { type: string }) => b.type === "text");
 			const raw = (block as { text?: string } | undefined)?.text?.trim();
 			if (raw) {
 				const result = extractJsonArray(raw);
 				if (result) return result;
+				console.warn("[followups] anthropic returned unparseable output:", raw.slice(0, 300));
 			}
-		} catch {
-			// fallthrough
+		} catch (err) {
+			console.warn("[followups] anthropic request failed:", err);
 		}
 	}
 

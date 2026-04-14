@@ -38,9 +38,10 @@ export interface ModelInfo {
 }
 
 export interface ChatSSEEvent {
-	type: "text" | "endpoints" | "done" | "error" | "verification_text" | "verification_done" | "debug";
+	type: "text" | "endpoints" | "followups" | "done" | "error" | "verification_text" | "verification_done" | "debug";
 	text?: string;
 	data?: EndpointCard[];
+	followups?: string[];
 	error?: string;
 	model?: string;
 	provider?: string;
