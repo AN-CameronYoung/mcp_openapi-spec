@@ -240,6 +240,15 @@ const estimateCost = (model: string | undefined, usage: { input: number; output:
 const splitOnCode = (text: string): string[] =>
   text.split(/(```[\s\S]*?```|`[^`\n]*`)/);
 
+// Streaming-time stripper: just drop inline control tags so they don't flash
+// visibly mid-stream. Avoids the full cleanText regex pipeline running per token
+// on ever-growing text.
+const stripStreamTags = (raw: string): string =>
+  raw
+    .replace(/<endpoint[^>]*\/?>/g, "")
+    .replace(/<quickActions[^>]*\/?>/g, "")
+    .replace(/<followups>[\s\S]*?<\/followups>/g, "");
+
 const cleanText = (raw: string): string => {
   // First pass: strip <endpoint/> tags and unwrap fake table code blocks.
   // These operate on fenced blocks themselves, so they have to run first.
@@ -548,7 +557,7 @@ const CodeDropdown = ({ code, lang, lineCount, blockKey }: CodeDropdownProps): J
  */
 const StreamingText = ({ text, personality }: StreamingTextProps): JSX.Element => {
   const dotColor = PERSONALITY_COLOR[personality ?? "greg"] ?? "var(--g-green)";
-  const cleaned = cleanText(text);
+  const cleaned = stripStreamTags(text);
 
   if (!cleaned) return (
     <span className="inline-flex items-center gap-1 py-px">
@@ -1800,21 +1809,27 @@ const GregPage = (): JSX.Element => {
   // original message was sent. Assigned below, after handleSend is declared.
   const handleSendRef = useRef<((overrideText?: string, baseMessages?: ChatMsg[]) => Promise<void>) | null>(null);
 
+  // Refs so handleRetry / handleQuickAction keep a stable identity across renders —
+  // reading chatMessages / chatLoading / contextBoundaries directly would invalidate
+  // the ChatMessage memo on every streaming token.
+  const handlerDepsRef = useRef({ chatLoading, chatMessages, contextBoundaries });
+  handlerDepsRef.current = { chatLoading, chatMessages, contextBoundaries };
+
   const handleRetry = useCallback((msgIdx: number): void => {
-    if (chatLoading) return;
-    const msg = chatMessages[msgIdx];
+    const { chatLoading: loading, chatMessages: msgs, contextBoundaries: bounds } = handlerDepsRef.current;
+    if (loading) return;
+    const msg = msgs[msgIdx];
     if (!msg || msg.role !== "user") return;
-    const trimmed = chatMessages.slice(0, msgIdx);
+    const trimmed = msgs.slice(0, msgIdx);
     setChatMessages(trimmed);
     setFollowUpSuggestions([]);
-    // If context boundary was beyond the retry point, reset it
     // Drop boundaries beyond the retry point; keep those at or before it
-    setContextBoundaries(contextBoundaries.filter((b) => b <= msgIdx));
+    setContextBoundaries(bounds.filter((b) => b <= msgIdx));
     // Pass the trimmed array directly so handleSend uses it for history,
     // not the stale closure value that hasn't updated yet
     handleSendRef.current?.(msg.text, trimmed);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatLoading, chatMessages, contextBoundaries, setChatMessages]);
+  }, []);
 
   const DIAGRAM_PROMPTS: Record<string, string> = {
     flowchart: "show the above as a mermaid flowchart diagram (flowchart LR). Include the actual endpoint methods and paths (e.g. GET /users/{id}) as node labels — do not use generic descriptions.",
@@ -1831,15 +1846,16 @@ const GregPage = (): JSX.Element => {
   };
 
   const handleQuickAction = useCallback((msgIdx: number, action: "diagram" | "code", subType?: string): void => {
-    if (chatLoading) return;
+    const { chatLoading: loading, chatMessages: msgs } = handlerDepsRef.current;
+    if (loading) return;
     const prompt = action === "diagram"
       ? (DIAGRAM_PROMPTS[subType ?? "flowchart"] ?? DIAGRAM_PROMPTS["flowchart"]!)
       : (CODE_PROMPTS[subType ?? "javascript"] ?? CODE_PROMPTS["javascript"]!);
     // Context trimmed to just up to this message so the AI knows exactly what to diagram/code.
-    const context = chatMessages.slice(0, msgIdx + 1);
-    handleSend(prompt, context);
+    const context = msgs.slice(0, msgIdx + 1);
+    handleSendRef.current?.(prompt, context);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatLoading, chatMessages]);
+  }, []);
 
   // Refs so handleRefreshFollowUps keeps a stable identity across renders — reading chatMessages
   // directly would invalidate the memo on every streaming token.
