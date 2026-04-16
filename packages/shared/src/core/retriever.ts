@@ -33,7 +33,7 @@ export default class Retriever {
 		source: string,
 		apiName: string,
 		onProgress?: (event: ProgressEvent) => void,
-		opts?: { skipDelete?: boolean },
+		opts?: { skipDelete?: boolean; project?: string },
 	): Promise<IngestSummary> {
 		onProgress?.({ phase: "parsing", message: "Loading spec..." });
 		const spec = await loadSpec(source);
@@ -41,8 +41,8 @@ export default class Retriever {
 		const schemas = extractSchemas(spec);
 		onProgress?.({ phase: "parsed", message: `Found ${endpoints.length} endpoints, ${schemas.length} schemas` });
 
-		const endpointDocs = endpoints.map((e) => endpointToDocument(e, apiName));
-		const schemaDocs = schemas.map((s) => schemaToDocument(s, apiName));
+		const endpointDocs = endpoints.map((e) => endpointToDocument(e, apiName, opts?.project));
+		const schemaDocs = schemas.map((s) => schemaToDocument(s, apiName, opts?.project));
 		const allDocs = [...endpointDocs, ...schemaDocs];
 
 		if (!opts?.skipDelete) {
@@ -67,6 +67,7 @@ export default class Retriever {
 		format: "yaml" | "json",
 		apiName: string,
 		onProgress?: (event: ProgressEvent) => void,
+		opts?: { project?: string },
 	): Promise<IngestSummary> {
 		onProgress?.({ phase: "parsing", message: "Parsing spec..." });
 		const spec = await parseSpecContent(raw, format);
@@ -74,8 +75,8 @@ export default class Retriever {
 		const schemas = extractSchemas(spec);
 		onProgress?.({ phase: "parsed", message: `Found ${endpoints.length} endpoints, ${schemas.length} schemas` });
 
-		const endpointDocs = endpoints.map((e) => endpointToDocument(e, apiName));
-		const schemaDocs = schemas.map((s) => schemaToDocument(s, apiName));
+		const endpointDocs = endpoints.map((e) => endpointToDocument(e, apiName, opts?.project));
+		const schemaDocs = schemas.map((s) => schemaToDocument(s, apiName, opts?.project));
 		const allDocs = [...endpointDocs, ...schemaDocs];
 
 		onProgress?.({ phase: "deleting", message: "Removing old data..." });

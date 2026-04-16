@@ -4,14 +4,16 @@
 
 export { searchEndpoints, searchSchemas, getEndpoint, listEndpoints } from "@/actions/search";
 export { listApis, deleteApi } from "@/actions/apis";
+export { listDocs, deleteDoc, searchDocs, listProjects, searchAll, getDocContent } from "@/actions/docs";
 export { listModels, fetchSuggestions, generateTitle, getGreetingGif, getPrompts, listSpecFiles, generateFollowUpSuggestions } from "@/actions/ui";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type { SearchResult } from "@/lib/formatters";
+export type { SearchResult, ProjectInfo } from "@/lib/formatters";
 export type { ApiInfo } from "#types/store";
+export type { DocInfo } from "#types/doc";
 import type { Personality } from "@greg/shared/chat";
 export type { Personality };
 
@@ -26,6 +28,15 @@ export interface EndpointCard {
 	warnings?: string;
 }
 
+export interface DocCard {
+	doc_name: string;
+	heading: string;
+	heading_path: string;
+	project: string;
+	snippet: string;
+	score: number;
+}
+
 export interface ChatMessage {
 	role: "user" | "assistant";
 	content: string;
@@ -38,9 +49,10 @@ export interface ModelInfo {
 }
 
 export interface ChatSSEEvent {
-	type: "text" | "endpoints" | "followups" | "done" | "error" | "verification_text" | "verification_done" | "debug";
+	type: "text" | "endpoints" | "docs" | "followups" | "done" | "error" | "verification_text" | "verification_done" | "debug";
 	text?: string;
 	data?: EndpointCard[];
+	docCards?: DocCard[];
 	followups?: string[];
 	error?: string;
 	model?: string;

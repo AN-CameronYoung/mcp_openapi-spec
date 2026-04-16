@@ -8,3 +8,4 @@ proxmox_observed.json
 bun.lock
 .next/
 specs/
+docs/

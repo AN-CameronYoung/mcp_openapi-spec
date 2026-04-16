@@ -35,6 +35,18 @@
 			"import": "./src/core/parser.ts",
 			"types": "./src/core/parser.ts"
 		},
+		"./core/docChunker": {
+			"import": "./src/core/docChunker.ts",
+			"types": "./src/core/docChunker.ts"
+		},
+		"./core/docStore": {
+			"import": "./src/core/docStore.ts",
+			"types": "./src/core/docStore.ts"
+		},
+		"./core/docRetriever": {
+			"import": "./src/core/docRetriever.ts",
+			"types": "./src/core/docRetriever.ts"
+		},
 		"./chat": {
 			"import": "./src/chat.ts",
 			"types": "./src/chat.ts"
@@ -43,7 +55,8 @@
 	"imports": {
 		"#types/config": "./types/config.ts",
 		"#types/store": "./types/store.ts",
-		"#types/openapi": "./types/openapi.ts"
+		"#types/openapi": "./types/openapi.ts",
+		"#types/doc": "./types/doc.ts"
 	},
 	"devDependencies": {
 		"@types/node": "^22"

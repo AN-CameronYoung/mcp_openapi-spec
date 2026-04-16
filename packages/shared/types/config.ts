@@ -8,6 +8,7 @@ export const AppConfig = z.object({
 	CHROMA_AUTH_TOKEN: z.string().optional(),
 	CHROMA_DB_PATH: z.string().default(".chroma_db"),
 	CHROMA_COLLECTION: z.string().default("openapi_specs"),
+	CHROMA_DOCS_COLLECTION: z.string().default("docs"),
 
 	OLLAMA_URL: z.string().optional(),
 	OLLAMA_MODEL: z.string().default("mxbai-embed-large"),

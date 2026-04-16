@@ -132,14 +132,20 @@ const MenuItem = ({ label, detail, selected, onClick, className }: MenuItemProps
 const FLYOUT_GAP = 6;
 const VIEWPORT_MARGIN = 8;
 
+const CLOSE_DELAY = 200;
+
 const FlyoutGroup = ({ entry, value, onSelect, fontSize }: FlyoutGroupProps): JSX.Element => {
   const [hovered, setHovered] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
   const flyoutRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [flyoutPos, setFlyoutPos] = useState({ top: 0, left: 0, flipped: false });
   const hasSelected = entry.children.some((c) => c.name === value);
 
+  const cancelClose = () => { if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; } };
+
   const handleMouseEnter = () => {
+    cancelClose();
     if (rowRef.current) {
       const rect = rowRef.current.getBoundingClientRect();
       setFlyoutPos({ top: rect.top, left: rect.right + FLYOUT_GAP, flipped: false });
@@ -147,7 +153,9 @@ const FlyoutGroup = ({ entry, value, onSelect, fontSize }: FlyoutGroupProps): JS
     setHovered(true);
   };
 
-  const handleMouseLeave = () => setHovered(false);
+  const handleMouseLeave = () => { closeTimer.current = setTimeout(() => setHovered(false), CLOSE_DELAY); };
+
+  useEffect(() => () => cancelClose(), []);
 
   // After the flyout mounts, measure it and flip to the left side
   // if it would overflow the right edge of the viewport.
@@ -183,6 +191,8 @@ const FlyoutGroup = ({ entry, value, onSelect, fontSize }: FlyoutGroupProps): JS
       {hovered && createPortal(
         <div
           ref={flyoutRef}
+          onMouseEnter={cancelClose}
+          onMouseLeave={handleMouseLeave}
           style={{ position: "fixed", top: flyoutPos.top, left: flyoutPos.left, zIndex: 200, fontSize }}
           className="min-w-44 rounded-lg border border-border bg-popover p-1 shadow-md"
         >

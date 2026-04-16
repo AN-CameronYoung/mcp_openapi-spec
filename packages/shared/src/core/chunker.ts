@@ -9,7 +9,7 @@ import type { Document } from "#types/store";
  * Converts an OpenAPI Endpoint into a Document tuple for storage and retrieval.
  * Builds full display text, a compact embedding text, and rich metadata.
  */
-export const endpointToDocument = (endpoint: Endpoint, apiName: string): Document => {
+export const endpointToDocument = (endpoint: Endpoint, apiName: string, project?: string): Document => {
 	const { method, path } = endpoint;
 	const docId = `${apiName}:endpoint:${method}:${path}`;
 
@@ -128,6 +128,7 @@ export const endpointToDocument = (endpoint: Endpoint, apiName: string): Documen
 		method,
 		path,
 		api: apiName,
+		project: project ?? apiName,
 		full_text: fullText,
 	};
 	if (endpoint.operationId) metadata.operation_id = endpoint.operationId;
@@ -183,7 +184,7 @@ export const endpointToDocument = (endpoint: Endpoint, apiName: string): Documen
 /**
  * Converts a SchemaDefinition into a Document tuple for storage and retrieval.
  */
-export const schemaToDocument = (schema: SchemaDefinition, apiName: string): Document => {
+export const schemaToDocument = (schema: SchemaDefinition, apiName: string, project?: string): Document => {
 	const { name } = schema;
 	const docId = `${apiName}:schema:${name}`;
 
@@ -234,6 +235,7 @@ export const schemaToDocument = (schema: SchemaDefinition, apiName: string): Doc
 		type: "schema",
 		name,
 		api: apiName,
+		project: project ?? apiName,
 		full_text: fullText,
 	};
 

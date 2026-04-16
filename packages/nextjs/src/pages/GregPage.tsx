@@ -571,6 +571,8 @@ const CodeDropdown = ({ code, lang, lineCount, blockKey }: CodeDropdownProps): J
  * Renders streaming assistant text with a loading animation when empty,
  * and a "coding..." spinner when a code block is mid-stream.
  */
+const REVEAL_CHARS_PER_FRAME = 3; // characters revealed per animation frame (~60fps)
+
 const StreamingText = ({ text, personality, msgKey }: StreamingTextProps): JSX.Element => {
   const dotColor = PERSONALITY_COLOR[personality ?? "greg"] ?? "var(--g-green)";
   const theme = useStore((s) => s.theme);
@@ -578,7 +580,33 @@ const StreamingText = ({ text, personality, msgKey }: StreamingTextProps): JSX.E
   const components = useMemo(() => mdComponents(msgKey, LANG_MAP, isDark), [msgKey, isDark]);
   const cleaned = stripStreamTags(text);
 
-  if (!cleaned) return (
+  // Smooth reveal: displayedLen tracks how many chars of `cleaned` are shown.
+  // We increment it a few chars per frame so text trickles in smoothly.
+  const [displayedLen, setDisplayedLen] = useState(0);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    // If new text is shorter (e.g. reset) snap immediately
+    if (cleaned.length <= displayedLen) {
+      setDisplayedLen(cleaned.length);
+      return;
+    }
+    const step = () => {
+      setDisplayedLen((prev) => {
+        const next = prev + REVEAL_CHARS_PER_FRAME;
+        if (next >= cleaned.length) return cleaned.length;
+        rafRef.current = requestAnimationFrame(step);
+        return next;
+      });
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cleaned]);
+
+  const visible = cleaned.slice(0, displayedLen);
+
+  if (!visible) return (
     <span className="inline-flex items-center gap-1 py-px">
       {[0, 1, 2].map((i) => (
         <span key={i} className="inline-block w-1.5 h-1.5 rounded-full" style={{
@@ -590,13 +618,16 @@ const StreamingText = ({ text, personality, msgKey }: StreamingTextProps): JSX.E
   );
 
   // Check for an unclosed code block (streaming in progress)
-  const openFences = (cleaned.match(/```/g) || []).length;
+  const openFences = (visible.match(/```/g) || []).length;
   const hasUnclosedCode = openFences % 2 === 1;
 
   if (hasUnclosedCode) {
-    // Render text before the unclosed code block through markdown, then show "coding..." spinner
-    const lastFence = cleaned.lastIndexOf("```");
-    const before = cleaned.slice(0, lastFence).trim();
+    // Render text before the unclosed code block through markdown, then show spinner
+    const lastFence = visible.lastIndexOf("```");
+    const before = visible.slice(0, lastFence).trim();
+    const fenceRest = visible.slice(lastFence + 3);
+    const lang = fenceRest.split("\n")[0]?.trim().toLowerCase() ?? "";
+    const isDiagram = lang === "mermaid";
     return (
       <>
         {before && (
@@ -606,14 +637,14 @@ const StreamingText = ({ text, personality, msgKey }: StreamingTextProps): JSX.E
           <svg className="animate-spin inline-block w-3.5 h-3.5" width={14} height={14} viewBox="0 0 14 14" fill="none">
             <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="20 12" />
           </svg>
-          <span className="text-sm italic">coding...</span>
+          <span className="text-sm italic">{isDiagram ? "diagramming..." : "coding..."}</span>
         </div>
       </>
     );
   }
 
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components as never}>{cleaned}</ReactMarkdown>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components as never}>{visible}</ReactMarkdown>
   );
 };
 
@@ -3075,7 +3106,7 @@ const GregPage = (): JSX.Element => {
         >
         {/* Chat title bar */}
         {activeChatTitle !== null && (
-          <div className={cn("flex items-center gap-2 mb-1 min-w-0 group/title transition-[padding] duration-200", !sidebarOpen && "pl-10")}>
+          <div className="flex items-center gap-2 mb-1 min-w-0 group/title pl-12">
             {renamingTitle ? (
               <input
                 ref={renameInputRef}

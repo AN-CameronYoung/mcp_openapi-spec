@@ -15,7 +15,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-	title: "greg",
+	title: "greg.",
 	description: "OpenAPI semantic search + chat",
 };
 

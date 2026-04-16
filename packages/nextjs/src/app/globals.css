@@ -21,7 +21,7 @@
 	--g-danger:       #DC2626;
 	--g-method-post:  #2563EB;
 	--g-method-put:   #D97706;
-	--g-method-patch: #9333EA;
+	--g-method-patch: #6B21A8;
 
 	/* Derived — surfaces & borders */
 	--g-surface:        color-mix(in srgb, var(--g-text) 5%, var(--g-bg));
@@ -42,7 +42,7 @@
 	/* Derived — semantic areas */
 	--g-user-bg:          color-mix(in srgb, var(--g-accent) 8%, transparent);
 	--g-greg-bg:          color-mix(in srgb, var(--g-text) 4%, var(--g-bg));
-	--g-code-bg:          var(--g-bg);
+	--g-code-bg:          color-mix(in srgb, var(--g-text) 4%, var(--g-bg));
 	--g-inline-code-text: var(--g-danger);
 	--g-logo-text: #FFFFFF;
 
@@ -131,6 +131,7 @@
 	--g-method-patch: #C084FC;
 
 	--g-inline-code-text: color-mix(in srgb, var(--g-accent) 80%, #fff);
+	--g-code-bg:          color-mix(in srgb, #000 18%, var(--g-bg));
 	--g-logo-text: var(--g-bg);
 
 	color-scheme: dark;
@@ -237,6 +238,28 @@ code[class*="language-"] span {
 }
 ::-webkit-scrollbar-thumb:hover {
 	background: var(--g-text-dim);
+}
+
+/* ── Dropdown tree lines ─────────────────────────────────────────────────── */
+
+.tree-children {
+	margin-left: 1rem;
+	padding-left: 1rem;
+	border-left: 1px solid color-mix(in srgb, var(--g-text) 10%, transparent);
+}
+
+.tree-item {
+	position: relative;
+}
+
+.tree-item::before {
+	content: '';
+	position: absolute;
+	left: -0.75rem;
+	top: 50%;
+	width: 0.5rem;
+	height: 1px;
+	background: color-mix(in srgb, var(--g-text) 10%, transparent);
 }
 
 /* ── Legacy patterns (kept for GregPage/DocsPage until migrated) ───────── */

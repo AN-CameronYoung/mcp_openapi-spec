@@ -1,7 +1,21 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
 import type Retriever from "./core/retriever";
+import type DocRetriever from "./core/docRetriever";
 import config from "./core/config";
+
+// ---------------------------------------------------------------------------
+// External MCP client interface
+// ---------------------------------------------------------------------------
+
+export interface ExternalMcpClient {
+	/** Wait for all configured MCP servers to connect (idempotent). */
+	ensureReady(): Promise<void>;
+	/** Returns cached tools from all connected servers. Call after ensureReady. */
+	getTools(): Anthropic.Tool[];
+	/** Route a tool call to the owning server and return its text response. */
+	callTool(name: string, args: Record<string, unknown>): Promise<string>;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,6 +45,18 @@ export interface ChatRequest {
 // inline follow-up generation so a tertiary LLM call isn't needed after the
 // main response streams — mirrors how endpoints are emitted as structured
 // output alongside prose.
+const DOCS_DIRECTIVE = `
+
+LOOKUP RULES:
+- search_apis (API specs) and search_docs (documentation) are SEPARATE indexes. Searching one does NOT search the other. When a question touches indexed content, you must call BOTH — in parallel.
+- When a question involves a project, service, collector, endpoint, field name, config key, parameter, behaviour, or workflow — call BOTH search_apis AND search_docs in parallel before responding. No exceptions for these topics.
+- NEVER make up or guess a field name, parameter, config value, endpoint path, or behaviour. If you haven't retrieved it from a tool in this conversation, call a tool first.
+- If search_docs returns nothing useful, try list_docs then get_doc with the closest doc name. Try 2–3 different queries before concluding nothing is indexed.
+- For multiple projects or topics: call tools for each IN PARALLEL. Do not look up one at a time.
+- For purely conversational messages (greetings, model questions, format requests, follow-up rewrites using already-retrieved info) — no lookup needed. Use judgment: if facts about indexed content are required, look them up first.
+
+DOCREF: After your response prose (but BEFORE the <followups> tag), emit a <docrefs>["name1","name2"]</docrefs> tag listing ONLY the exact doc_name values you retrieved via search_docs or get_doc AND actually cited in your response. If you used no docs, omit this tag entirely. Only include docs whose content you directly drew on — not every doc you looked at.`;
+
 const FOLLOWUPS_DIRECTIVE = `
 
 FOLLOW-UPS: End every response with exactly 4 short follow-up questions the user might ask next, emitted on their own line as an XML tag wrapping a JSON array:
@@ -61,7 +87,7 @@ Rules:
 - NEVER guess or make up parameter names, field names, types, or response shapes. ONLY use what search results show. If search says params are "minscore, from, to" — those are the ONLY params.
 - NEVER mention a route (e.g. \`GET /foo/{bar}\`) in your response unless you have verified it via search or get_endpoint EARLIER in this conversation. If you are about to type a route you have not seen in a tool result, stop and call a tool first. No exceptions — even if the route "sounds obvious" or you "know it exists." Assume nothing.
 - HONESTY: If you are not 100% certain that something is factually correct — a field name, a value, a behaviour, anything — you MUST write *guessing* (in italics, exactly that word) immediately before the uncertain claim. Do not omit this. Do not hedge with words like "probably" or "I think" instead — use *guessing*.
-- Use search to find endpoints. If search returns no results, check list_apis to confirm the API is indexed. Do NOT claim an API is missing without checking list_apis first. Try broader or different search terms before giving up.
+- Use search_apis to find endpoints. If search_apis returns no results, check list_apis to confirm the API is indexed. Do NOT claim an API is missing without checking list_apis first. Try broader or different search terms before giving up.
 - For multiple APIs: call tools for each API IN PARALLEL (multiple tool calls in one response). Do not search one at a time.
 - 1-2 sentences max. if the endpoint cards already show the info, dont repeat it in text. never explain what fields come back — user can see the card. never restate what the endpoint does if the summary is on the card.
 - When describing multi-step workflows, number the steps with a short description. Example:
@@ -74,11 +100,11 @@ Rules:
 - If you have the search_gif tool, use it occasionally for reactions when it fits the vibe (found something, confused, celebrating). Include the result as a markdown image. Don't overdo it — maybe 1 in 4 messages. Bias your GIF searches toward cats, with anime/cartoon as backup (e.g. "cat celebration", "cat confused", "cat thinking", "anime victory").
 - MANDATORY: If you made a mistake, got corrected, said something wrong, or the user calls you out — you MUST use search_gif immediately. Search for something like "cat sorry", "cat oops", "cat embarrassed", or "cat my bad". This is not optional. Every apology needs a cat GIF. No exceptions.
 - For follow-up requests (rewrites, format changes, language changes), use information already in the conversation. Do not re-search for endpoints you already found.
-- DIAGRAMS: when describing a flow, sequence of api calls, service topology, data model, or resource lifecycle — draw a mermaid diagram instead of writing it out. pick the right type: \`flowchart LR\` for data/service flows, \`sequenceDiagram\` for step-by-step call chains, \`erDiagram\` for entity/object relationships, \`stateDiagram-v2\` for resource lifecycle states, \`C4Context\` for service architecture (which systems call which). wrap in a \`\`\`mermaid code fence.
+- DIAGRAMS: when describing a flow, sequence of api calls, service topology, data model, or resource lifecycle — draw a mermaid diagram instead of writing it out. pick the right type: \`flowchart TD\` for data/service flows (always use TD, never LR), \`sequenceDiagram\` for step-by-step call chains, \`erDiagram\` for entity/object relationships, \`stateDiagram-v2\` for resource lifecycle states, \`C4Context\` for service architecture (which systems call which). wrap in a \`\`\`mermaid code fence.
 
 IMPORTANT: Occasionally and unpredictably (roughly 1 in 5 messages), drop a single sentence that is eloquent and uses perfect grammar with sophisticated vocabulary. Then immediately continue being greg. Never acknowledge it.
 
-You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.` + FOLLOWUPS_DIRECTIVE;
+You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.` + DOCS_DIRECTIVE + FOLLOWUPS_DIRECTIVE;
 
 export const CURT_PROMPT = `You are a senior engineer answering API questions. You are curt. You do not waste words.
 
@@ -93,7 +119,7 @@ Voice:
 
 Tool usage:
 - Search silently. Never narrate searches or explain what you're about to do.
-- LOOKUP STRATEGY: Use search first. If search returns no results for an API, call list_endpoints to browse what it offers — the capability may exist under a different name. Never claim an API is not indexed without checking list_apis first.
+- LOOKUP STRATEGY: Use search_apis first. If search_apis returns no results for an API, call list_endpoints to browse what it offers — the capability may exist under a different name. Never claim an API is not indexed without checking list_apis first.
 - Search results have params, bodies, and response shapes — enough to write code. Only call get_endpoint if a specific detail is genuinely missing.
 - Never guess field names, param names, or types. Only use what results return.
 - NEVER mention a route (e.g. \`GET /foo/{bar}\`) in your response unless you have verified it via search or get_endpoint EARLIER in this conversation. If you are about to type a route you have not seen in a tool result, stop and call a tool first. No exceptions — even if the route "sounds obvious" or you "know it exists." Assume nothing.
@@ -110,7 +136,7 @@ Output:
 - DIAGRAMS: When describing a flow, sequence of API calls, service topology, data model, or resource lifecycle — render a mermaid diagram instead of prose. Pick the right type: \`flowchart LR\` for data/service flows, \`sequenceDiagram\` for call chains, \`erDiagram\` for entity/object relationships, \`stateDiagram-v2\` for resource lifecycle states, \`C4Context\` for service architecture. Wrap in a \`\`\`mermaid code fence.
 - Total prose per response: 1-3 sentences.
 
-You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.` + FOLLOWUPS_DIRECTIVE;
+You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.` + DOCS_DIRECTIVE + FOLLOWUPS_DIRECTIVE;
 
 export const CASUAL_PROMPT = `You are a senior engineer answering API questions. You are curt. You do not waste words.
 
@@ -164,7 +190,7 @@ Response: escalate the frustration creatively each time — sighing, questioning
 
 Tool usage:
 - Search silently. Never narrate searches or explain what you're about to do.
-- LOOKUP STRATEGY: Use search first. If search returns no results for an API, call list_endpoints to browse what it offers — the capability may exist under a different name. Never claim an API is not indexed without checking list_apis first.
+- LOOKUP STRATEGY: Use search_apis first. If search_apis returns no results for an API, call list_endpoints to browse what it offers — the capability may exist under a different name. Never claim an API is not indexed without checking list_apis first.
 - Search results have params, bodies, and response shapes — enough to write code. Only call get_endpoint if a specific detail is genuinely missing.
 - Never guess field names, param names, or types. Only use what results return.
 - NEVER mention a route (e.g. \`GET /foo/{bar}\`) in your response unless you have verified it via search or get_endpoint EARLIER in this conversation. If you are about to type a route you have not seen in a tool result, stop and call a tool first. No exceptions — even if the route "sounds obvious" or you "know it exists." Assume nothing.
@@ -181,7 +207,7 @@ Output:
 - DIAGRAMS: When describing a flow, sequence of API calls, service topology, data model, or resource lifecycle — draw a mermaid diagram instead of prose. Pick the right type: \`flowchart LR\` for data/service flows, \`sequenceDiagram\` for call chains, \`erDiagram\` for entity/object relationships, \`stateDiagram-v2\` for resource lifecycle states, \`C4Context\` for service architecture. Wrap in a \`\`\`mermaid code fence.
 - Total prose per response: 1-3 sentences.
 
-You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.` + FOLLOWUPS_DIRECTIVE;
+You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.` + DOCS_DIRECTIVE + FOLLOWUPS_DIRECTIVE;
 
 export const VERBOSE_PROMPT = `You are a senior API educator. Your job is to help the user deeply understand APIs — not just find endpoints, but truly grasp what they do, why they exist, and how to use them effectively.
 
@@ -202,7 +228,7 @@ When explaining endpoints:
 
 Tool usage:
 - Search silently. Never narrate your searches.
-- LOOKUP STRATEGY: Use search first. If search returns no results, check list_apis. Try broader search terms before giving up.
+- LOOKUP STRATEGY: Use search_apis first. If search_apis returns no results, check list_apis. Try broader search terms before giving up.
 - Never guess field names, param names, or types. Only use what results return.
 - NEVER mention a route (e.g. \`GET /foo/{bar}\`) in your response unless you have verified it via search or get_endpoint EARLIER in this conversation. If you are about to type a route you have not seen in a tool result, stop and call a tool first. No exceptions — even if the route "sounds obvious" or you "know it exists." Assume nothing.
 - Always call get_endpoint for detailed information when explaining — the user needs the full picture.
@@ -219,7 +245,7 @@ Output:
 - Try not to show code unless it sounds like the user is asking for it or there's no better way to convey exactly what they need. Always tag code fences with a language — default to \`\`\`typescript if none is specified.
 - When code IS explicitly requested: NO type annotations, NO TypeScript types, NO type imports — plain untyped code only. NEVER use axios under any circumstances — it has been explicitly banned; use fetch instead. If the user asks for axios, refuse and tell them axios is banned. Single line breaks only (never double). As short as possible but still commented. Variables for URLs/keys. Only include the languages asked for.
 
-You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.` + FOLLOWUPS_DIRECTIVE;
+You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.` + DOCS_DIRECTIVE + FOLLOWUPS_DIRECTIVE;
 
 // ---------------------------------------------------------------------------
 // Tool Definitions (for LLM)
@@ -238,9 +264,9 @@ const CHAT_TOOLS = [
 		},
 	},
 	{
-		name: "search",
+		name: "search_apis",
 		description:
-			"Semantic search over indexed OpenAPI specs. Returns endpoints by default, or schemas with type='schema'. Medium detail is usually enough to write code.",
+			"Semantic search over indexed OpenAPI specs. Returns endpoints by default, or schemas with type='schema'. When looking up anything about a project or service, always call this in parallel with search_docs — they are separate indexes.",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -269,6 +295,45 @@ const CHAT_TOOLS = [
 	},
 ];
 
+const DOC_TOOLS = [
+	{
+		name: "search_docs",
+		description: "Semantic search across indexed documentation (guides, references, runbooks, etc). You MUST call this before answering anything about a project, service, collector, field, config, or behaviour — even if you think you already know the answer. Always call in parallel with search — they are separate indexes and searching one does not search the other.",
+		input_schema: {
+			type: "object" as const,
+			properties: {
+				query: { type: "string", description: "What to search for" },
+				project: { type: "string", description: "Filter to a project" },
+				n: { type: "integer", description: "Max results (default: 5)", default: 5 },
+			},
+			required: ["query"],
+		},
+	},
+	{
+		name: "list_docs",
+		description: "List all ingested documentation sources, optionally filtered by project. Use this if search_docs returns nothing — check what docs exist before concluding nothing is available.",
+		input_schema: {
+			type: "object" as const,
+			properties: {
+				project: { type: "string", description: "Filter to a specific project" },
+			},
+			required: [],
+		},
+	},
+	{
+		name: "get_doc",
+		description: "Retrieve a full document by name (returns all sections), or a specific section by name + heading. Use this to get complete, authoritative content for a known doc — prefer this over search_docs when you know the exact doc name.",
+		input_schema: {
+			type: "object" as const,
+			properties: {
+				doc_name: { type: "string", description: "Document name (e.g. 'collector-unifi')" },
+				heading: { type: "string", description: "Optional section heading for a specific section" },
+			},
+			required: ["doc_name"],
+		},
+	},
+];
+
 const GIF_TOOL = {
 	name: "search_gif",
 	description: "Search for a reaction GIF to include in your response. Use sparingly — only when a GIF genuinely adds to the message (celebrating, confused, found something cool, etc).",
@@ -286,14 +351,21 @@ const GIF_TOOL = {
  * optionally appending an API suffix to the search tool description
  * and including the GIF tool for the greg personality.
  */
-const getChatTools = (personality: Personality = "greg", apiSuffix: string = ""): Anthropic.Tool[] => {
+const getChatTools = (personality: Personality = "greg", apiSuffix: string = "", docSuffix: string = "", externalTools: Anthropic.Tool[] = []): Anthropic.Tool[] => {
 	const tools: Anthropic.Tool[] = CHAT_TOOLS.map(t => {
-		if (t.name === "search" && apiSuffix) {
+		if (t.name === "search_apis" && apiSuffix) {
 			return { ...t, description: t.description + apiSuffix } as Anthropic.Tool;
 		}
 		return t as Anthropic.Tool;
 	});
+	tools.push(...DOC_TOOLS.map(t => {
+		if (t.name === "search_docs" && docSuffix) {
+			return { ...t, description: t.description + docSuffix } as Anthropic.Tool;
+		}
+		return t as Anthropic.Tool;
+	}));
 	if (config.GIPHY_API_KEY && personality === "greg") tools.push(GIF_TOOL as Anthropic.Tool);
+	tools.push(...externalTools);
 	return tools;
 };
 
@@ -363,11 +435,13 @@ const executeTool = async (
 	name: string,
 	input: Record<string, unknown>,
 	retriever: Retriever,
-): Promise<{ result: string; endpoints: EndpointCard[] }> => {
+	docRetriever?: DocRetriever,
+	mcpClient?: ExternalMcpClient,
+): Promise<{ result: string; endpoints: EndpointCard[]; docs: DocCard[] }> => {
 	const endpoints: EndpointCard[] = [];
 
 	switch (name) {
-		case "search": {
+		case "search_apis": {
 			const searchType = (input.type as string) ?? "endpoint";
 			const n = Number(input.n ?? input.limit ?? 2);
 			const results = searchType === "schema"
@@ -398,7 +472,7 @@ const executeTool = async (
 					const text = m.medium_text ?? (m.full_text ?? r.text).slice(0, 150);
 					return `${label} (${m.api}): ${text}`;
 				}).join("\n");
-			return { result: formatted, endpoints };
+			return { result: formatted, endpoints, docs: [] };
 		}
 
 		case "get_endpoint": {
@@ -407,7 +481,7 @@ const executeTool = async (
 				input.method as string,
 				input.api as string | undefined,
 			);
-			if (!result) return { result: "Endpoint not found.", endpoints: [] };
+			if (!result) return { result: "Endpoint not found.", endpoints: [], docs: [] };
 			const m = result.metadata;
 			endpoints.push({
 				method: m.method ?? "",
@@ -419,7 +493,7 @@ const executeTool = async (
 				response_schema: m.response_schema ?? "",
 				warnings: m.warnings ?? "",
 			});
-			return { result: m.full_text ?? result.text, endpoints };
+			return { result: m.full_text ?? result.text, endpoints, docs: [] };
 		}
 
 		case "list_apis": {
@@ -427,41 +501,119 @@ const executeTool = async (
 			return {
 				result: apis.length === 0 ? "No APIs ingested." : `Indexed APIs: ${apis.map((a) => `${a.name} (${a.endpoints} endpoints, ${a.schemas} schemas)`).join(", ")}`,
 				endpoints: [],
+				docs: [],
 			};
 		}
 
 		case "list_endpoints": {
 			const eps = await retriever.listEndpoints(input.api as string);
-			if (eps.length === 0) return { result: `No endpoints for '${input.api}'.`, endpoints: [] };
+			if (eps.length === 0) return { result: `No endpoints for '${input.api}'.`, endpoints: [], docs: [] };
 			const MAX_LIST = 40;
 			const lines = eps.slice(0, MAX_LIST).map((e) => `${e.metadata.method} ${e.metadata.path}`);
 			const suffix = eps.length > MAX_LIST ? `\n... and ${eps.length - MAX_LIST} more. Use search to find specific endpoints.` : "";
 			return {
 				result: `${input.api} (${eps.length} endpoints):\n${lines.join("\n")}${suffix}`,
 				endpoints: [],
+				docs: [],
 			};
 		}
 
 		case "search_gif": {
-			if (!config.GIPHY_API_KEY) return { result: "GIF search not configured", endpoints: [] };
+			if (!config.GIPHY_API_KEY) return { result: "GIF search not configured", endpoints: [], docs: [] };
 			try {
 				const q = encodeURIComponent(String(input.query ?? "reaction"));
 				const res = await fetch(
 					`https://api.giphy.com/v1/stickers/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=10&rating=g&lang=en`,
 				);
-				if (!res.ok) return { result: "GIF search failed", endpoints: [] };
+				if (!res.ok) return { result: "GIF search failed", endpoints: [], docs: [] };
 				const data = await res.json() as { data: Array<{ title: string; images: { original: { url: string } } }> };
 				const match = data.data?.[0];
 				const gif = match?.images?.original?.url;
-				if (!gif) return { result: "No GIF found", endpoints: [] };
-				return { result: `![gif](${gif})`, endpoints: [] };
+				if (!gif) return { result: "No GIF found", endpoints: [], docs: [] };
+				return { result: `![gif](${gif})`, endpoints: [], docs: [] };
 			} catch {
-				return { result: "GIF search failed", endpoints: [] };
+				return { result: "GIF search failed", endpoints: [], docs: [] };
 			}
 		}
 
+		case "search_docs": {
+			if (!docRetriever) return { result: "Doc search not available.", endpoints: [], docs: [] };
+			const n = Number(input.n ?? 5);
+			const results = await docRetriever.searchDocs(
+				input.query as string,
+				{ project: input.project as string | undefined },
+				n,
+			);
+			if (results.length === 0) return { result: "No docs found.", endpoints: [], docs: [] };
+			const lines = results.map((r) => {
+				const m = r.metadata;
+				const heading = m.heading_path ?? m.heading ?? "";
+				const label = `${m.doc_name ?? "?"}${heading ? ` > ${heading}` : ""}`;
+				const text = (m.full_text ?? r.text).slice(0, 300);
+				return `${label} (${m.project ?? "?"}): ${text}`;
+			});
+			const docCards: DocCard[] = results.map((r) => {
+				const m = r.metadata;
+				const rawText = m.full_text ?? r.text;
+				return {
+					doc_name: m.doc_name ?? "",
+					heading: m.heading ?? "",
+					heading_path: m.heading_path ?? m.heading ?? "",
+					project: m.project ?? "",
+					snippet: rawText.replace(/\n+/g, " ").trim().slice(0, 150),
+					score: Math.max(0, Math.round((1 - (r.distance ?? 0) / 2) * 100) / 100),
+				};
+			});
+			return { result: lines.join("\n---\n"), endpoints: [], docs: docCards };
+		}
+
+		case "list_docs": {
+			if (!docRetriever) return { result: "Doc listing not available.", endpoints: [], docs: [] };
+			let docs = await docRetriever.listDocs();
+			const project = input.project as string | undefined;
+			if (project) docs = docs.filter((d) => d.project === project);
+			if (docs.length === 0) {
+				return { result: project ? `No docs found for project '${project}'.` : "No docs ingested.", endpoints: [], docs: [] };
+			}
+			const label = project ? `Docs in '${project}'` : "Indexed docs";
+			const lines = docs.map((d) => `- ${d.name} [${d.category}] (project: ${d.project}, ${d.chunks} chunks)`);
+			return { result: `${label}:\n${lines.join("\n")}`, endpoints: [], docs: [] };
+		}
+
+		case "get_doc": {
+			if (!docRetriever) return { result: "Doc retrieval not available.", endpoints: [], docs: [] };
+			const docName = input.doc_name as string;
+			if (input.heading) {
+				const results = await docRetriever.getDocByHeading(docName, input.heading as string);
+				if (results.length === 0) return { result: "No matching section found.", endpoints: [], docs: [] };
+				const r = results[0]!;
+				const heading = r.metadata.heading_path ?? r.metadata.heading ?? "";
+				const text = heading ? `## ${heading}\n\n${r.metadata.full_text ?? r.text}` : (r.metadata.full_text ?? r.text);
+				return { result: text, endpoints: [], docs: [] };
+			}
+			const chunks = await docRetriever.getDocChunks(docName);
+			if (chunks.length === 0) return { result: `No document found with name '${docName}'.`, endpoints: [], docs: [] };
+			chunks.sort((a, b) => {
+				const ai = parseInt(a.metadata.chunk_index ?? "0", 10);
+				const bi = parseInt(b.metadata.chunk_index ?? "0", 10);
+				return ai - bi;
+			});
+			const parts = chunks.map((c) => {
+				const heading = c.metadata.heading;
+				const level = parseInt(c.metadata.heading_level ?? "0", 10);
+				const body = c.metadata.full_text ?? c.text;
+				if (heading && level > 0) return `${"#".repeat(level)} ${heading}\n\n${body}`;
+				return body;
+			});
+			return { result: parts.join("\n\n"), endpoints: [], docs: [] };
+		}
+
 		default:
-			return { result: `Unknown tool: ${name}`, endpoints: [] };
+			if (mcpClient) {
+				const result = await mcpClient.callTool(name, input);
+				return { result, endpoints: [], docs: [] };
+			}
+			return { result: `Unknown tool: ${name}`, endpoints: [], docs: [] };
 	}
 };
 
@@ -474,6 +626,15 @@ interface EndpointCard {
 	full_text: string;
 	response_schema: string;
 	warnings?: string;
+}
+
+interface DocCard {
+	doc_name: string;
+	heading: string;
+	heading_path: string;
+	project: string;
+	snippet: string;
+	score: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -489,13 +650,18 @@ const chatAnthropic = async (
 	messages: ChatMessage[],
 	systemPrompt: string,
 	retriever: Retriever,
+	docRetriever: DocRetriever | undefined,
 	personality: Personality,
 	apiSuffix: string,
+	docSuffix: string,
 	apiContext: string,
 	onText: (text: string) => void,
 	onEndpoints: (eps: EndpointCard[]) => void,
+	onDocs: (docs: DocCard[]) => void,
 	usage: { input: number; output: number; toolCalls: number },
 	onDebug: (entry: Record<string, unknown>) => void,
+	mcpClient?: ExternalMcpClient,
+	externalTools: Anthropic.Tool[] = [],
 ): Promise<void> => {
 	const { default: Anthropic } = await import("@anthropic-ai/sdk");
 	const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
@@ -524,7 +690,7 @@ const chatAnthropic = async (
 			temperature: 0.3,
 			system: systemBlocks,
 			messages: apiMessages as Anthropic.MessageParam[],
-			tools: getChatTools(personality, apiSuffix),
+			tools: getChatTools(personality, apiSuffix, docSuffix, externalTools),
 		});
 
 		let hasToolUse = false;
@@ -601,9 +767,10 @@ const chatAnthropic = async (
 
 		for (const tool of toolUseBlocks) {
 			onDebug({ event: "tool_call", name: tool.name, input: tool.input });
-			const { result, endpoints } = await executeTool(tool.name, tool.input, retriever);
+			const { result, endpoints, docs } = await executeTool(tool.name, tool.input, retriever, docRetriever, mcpClient);
 			onDebug({ event: "tool_result", name: tool.name, resultLength: result.length, resultText: result, endpointCount: endpoints.length });
 			if (endpoints.length > 0) onEndpoints(endpoints);
+			if (docs.length > 0) onDocs(docs);
 			toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: result });
 			usage.toolCalls++;
 		}
@@ -628,16 +795,21 @@ const chatOllama = async (
 	messages: ChatMessage[],
 	systemPrompt: string,
 	retriever: Retriever,
+	docRetriever: DocRetriever | undefined,
 	personality: Personality,
 	apiSuffix: string,
+	docSuffix: string,
 	onText: (text: string) => void,
 	onEndpoints: (eps: EndpointCard[]) => void,
+	onDocs: (docs: DocCard[]) => void,
 	onDebug: (entry: Record<string, unknown>) => void,
 	usage: { input: number; output: number; toolCalls: number },
+	mcpClient?: ExternalMcpClient,
+	externalTools: Anthropic.Tool[] = [],
 ): Promise<void> => {
 	const baseUrl = config.OLLAMA_URL ?? "http://localhost:11434";
 
-	const ollamaTools = getChatTools(personality, apiSuffix).map((t) => ({
+	const ollamaTools = getChatTools(personality, apiSuffix, docSuffix, externalTools).map((t) => ({
 		type: "function" as const,
 		function: {
 			name: t.name,
@@ -782,8 +954,9 @@ const chatOllama = async (
 
 		for (const tc of toolCalls) {
 			onDebug({ event: "tool_call", tool: tc.name, input: tc.arguments });
-			const { result, endpoints } = await executeTool(tc.name, tc.arguments, retriever);
+			const { result, endpoints, docs } = await executeTool(tc.name, tc.arguments, retriever, docRetriever, mcpClient);
 			if (endpoints.length > 0) onEndpoints(endpoints);
+			if (docs.length > 0) onDocs(docs);
 			onDebug({ event: "tool_result", tool: tc.name, resultLength: result.length, endpointCount: endpoints.length });
 			ollamaMessages.push({ role: "tool", content: result });
 			usage.toolCalls++;
@@ -851,7 +1024,7 @@ RESPONSE FORMAT:
 
 const VERIFY_TOOLS = [
 	{
-		name: "search",
+		name: "search_apis",
 		description: "Search indexed API specs to verify endpoints exist and check their details.",
 		input_schema: {
 			type: "object" as const,
@@ -958,7 +1131,7 @@ const runVerification = async (
 		const toolResults: Array<{ type: "tool_result"; tool_use_id: string; content: string }> = [];
 		for (const tool of toolUseBlocks) {
 			onDebug({ event: "verify_tool_call", name: tool.name, input: tool.input });
-			const { result } = await executeTool(tool.name, tool.input, retriever);
+			const { result } = await executeTool(tool.name, tool.input, retriever, docRetriever);
 			onDebug({ event: "verify_tool_result", name: tool.name, resultLength: result.length });
 			toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: result });
 		}
@@ -1089,6 +1262,76 @@ const makeFollowupStripper = (
 };
 
 // ---------------------------------------------------------------------------
+// Doc-refs tag stripper
+// ---------------------------------------------------------------------------
+
+const DOCREFS_OPEN = "<docrefs>";
+const DOCREFS_CLOSE = "</docrefs>";
+
+/**
+ * Wraps an onText callback to strip out `<docrefs>…</docrefs>` tags from the
+ * streamed token text. When the closing tag is seen the JSON array of doc names
+ * is parsed and dispatched via `emitDocrefs`. Behaviour is identical to
+ * makeFollowupStripper.
+ */
+const makeDocrefsStripper = (
+	emitText: (text: string) => void,
+	emitDocrefs: (names: string[]) => void,
+): { onText: (delta: string) => void; flush: () => void } => {
+	let mode: "text" | "in" = "text";
+	let buf = "";
+
+	const step = (): boolean => {
+		if (mode === "text") {
+			const i = buf.indexOf(DOCREFS_OPEN);
+			if (i >= 0) {
+				emitText(buf.slice(0, i));
+				buf = buf.slice(i + DOCREFS_OPEN.length);
+				mode = "in";
+				return true;
+			}
+			let keep = 0;
+			const max = Math.min(buf.length, DOCREFS_OPEN.length - 1);
+			for (let k = max; k > 0; k--) {
+				if (DOCREFS_OPEN.startsWith(buf.slice(-k))) { keep = k; break; }
+			}
+			if (buf.length > keep) {
+				emitText(buf.slice(0, buf.length - keep));
+				buf = buf.slice(buf.length - keep);
+			}
+			return false;
+		}
+		const j = buf.indexOf(DOCREFS_CLOSE);
+		if (j >= 0) {
+			try {
+				const parsed = JSON.parse(buf.slice(0, j).trim()) as unknown;
+				if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string")) {
+					const names = (parsed as string[]).filter((s) => s.trim().length > 0);
+					if (names.length > 0) emitDocrefs(names);
+				}
+			} catch { /* malformed payload — drop silently */ }
+			buf = buf.slice(j + DOCREFS_CLOSE.length);
+			mode = "text";
+			return true;
+		}
+		return false;
+	};
+
+	return {
+		onText: (delta: string): void => {
+			if (!delta) return;
+			buf += delta;
+			while (step()) { /* keep consuming while progress is made */ }
+		},
+		flush: (): void => {
+			if (mode === "text" && buf.length > 0) emitText(buf);
+			buf = "";
+			mode = "text";
+		},
+	};
+};
+
+// ---------------------------------------------------------------------------
 // Main Handler (framework-agnostic)
 // ---------------------------------------------------------------------------
 
@@ -1098,7 +1341,7 @@ const makeFollowupStripper = (
  * optionally appends a reaction GIF and runs double-check verification,
  * then streams all events as Server-Sent Events.
  */
-export const handleChat = async (body: ChatRequest, retriever: Retriever): Promise<Response> => {
+export const handleChat = async (body: ChatRequest, retriever: Retriever, docRetriever?: DocRetriever, mcpClient?: ExternalMcpClient): Promise<Response> => {
 	if (!body.messages?.length) {
 		return new Response(JSON.stringify({ error: "missing messages" }), {
 			status: 400,
@@ -1131,6 +1374,15 @@ export const handleChat = async (body: ChatRequest, retriever: Retriever): Promi
 	const apiContext = apis.length > 0
 		? `\n\nCurrently indexed APIs:\n${apis.map((a) => `- ${a.name} (${a.endpoints} endpoints, ${a.schemas} schemas)`).join("\n")}\nYou already know these APIs are available — do NOT call list_apis to confirm. Go straight to searching.`
 		: "\n\nNo APIs are currently indexed.";
+
+	// Build indexed docs list for system prompt and tool descriptions
+	const docs = docRetriever ? await docRetriever.listDocs() : [];
+	const docSuffix = docs.length > 0
+		? ` Currently indexed docs: ${docs.map((d) => d.name).join(", ")}.`
+		: "";
+	const docContext = docs.length > 0
+		? `\n\nIndexed docs:\n${docs.map((d) => `- ${d.name} [${d.category}] (project: ${d.project}, ${d.chunks} chunks)`).join("\n")}\nWhen a question involves any of these projects or topics, call BOTH search AND search_docs in parallel — they are separate indexes. Never guess content that could be looked up.`
+		: "";
 	console.log(`[chat] provider=${provider} model=${modelName}`);
 
 	if (provider === "anthropic" && !config.ANTHROPIC_API_KEY) {
@@ -1139,6 +1391,10 @@ export const handleChat = async (body: ChatRequest, retriever: Retriever): Promi
 			headers: { "Content-Type": "application/json" },
 		});
 	}
+
+	// Wait for all external MCP servers to finish connecting, then snapshot their tools.
+	await mcpClient?.ensureReady();
+	const externalTools = mcpClient?.getTools() ?? [];
 
 	// Manual SSE stream — framework-agnostic TransformStream
 	const { readable, writable } = new TransformStream();
@@ -1151,7 +1407,9 @@ export const handleChat = async (body: ChatRequest, retriever: Retriever): Promi
 
 	const onText = (text: string) => send({ type: "text", text });
 	const onEndpoints = (eps: EndpointCard[]) => send({ type: "endpoints", data: eps });
+	const onDocs = (docs: DocCard[]) => send({ type: "docs", docCards: docs });
 	const onFollowups = (list: string[]) => send({ type: "followups", followups: list });
+	const onDocrefs = (names: string[]) => send({ type: "docrefs", docNames: names });
 	const onDebug = (entry: Record<string, unknown>) => send({ type: "debug", ...entry });
 	const onVerificationText = (text: string) => send({ type: "verification_text", text });
 	const allEndpoints: EndpointCard[] = [];
@@ -1160,22 +1418,24 @@ export const handleChat = async (body: ChatRequest, retriever: Retriever): Promi
 	// Track token usage
 	const usage = { input: 0, output: 0, toolCalls: 0 };
 	let accumulatedText = "";
-	// The provider stream feeds the stripper, which forwards clean text to
-	// `emitCleanText` and dispatches any parsed follow-up list via onFollowups.
+	// Text pipeline: provider → docrefs stripper → followup stripper → emitCleanText.
+	// Each stripper intercepts its own tag and passes clean text downstream.
 	const emitCleanText = (text: string) => { accumulatedText += text; onText(text); };
 	const followupStripper = makeFollowupStripper(emitCleanText, onFollowups);
-	const wrappedOnText = followupStripper.onText;
+	const docrefsStripper = makeDocrefsStripper(followupStripper.onText, onDocrefs);
+	const wrappedOnText = docrefsStripper.onText;
 
 	(async () => {
 		try {
 			console.log(`[chat] starting ${provider} chat`);
 			if (provider === "anthropic") {
-				await chatAnthropic(body.messages, systemPrompt, retriever, personality, apiSuffix, apiContext, wrappedOnText, wrappedOnEndpoints, usage, onDebug);
+				await chatAnthropic(body.messages, systemPrompt, retriever, docRetriever, personality, apiSuffix, docSuffix, apiContext + docContext, wrappedOnText, wrappedOnEndpoints, onDocs, usage, onDebug, mcpClient, externalTools);
 			} else {
-				await chatOllama(body.messages, systemPrompt + apiContext, retriever, personality, apiSuffix, wrappedOnText, wrappedOnEndpoints, onDebug, usage);
+				await chatOllama(body.messages, systemPrompt + apiContext + docContext, retriever, docRetriever, personality, apiSuffix, docSuffix, wrappedOnText, wrappedOnEndpoints, onDocs, onDebug, usage, mcpClient, externalTools);
 			}
-			// Drain any tail the stripper was holding so accumulatedText is
+			// Drain any tail the strippers were holding so accumulatedText is
 			// complete before verification reads it and before the gif tail is appended.
+			docrefsStripper.flush();
 			followupStripper.flush();
 			// Random reaction GIF in greg mode — chance scales with token usage (20% base → 80% at 30k+)
 			if (personality === "greg" && config.GIPHY_API_KEY) {
