@@ -16,16 +16,20 @@ import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
 
 import { METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
-import { streamChat, listModels, fetchSuggestions, generateFollowUpSuggestions, getEndpoint } from "../lib/api";
-import type { EndpointCard, Personality } from "../lib/api";
+import { streamChat, listModels, fetchSuggestions, generateFollowUpSuggestions, getEndpoint, getDocContent } from "../lib/api";
+import type { EndpointCard, DocCard, Personality } from "../lib/api";
 import ApiViewer from "../components/ApiViewer";
 import GroupedApiSelect from "../components/GroupedApiSelect";
+import GroupedDocSelect from "../components/GroupedDocSelect";
+import MarkdownContent from "../components/MarkdownContent";
 import MermaidDiagram from "../components/MermaidDiagram";
 import { cn } from "../lib/utils";
 import { useStore, pageFromHash, chatIdFromHash, getActiveConversation } from "../store/store";
 import type { ChatMsg } from "../store/store";
 import EpCard from "../components/EpCard";
 import { Button } from "../components/ui/button";
+import { Badge } from "../components/ui/badge";
+import { splitIntoPages, PAGE_LIMIT } from "../lib/docPagination";
 import { TabBar } from "../components/chat/TabBar";
 import { ForkButton } from "../components/chat/ForkButton";
 import { ForkContext } from "../components/chat/ForkContext";
@@ -39,6 +43,13 @@ SyntaxHighlighter.registerLanguage("python", python);
 SyntaxHighlighter.registerLanguage("bash", bash);
 SyntaxHighlighter.registerLanguage("json", json);
 SyntaxHighlighter.registerLanguage("yaml", yaml);
+
+// Detect field-sizing: content support once at module load (Chrome 123+, Firefox 136+).
+// Browsers that support it resize the textarea natively with no JS layout reflow.
+const supportsFieldSizing =
+  typeof CSS !== "undefined" &&
+  typeof CSS.supports === "function" &&
+  CSS.supports("field-sizing", "content");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,6 +77,7 @@ interface CodeDropdownProps {
 interface StreamingTextProps {
   text: string;
   personality?: Personality;
+  msgKey: number | string;
 }
 
 interface ApiPathCodeProps {
@@ -119,6 +131,7 @@ interface ChatMessageProps {
   msg: ChatMsg;
   i: number;
   onSelectEndpoint: (ep: EndpointCard) => void;
+  onSelectDoc: (dc: DocCard) => void;
   onShowDebug: (idx: number) => void;
   onRetry: (idx: number) => void;
   onQuickAction: (msgIdx: number, action: "diagram" | "code", diagramType?: string) => void;
@@ -247,7 +260,8 @@ const stripStreamTags = (raw: string): string =>
   raw
     .replace(/<endpoint[^>]*\/?>/g, "")
     .replace(/<quickActions[^>]*\/?>/g, "")
-    .replace(/<followups>[\s\S]*?<\/followups>/g, "");
+    .replace(/<followups>[\s\S]*?<\/followups>/g, "")
+    .replace(/^(#{1,6}|[-*+]) \*\*(.*?)\*\*/gm, "$1 $2");
 
 const cleanText = (raw: string): string => {
   // First pass: strip <endpoint/> tags and unwrap fake table code blocks.
@@ -269,6 +283,8 @@ const cleanText = (raw: string): string => {
   const proseTransform = (s: string): string =>
     s
       .replace(/\n{3,}/g, "\n\n")
+      // Strip ** from heading and bullet lines (LLM sometimes redundantly bolds them)
+      .replace(/^(#{1,6}|[-*+]) \*\*(.*?)\*\*/gm, "$1 $2")
       // Break when colon is immediately followed by a capital letter (no space/newline)
       .replace(/:([A-Z])/g, ":\n\n$1")
       // Break before labeled sections ("Proxmox workflow:", "Darktrace workflow:") after sentence end
@@ -541,7 +557,7 @@ const CodeDropdown = ({ code, lang, lineCount, blockKey }: CodeDropdownProps): J
       >
         <div className="overflow-hidden">
           <div className="mt-1">
-            <SyntaxHighlighter showLineNumbers style={syntaxStyle} language={lang} PreTag="div" customStyle={{ background: "var(--g-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }} lineNumberStyle={{ color: "color-mix(in srgb, var(--g-text-dim) 60%, transparent)", minWidth: "2em", paddingRight: "1em", userSelect: "none", fontStyle: "normal" }}>
+            <SyntaxHighlighter showLineNumbers style={syntaxStyle} language={lang} PreTag="div" customStyle={{ background: "var(--g-code-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto" }} codeTagProps={{ style: { background: "var(--g-code-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }} lineNumberStyle={{ color: "color-mix(in srgb, var(--g-text-dim) 60%, transparent)", minWidth: "2em", paddingRight: "1em", userSelect: "none", fontStyle: "normal" }}>
               {code}
             </SyntaxHighlighter>
           </div>
@@ -555,11 +571,42 @@ const CodeDropdown = ({ code, lang, lineCount, blockKey }: CodeDropdownProps): J
  * Renders streaming assistant text with a loading animation when empty,
  * and a "coding..." spinner when a code block is mid-stream.
  */
-const StreamingText = ({ text, personality }: StreamingTextProps): JSX.Element => {
+const REVEAL_CHARS_PER_FRAME = 3; // characters revealed per animation frame (~60fps)
+
+const StreamingText = ({ text, personality, msgKey }: StreamingTextProps): JSX.Element => {
   const dotColor = PERSONALITY_COLOR[personality ?? "greg"] ?? "var(--g-green)";
+  const theme = useStore((s) => s.theme);
+  const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const components = useMemo(() => mdComponents(msgKey, LANG_MAP, isDark), [msgKey, isDark]);
   const cleaned = stripStreamTags(text);
 
-  if (!cleaned) return (
+  // Smooth reveal: displayedLen tracks how many chars of `cleaned` are shown.
+  // We increment it a few chars per frame so text trickles in smoothly.
+  const [displayedLen, setDisplayedLen] = useState(0);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    // If new text is shorter (e.g. reset) snap immediately
+    if (cleaned.length <= displayedLen) {
+      setDisplayedLen(cleaned.length);
+      return;
+    }
+    const step = () => {
+      setDisplayedLen((prev) => {
+        const next = prev + REVEAL_CHARS_PER_FRAME;
+        if (next >= cleaned.length) return cleaned.length;
+        rafRef.current = requestAnimationFrame(step);
+        return next;
+      });
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cleaned]);
+
+  const visible = cleaned.slice(0, displayedLen);
+
+  if (!visible) return (
     <span className="inline-flex items-center gap-1 py-px">
       {[0, 1, 2].map((i) => (
         <span key={i} className="inline-block w-1.5 h-1.5 rounded-full" style={{
@@ -571,27 +618,34 @@ const StreamingText = ({ text, personality }: StreamingTextProps): JSX.Element =
   );
 
   // Check for an unclosed code block (streaming in progress)
-  const openFences = (cleaned.match(/```/g) || []).length;
+  const openFences = (visible.match(/```/g) || []).length;
   const hasUnclosedCode = openFences % 2 === 1;
 
   if (hasUnclosedCode) {
-    // Show text before the code block + "coding..." spinner
-    const lastFence = cleaned.lastIndexOf("```");
-    const before = cleaned.slice(0, lastFence).trim();
+    // Render text before the unclosed code block through markdown, then show spinner
+    const lastFence = visible.lastIndexOf("```");
+    const before = visible.slice(0, lastFence).trim();
+    const fenceRest = visible.slice(lastFence + 3);
+    const lang = fenceRest.split("\n")[0]?.trim().toLowerCase() ?? "";
+    const isDiagram = lang === "mermaid";
     return (
       <>
-        {before && <span className="whitespace-pre-wrap">{before}</span>}
+        {before && (
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={components as never}>{before}</ReactMarkdown>
+        )}
         <div className="flex items-center gap-2 py-2 text-(--g-text-dim)">
           <svg className="animate-spin inline-block w-3.5 h-3.5" width={14} height={14} viewBox="0 0 14 14" fill="none">
             <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="20 12" />
           </svg>
-          <span className="text-sm italic">coding...</span>
+          <span className="text-sm italic">{isDiagram ? "diagramming..." : "coding..."}</span>
         </div>
       </>
     );
   }
 
-  return <span className="whitespace-pre-wrap">{cleaned}</span>;
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components as never}>{visible}</ReactMarkdown>
+  );
 };
 
 /**
@@ -613,7 +667,7 @@ const ApiPathCode = ({ code }: ApiPathCodeProps): JSX.Element => {
   };
 
   return (
-    <code className="rounded bg-(--g-bg) py-px px-[0.3125rem] font-mono text-[0.9em]">
+    <code className="rounded bg-(--g-code-bg) py-px px-[0.3125rem] font-mono text-[0.9em]">
       {mc && (
         <span className="font-bold mr-[0.3125rem]" style={{ color: mc.text }}>{method}</span>
       )}
@@ -654,7 +708,7 @@ const mdComponents = (msgKey: number | string, langMap: Record<string, string>, 
       if (DATA_LANGS.has(lang) || looksLikeJson) {
         const renderLang = looksLikeJson ? "json" : (lang === "md" || lang === "markdown" ? "text" : lang);
         return (
-          <SyntaxHighlighter style={syntaxStyle} language={renderLang} PreTag="div" customStyle={{ background: "var(--g-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto", margin: "6px 0" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }}>
+          <SyntaxHighlighter style={syntaxStyle} language={renderLang} PreTag="div" customStyle={{ background: "var(--g-code-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto", margin: "6px 0" }} codeTagProps={{ style: { background: "var(--g-code-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }}>
             {code}
           </SyntaxHighlighter>
         );
@@ -666,7 +720,7 @@ const mdComponents = (msgKey: number | string, langMap: Record<string, string>, 
             <div className="absolute top-1.5 right-1.5 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
               <CopyBtn text={code} />
             </div>
-            <SyntaxHighlighter showLineNumbers style={syntaxStyle} language={lang} PreTag="div" customStyle={{ background: "var(--g-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto" }} codeTagProps={{ style: { background: "var(--g-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }} lineNumberStyle={{ color: "color-mix(in srgb, var(--g-text-dim) 60%, transparent)", minWidth: "2em", paddingRight: "1em", userSelect: "none", fontStyle: "normal" }}>
+            <SyntaxHighlighter showLineNumbers style={syntaxStyle} language={lang} PreTag="div" customStyle={{ background: "var(--g-code-bg)", color: "var(--g-inline-code-text)", borderRadius: 6, fontSize: 13, lineHeight: 1.5, padding: "8px 12px", overflowX: "auto" }} codeTagProps={{ style: { background: "var(--g-code-bg)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre" } }} lineNumberStyle={{ color: "color-mix(in srgb, var(--g-text-dim) 60%, transparent)", minWidth: "2em", paddingRight: "1em", userSelect: "none", fontStyle: "normal" }}>
               {code}
             </SyntaxHighlighter>
           </div>
@@ -678,7 +732,7 @@ const mdComponents = (msgKey: number | string, langMap: Record<string, string>, 
 
     if (isApiPath(code)) return <ApiPathCode code={code} />;
     return (
-      <code className="rounded bg-(--g-bg) py-px px-[0.3125rem] font-mono text-[0.9em]" style={{ color: "var(--g-inline-code-text)" }}>
+      <code className="rounded bg-(--g-code-bg) py-px px-[0.3125rem] font-mono text-[0.9em]" style={{ color: "var(--g-inline-code-text)" }}>
         {children as React.ReactNode}
       </code>
     );
@@ -705,6 +759,17 @@ const mdComponents = (msgKey: number | string, langMap: Record<string, string>, 
   thead({ children }: { children?: React.ReactNode }) { return <thead className="border-b border-(--g-border)">{children as React.ReactNode}</thead>; },
   th({ children }: { children?: React.ReactNode }) { return <th className="py-1 px-2 text-left font-semibold text-(--g-text)">{children as React.ReactNode}</th>; },
   td({ children }: { children?: React.ReactNode }) { return <td className="py-1 px-2 border-t border-(--g-border) text-(--g-text-muted)">{children as React.ReactNode}</td>; },
+  h1({ children }: { children?: React.ReactNode }) { return <h1 className="text-xl font-bold text-(--g-text) mt-4 mb-1.5 leading-snug">{children as React.ReactNode}</h1>; },
+  h2({ children }: { children?: React.ReactNode }) { return <h2 className="text-lg font-semibold text-(--g-text) mt-3.5 mb-1 leading-snug">{children as React.ReactNode}</h2>; },
+  h3({ children }: { children?: React.ReactNode }) { return <h3 className="text-base font-semibold text-(--g-text) mt-3 mb-1 leading-snug">{children as React.ReactNode}</h3>; },
+  h4({ children }: { children?: React.ReactNode }) { return <h4 className="text-sm font-semibold text-(--g-text) mt-2.5 mb-0.5 leading-snug">{children as React.ReactNode}</h4>; },
+  h5({ children }: { children?: React.ReactNode }) { return <h5 className="text-sm font-semibold text-(--g-text-muted) mt-2 mb-0.5">{children as React.ReactNode}</h5>; },
+  h6({ children }: { children?: React.ReactNode }) { return <h6 className="text-xs font-semibold text-(--g-text-muted) mt-2 mb-0.5 uppercase tracking-wide">{children as React.ReactNode}</h6>; },
+  strong({ children }: { children?: React.ReactNode }) { return <strong className="font-semibold text-(--g-text)">{children as React.ReactNode}</strong>; },
+  em({ children }: { children?: React.ReactNode }) { return <em className="italic">{children as React.ReactNode}</em>; },
+  blockquote({ children }: { children?: React.ReactNode }) { return <blockquote className="my-2 pl-3 border-l-2 border-(--g-border-accent) text-(--g-text-muted) italic">{children as React.ReactNode}</blockquote>; },
+  hr() { return <hr className="my-3 border-none border-t border-(--g-border)" />; },
+  li({ children }: { children?: React.ReactNode }) { return <li className="my-0.5">{children as React.ReactNode}</li>; },
 });
 
 // ---------------------------------------------------------------------------
@@ -866,13 +931,18 @@ const EndpointDropdown = ({ endpoints, onSelect }: EndpointDropdownProps): JSX.E
   const handleToggle = () => setOpen(!open);
 
   return (
-    <div className="mt-1.5">
+    <div>
       <button
         onClick={handleToggle}
         className={cn(collapseBtn, "w-full rounded border border-(--g-border-accent) px-2.5 py-1 text-[0.8125rem] text-(--g-accent) bg-(--g-accent-dim)")}
       >
-        <span className="flex-1 text-left">
-          {`${endpoints.length} endpoint${endpoints.length !== 1 ? "s" : ""} found`}
+        <span className="flex items-center gap-1.5 flex-1 text-left">
+          <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="shrink-0 opacity-70">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+          </svg>
+          <span className="font-semibold">{endpoints.length}</span>
+          {` endpoint${endpoints.length !== 1 ? "s" : ""}`}
         </span>
         <span className={cn("flex transition-transform duration-150", open ? "rotate-180" : "rotate-0")}>
           <svg width={10} height={10} viewBox="0 0 10 10" fill="none">
@@ -885,18 +955,136 @@ const EndpointDropdown = ({ endpoints, onSelect }: EndpointDropdownProps): JSX.E
         style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
       >
         <div className="overflow-hidden">
-          <div className="flex flex-col gap-[0.1875rem] mt-1 max-h-[18.75rem] overflow-auto">
+          <div className="tree-children flex flex-col gap-[0.1875rem] mt-1 max-h-[18.75rem] overflow-auto">
             {[...endpoints].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).map((ep, j) => (
-              <EpCard
-                key={j}
-                method={ep.method}
-                path={ep.path}
-                api={ep.api}
-                description={ep.description}
-                {... (ep.warnings !== undefined && { warnings: ep.warnings })}
-                onClick={() => onSelect(ep)}
-              />
+              <div key={j} className="tree-item">
+                <EpCard
+                  method={ep.method}
+                  path={ep.path}
+                  api={ep.api}
+                  description={ep.description}
+                  {... (ep.warnings !== undefined && { warnings: ep.warnings })}
+                  onClick={() => onSelect(ep)}
+                />
+              </div>
             ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// DocDropdown
+// ---------------------------------------------------------------------------
+
+const DOC_CARD_SCORE_THRESHOLD = 0.72;
+
+interface DocDropdownProps {
+  docs: DocCard[];
+  onSelect: (dc: DocCard) => void;
+}
+
+const chevronSvg = (
+  <svg width={10} height={10} viewBox="0 0 10 10" fill="none">
+    <path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const DocDropdown = ({ docs, onSelect }: DocDropdownProps): JSX.Element => {
+  const [open, setOpen] = useState(false);
+  const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
+  const filtered = docs.filter((d) => (d.score ?? 0) >= DOC_CARD_SCORE_THRESHOLD);
+  if (filtered.length === 0) return <></>;
+
+  // Group by doc_name, preserving best-score order
+  const grouped = filtered.reduce<Map<string, DocCard[]>>((acc, dc) => {
+    const existing = acc.get(dc.doc_name);
+    if (existing) existing.push(dc);
+    else acc.set(dc.doc_name, [dc]);
+    return acc;
+  }, new Map());
+  const uniqueDocCount = grouped.size;
+
+  const toggleDoc = (name: string) =>
+    setExpandedDocs((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={cn(collapseBtn, "w-full rounded border border-(--g-border) px-2.5 py-1 text-[0.8125rem] text-(--g-text-muted) bg-(--g-surface)")}
+      >
+        <span className="flex items-center gap-1.5 flex-1 text-left">
+          <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="shrink-0 opacity-70">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="16" y1="13" x2="8" y2="13" />
+            <line x1="16" y1="17" x2="8" y2="17" />
+            <polyline points="10 9 9 9 8 9" />
+          </svg>
+          <span className="font-semibold">{uniqueDocCount}</span>
+          {` doc${uniqueDocCount !== 1 ? "s" : ""}`}
+        </span>
+        <span className={cn("flex transition-transform duration-150", open ? "rotate-180" : "rotate-0")}>
+          {chevronSvg}
+        </span>
+      </button>
+      <div
+        className="grid transition-[grid-template-rows] duration-200 ease-out"
+        style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          <div className="tree-children flex flex-col gap-[0.1875rem] mt-1 max-h-[14rem] overflow-auto">
+            {[...grouped.entries()].map(([docName, cards]) => {
+              const isExpanded = expandedDocs.has(docName);
+              const sorted = [...cards].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+              return (
+                <div key={docName} className="tree-item">
+                <div className="rounded border border-(--g-border) overflow-hidden">
+                  <button
+                    onClick={() => toggleDoc(docName)}
+                    className="flex items-center gap-1.5 w-full text-left px-2.5 py-1.5 bg-(--g-surface) hover:bg-(--g-surface-raised) transition-colors cursor-pointer"
+                  >
+                    {Ic.doc(12)}
+                    <span className="font-mono text-xs text-(--g-text) truncate flex-1">{docName}</span>
+                    {cards[0]?.project && <Badge variant="api" className="shrink-0">{cards[0].project}</Badge>}
+                    <span className="text-[0.6875rem] text-(--g-text-dim) shrink-0 mr-1">{cards.length}</span>
+                    <span className={cn("flex shrink-0 transition-transform duration-150", isExpanded ? "rotate-180" : "rotate-0")}>
+                      {chevronSvg}
+                    </span>
+                  </button>
+                  <div
+                    className="grid transition-[grid-template-rows] duration-150 ease-out"
+                    style={{ gridTemplateRows: isExpanded ? "1fr" : "0fr" }}
+                  >
+                    <div className="overflow-hidden">
+                      <div className="flex flex-col border-t border-(--g-border)">
+                        {sorted.map((dc, j) => (
+                          <button
+                            key={j}
+                            onClick={() => onSelect(dc)}
+                            className="flex items-center gap-1.5 w-full text-left px-6 py-1 text-[0.75rem] text-(--g-text-muted) hover:text-(--g-text) hover:bg-(--g-surface-raised) transition-colors border-b border-(--g-border) last:border-b-0 cursor-pointer"
+                          >
+                            <span className="shrink-0 mr-1">•</span>
+                            <span className="truncate prose prose-sm prose-neutral dark:prose-invert max-w-none [&>*]:inline [&>p]:m-0">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{dc.heading || dc.heading_path || "—"}</ReactMarkdown>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1191,7 +1379,7 @@ const VerificationBadge = ({ text, usage, msgKey, streaming }: VerificationBadge
  * Shows model name, debug button, endpoint cards, and verification badge for assistant messages.
  */
 const DIAGRAM_OPTIONS: Array<{ label: string; type: string; title: string }> = [
-  { label: "Flowchart",    type: "flowchart", title: "flowchart LR — data / service flows" },
+  { label: "Flowchart",    type: "flowchart", title: "flowchart TD — data / service flows" },
   { label: "Sequence",     type: "sequence",  title: "sequenceDiagram — step-by-step call chains" },
   { label: "ER Diagram",   type: "er",        title: "erDiagram — entity / object relationships" },
   { label: "State",        type: "state",     title: "stateDiagram-v2 — resource lifecycle states" },
@@ -1225,7 +1413,9 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, onFork }: QuickAc
 
   // 🔧 perf: memoized — avoids regex on every render, recomputes only when text changes
   const hasDiagram = useMemo(() => /```mermaid/i.test(msgText), [msgText]);
-  const hasCode = useMemo(() => /```(?!mermaid)\w/.test(msgText), [msgText]);
+  // Matches code blocks with a programming language tag, but not data/config formats
+  // (json, yaml, markdown, xml, html, css, toml, ini, text) or mermaid diagrams.
+  const hasCode = useMemo(() => /```(?!mermaid\b)(?!json\b)(?!ya?ml\b)(?!markdown?\b)(?!xml\b)(?!html\b)(?!css\b)(?!toml\b)(?!ini\b)(?!te?xt\b)\w/i.test(msgText), [msgText]);
 
   // Only gate on whether the content is already present in the reply. The user
   // can always ask for a diagram or code — even when it makes no sense.
@@ -1330,61 +1520,242 @@ const QuickActionBar = memo(({ msgText, msgIdx, onQuickAction, onFork }: QuickAc
 });
 
 // ---------------------------------------------------------------------------
+// ToolCallActivity — inline tool-call feed shown during and after streaming
+// ---------------------------------------------------------------------------
+
+interface ToolCallEntry {
+  idx: number;
+  name: string;
+  input: unknown;
+  roundInput?: number;
+  roundOutput?: number;
+  result?: {
+    resultLength: number;
+    endpointCount: number;
+    resultText: string;
+  };
+}
+
+const extractToolCallEntries = (debug: Record<string, unknown>[]): ToolCallEntry[] => {
+  const entries: ToolCallEntry[] = [];
+  let lastRound: { input: number; output: number } | undefined;
+  for (const e of debug) {
+    if (e.event === "round") {
+      lastRound = { input: (e.inputTokens as number) ?? 0, output: (e.outputTokens as number) ?? 0 };
+    } else if (e.event === "tool_call") {
+      entries.push({ idx: entries.length, name: (e.name ?? e.tool) as string, input: e.input, ...(lastRound && { roundInput: lastRound.input, roundOutput: lastRound.output }) });
+    } else if (e.event === "tool_result") {
+      const name = (e.name ?? e.tool) as string;
+      for (let i = entries.length - 1; i >= 0; i--) {
+        if (entries[i]!.name === name && !entries[i]!.result) {
+          entries[i]!.result = { resultLength: (e.resultLength as number) ?? 0, endpointCount: (e.endpointCount as number) ?? 0, resultText: (e.resultText as string) ?? "" };
+          break;
+        }
+      }
+    }
+  }
+  return entries;
+};
+
+// Wrench — used on individual tool call rows
+const ToolIcon = ({ size = 11 }: { size?: number }): JSX.Element => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+  </svg>
+);
+
+// Wrench + screwdriver crossed — used on the aggregation header
+const ToolGroupIcon = ({ size = 11 }: { size?: number }): JSX.Element => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437 1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008Z" />
+  </svg>
+);
+
+const ToolCallActivity = memo(({ debug }: { debug: Record<string, unknown>[] }): JSX.Element => {
+  const entries = useMemo(() => extractToolCallEntries(debug), [debug]);
+  const [open, setOpen] = useState(false);
+  const [expandedIdx, setExpandedIdx] = useState<Set<number>>(new Set());
+
+  if (entries.length === 0) return <></>;
+
+  const toggle = (idx: number) => setExpandedIdx((prev) => {
+    const next = new Set(prev);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    return next;
+  });
+
+  return (
+    <div>
+      {/* Outer header — matches EndpointDropdown / DocDropdown style */}
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={cn(collapseBtn, "w-full rounded border border-(--g-method-patch-border) px-2.5 py-1 text-[0.8125rem] text-(--g-method-patch-text) bg-(--g-method-patch-bg)")}
+      >
+        <span className="flex items-center gap-1.5 flex-1 text-left">
+          <ToolGroupIcon size={11} />
+          <span className="font-semibold">{entries.length}</span>
+          {` tool call${entries.length !== 1 ? "s" : ""}`}
+        </span>
+        {(() => { const total = entries.reduce((s, e) => s + (e.roundInput ?? 0), 0); return total > 0 ? (
+          <span className="flex items-center gap-0.5 font-mono text-[0.6875rem] tabular-nums opacity-70 mr-1.5">
+            {Ic.bolt(9)} {total.toLocaleString()}
+          </span>
+        ) : null; })()}
+        <span className={cn("flex transition-transform duration-150", open ? "rotate-180" : "rotate-0")}>
+          <svg width={10} height={10} viewBox="0 0 10 10" fill="none">
+            <path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+      </button>
+      {/* Animated body */}
+      <div
+        className="grid transition-[grid-template-rows] duration-200 ease-out"
+        style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          <div className="tree-children flex flex-col gap-[0.1875rem] mt-1 max-h-[18.75rem] overflow-auto">
+            {entries.map((entry) => {
+              const isExpanded = expandedIdx.has(entry.idx);
+              const pending = !entry.result;
+              const resultLen = entry.result?.resultLength ?? 0;
+              const epCount = entry.result?.endpointCount ?? 0;
+              return (
+                <div key={entry.idx} className="tree-item">
+                <div className="rounded border border-(--g-border) overflow-hidden text-xs">
+                  <button
+                    onClick={() => toggle(entry.idx)}
+                    className="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left bg-(--g-surface) hover:bg-(--g-surface-hover) transition-colors"
+                  >
+                    <span className="text-(--g-text) shrink-0">{entry.name === "search_apis" ? Ic.server(11) : entry.name === "search_docs" ? Ic.doc(11) : <ToolIcon size={11} />}</span>
+                    <span className="font-mono truncate flex-1 text-(--g-text-muted)">
+                      {entry.name}
+                      {entry.name === "get_doc" && (entry.input as Record<string, unknown>)?.doc_name ? (
+                        <span className="text-(--g-text-dim)"> — <i>"{String((entry.input as Record<string, unknown>).doc_name)}" - "{String((entry.input as Record<string, unknown>).heading ?? "")}"</i></span>
+                      ) : entry.name === "get_endpoint" && (entry.input as Record<string, unknown>)?.method ? (
+                        <span className="text-(--g-text-dim)"> — <i>"{String((entry.input as Record<string, unknown>).method)}"</i> {"->"} <i>"{String((entry.input as Record<string, unknown>).api ?? "")}:/{String((entry.input as Record<string, unknown>).path ?? "")}"</i></span>
+                      ) : (entry.input as Record<string, unknown>)?.query ? (
+                        <span className="text-(--g-text-dim)"> — <i>"{String((entry.input as Record<string, unknown>).query)}"</i></span>
+                      ) : null}
+                    </span>
+                    {entry.roundInput !== undefined && (
+                      <span className="flex items-center gap-0.5 font-mono text-[0.6875rem] text-(--g-text-dim) shrink-0 tabular-nums">
+                        {Ic.bolt(9)} {entry.roundInput.toLocaleString()}
+                      </span>
+                    )}
+                    {pending ? (
+                      <span className="text-[0.6875rem] text-(--g-text-dim) animate-pulse shrink-0">running…</span>
+                    ) : null}
+                    <span className={cn("flex shrink-0 ml-0.5 text-(--g-text-dim) transition-transform duration-150", isExpanded ? "rotate-180" : "rotate-0")}>
+                      <svg width={8} height={8} viewBox="0 0 10 10" fill="none">
+                        <path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                  </button>
+                  <div
+                    className="grid transition-[grid-template-rows] duration-150 ease-out"
+                    style={{ gridTemplateRows: isExpanded ? "1fr" : "0fr" }}
+                  >
+                    <div className="overflow-hidden">
+                      <div className="border-t border-(--g-border) px-2.5 py-2 bg-(--g-surface)">
+                        <div className="flex gap-2">
+                          <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-(--g-text-dim) w-8 shrink-0 pt-px">in</span>
+                          <pre className="font-mono text-[0.6875rem] text-(--g-text-muted) whitespace-pre-wrap break-all leading-relaxed min-w-0">{JSON.stringify(entry.input, null, 2)}</pre>
+                        </div>
+                        {entry.result && entry.result.resultText && (
+                          <div className="flex gap-2 mt-1.5">
+                            <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-(--g-text-dim) w-8 shrink-0 pt-px">out</span>
+                            <pre className="font-mono text-[0.6875rem] text-(--g-text-dim) whitespace-pre-wrap break-all leading-relaxed min-w-0">{entry.result.resultText.slice(0, 600)}{entry.result.resultText.length > 600 ? "…" : ""}</pre>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// ---------------------------------------------------------------------------
 // ChatMessage
 // ---------------------------------------------------------------------------
 
-const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, onRetry, onQuickAction, onFork, onDelete, loadingGif }: ChatMessageProps): JSX.Element => {
+const ChatMessage = memo(({ msg, i, onSelectEndpoint, onSelectDoc, onShowDebug, onRetry, onQuickAction, onFork, onDelete, loadingGif }: ChatMessageProps): JSX.Element => {
   const p = msg.personality ?? "greg";
-  const bubbleStyle = (BUBBLE_STYLES[p] ?? BUBBLE_STYLES["greg"])!;
 
-  // 🔧 perf: stable style objects — avoids new object references on every render
-  const bubbleStyle_ = useMemo(() => ({
-    background: msg.role === "user" ? "var(--g-user-bg)" : bubbleStyle.bg,
-    border: `1px solid ${msg.role === "user" ? "var(--g-border-accent)" : bubbleStyle.border}`,
+  // 🔧 perf: stable style object for user bubble — assistant messages have no bubble
+  const userBubbleStyle = useMemo(() => ({
+    background: "var(--g-user-bg)",
+    border: "1px solid var(--g-border-accent)",
     color: "var(--g-text)",
-  }), [msg.role, bubbleStyle.bg, bubbleStyle.border]);
+  }), []);
 
   return (
-    <div className={`group/msg flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-      <div className="max-w-[85%]">
+    <div className={cn("group/msg flex", msg.role === "user" ? "justify-end" : "w-full")}>
+      <div className={msg.role === "user" ? "max-w-[85%]" : "w-full"}>
         {msg.role === "assistant" && (
-          <div className="flex items-center gap-2 mb-1.5">
-            <span className="text-[0.8125rem] font-medium" style={{ color: PERSONALITY_COLOR[p] }}>greg</span>
-            {msg.model && (
-              <span className="font-mono text-[0.6875rem] text-(--g-text-dim)">{msg.model}</span>
-            )}
-            {((msg.debug && msg.debug.length > 0) || msg.compactedHistory) && !msg.streaming && (
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => onShowDebug(i)}
-                title="Debug trace"
-                className="ml-0.5 opacity-60 hover:opacity-100 hover:text-(--g-accent)"
-              >
-                {Ic.bug(12)}
-              </Button>
-            )}
-            {!msg.streaming && (
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => onDelete(i)}
-                title="Delete message"
-                className="ml-auto opacity-0 group-hover/msg:opacity-60 hover:!opacity-100 text-(--g-danger)"
-              >
-                <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                  <path d="M10 11v6" /><path d="M14 11v6" />
-                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                </svg>
-              </Button>
-            )}
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            {/* Left: name + model + debug */}
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[0.8125rem] font-medium shrink-0" style={{ color: PERSONALITY_COLOR[p] }}>greg</span>
+              {msg.model && (
+                <span className="font-mono text-[0.6875rem] text-(--g-text-dim) truncate">{msg.model}</span>
+              )}
+              {((msg.debug && msg.debug.length > 0) || msg.compactedHistory) && !msg.streaming && (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => onShowDebug(i)}
+                  title="Debug trace"
+                  className="shrink-0 opacity-60 hover:opacity-100 hover:text-(--g-accent)"
+                >
+                  {Ic.bug(12)}
+                </Button>
+              )}
+            </div>
+            {/* Right: tool call count + delete */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {(msg.debug?.filter((e) => e.event === "tool_call").length ?? 0) > 0 && (
+                <span
+                  className="flex items-center gap-1 font-mono text-[0.6875rem] text-(--g-text-dim)"
+                  title={`${msg.debug!.filter((e) => e.event === "tool_call").length} tool call${msg.debug!.filter((e) => e.event === "tool_call").length !== 1 ? "s" : ""}`}
+                >
+                  <ToolIcon size={10} />
+                  {msg.debug!.filter((e) => e.event === "tool_call").length}
+                </span>
+              )}
+              {!msg.streaming && (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => onDelete(i)}
+                  title="Delete message"
+                  className="opacity-0 group-hover/msg:opacity-60 hover:!opacity-100 text-(--g-danger)"
+                >
+                  <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6" /><path d="M14 11v6" />
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                  </svg>
+                </Button>
+              )}
+            </div>
           </div>
         )}
         <div
-          className={`px-4 ${msg.role === "user" ? "py-3 rounded-[12px_12px_2px_12px]" : "py-2.5 rounded-[0.625rem]"} text-[0.9375rem] leading-[1.6]`}
-          style={bubbleStyle_}
+          className={cn(
+            "text-[0.9375rem] leading-[1.6]",
+            msg.role === "user"
+              ? "px-4 py-3 rounded-[12px_12px_2px_12px]"
+              : "py-2",
+          )}
+          style={msg.role === "user" ? userBubbleStyle : { color: "var(--g-text)" }}
         >
           {msg.role === "user" ? (
             msg.text
@@ -1393,7 +1764,7 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, onRetry, onQu
               {loadingGif && !msg.text && (
                 <img src={loadingGif} alt="greg thinking" className="block max-h-[180px] max-w-full rounded-lg mb-1.5" />
               )}
-              <StreamingText text={msg.text} {...(msg.personality !== undefined && { personality: msg.personality })} />
+              <StreamingText text={msg.text} msgKey={i} {...(msg.personality !== undefined && { personality: msg.personality })} />
             </>
           ) : (
             <GregMarkdown text={cleanText(msg.text)} msgKey={i} />
@@ -1433,6 +1804,19 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, onRetry, onQu
             </Button>
           </div>
         )}
+        {(msg.debug?.some((e) => e.event === "tool_call") || (msg.endpoints && msg.endpoints.length > 0) || (msg.docs && msg.docs.length > 0)) && (
+          <div className="flex flex-col gap-1.5 mt-2">
+            {msg.debug && msg.debug.some((e) => e.event === "tool_call") && (
+              <ToolCallActivity debug={msg.debug} />
+            )}
+            {msg.endpoints && msg.endpoints.length > 0 && (
+              <EndpointDropdown endpoints={msg.endpoints} onSelect={onSelectEndpoint} />
+            )}
+            {msg.docs && msg.docs.length > 0 && (
+              <DocDropdown docs={msg.docs} onSelect={onSelectDoc} />
+            )}
+          </div>
+        )}
         {/* 🔧 perf: extracted to own component — dropdown state changes don't re-render GregMarkdown */}
         {msg.role === "assistant" && !msg.streaming && (
           <QuickActionBar
@@ -1441,9 +1825,6 @@ const ChatMessage = memo(({ msg, i, onSelectEndpoint, onShowDebug, onRetry, onQu
             onQuickAction={onQuickAction}
             {...(onFork && { onFork })}
           />
-        )}
-        {msg.endpoints && msg.endpoints.length > 0 && (
-          <EndpointDropdown endpoints={msg.endpoints} onSelect={onSelectEndpoint} />
         )}
       </div>
     </div>
@@ -1534,7 +1915,7 @@ const SwaggerPanel = memo(({ anchor, onClose }: SwaggerPanelProps): JSX.Element 
           <Button variant="ghost" size="icon-xs" onClick={() => window.open(`/openapi/docs/${encodeURIComponent(selectedApi)}`, "_blank")} title="Open in new tab">
             {Ic.ext()}
           </Button>
-          <Button variant="ghost" size="icon-xs" onClick={onClose} title="Close docs">
+          <Button variant="ghost" size="icon-xs" onClick={onClose} title="Close panel">
             {Ic.x(12)}
           </Button>
         </div>
@@ -1555,6 +1936,249 @@ const SwaggerPanel = memo(({ anchor, onClose }: SwaggerPanelProps): JSX.Element 
             <span className="text-sm">{apis.length > 0 ? "Select an api from the dropdown" : "no apis ingested yet"}</span>
           </div>
         )}
+    </div>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// DocsSidePanel
+// ---------------------------------------------------------------------------
+
+interface DocsSidePanelProps {
+  onClose: () => void;
+  anchor?: { docName: string; heading: string } | null;
+}
+
+const slugifyHeading = (text: string): string =>
+  text.toLowerCase().replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-");
+
+const findPageWithHeading = (pages: string[], heading: string): number => {
+  const slug = slugifyHeading(heading);
+  const idx = pages.findIndex((page) =>
+    page.split("\n").some((line) => {
+      const m = line.match(/^#{1,6}\s+(.+)$/);
+      return m ? slugifyHeading(m[1]!) === slug : false;
+    }),
+  );
+  return idx >= 0 ? idx : 0;
+};
+
+/**
+ * Side panel showing raw markdown documentation with a doc selector dropdown.
+ * Sizing is handled externally by ResizablePanelGroup.
+ * Large documents are split into pages at H1/H2 boundaries to keep renders fast.
+ */
+const DocsSidePanel = memo(({ onClose, anchor }: DocsSidePanelProps): JSX.Element => {
+  const { docs } = useStore(useShallow((s) => ({ docs: s.docs })));
+
+  const [selectedDoc, setSelectedDoc] = useState(docs[0]?.name ?? "");
+  const [pages, setPages] = useState<string[]>([]);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [zoom, setZoom] = useState(() => {
+    try { const v = parseFloat(localStorage.getItem("greg-docs-zoom") ?? ""); return v > 0 ? v : 1.0; } catch { return 1.0; }
+  });
+  const contentScrollRef = useRef<HTMLDivElement>(null);
+
+  // Persist zoom
+  useEffect(() => {
+    try { localStorage.setItem("greg-docs-zoom", String(zoom)); } catch {}
+  }, [zoom]);
+
+  // Clear search when doc changes
+  useEffect(() => { setSearchQuery(""); }, [selectedDoc]);
+
+  // When an anchor arrives for a different doc, switch to it
+  useEffect(() => {
+    if (anchor?.docName && anchor.docName !== selectedDoc) {
+      setSelectedDoc(anchor.docName);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anchor?.docName]);
+
+  // Fetch content when selection changes
+  useEffect(() => {
+    const name = selectedDoc || docs[0]?.name;
+    if (!name) { setPages([]); setPageIndex(0); return; }
+    let cancelled = false;
+    setLoading(true);
+    getDocContent(name)
+      .then((text) => {
+        if (!cancelled) {
+          setPages(splitIntoPages(text || "(empty document)", PAGE_LIMIT));
+          setPageIndex(0);
+        }
+      })
+      .catch((err) => {
+        console.error("getDocContent failed:", err);
+        if (!cancelled) { setPages([`Error loading document: ${err}`]); setPageIndex(0); }
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedDoc, docs]);
+
+  // When an anchor heading arrives, jump to the page that contains it
+  useEffect(() => {
+    if (!anchor?.heading || pages.length === 0) return;
+    setPageIndex(findPageWithHeading(pages, anchor.heading));
+  }, [anchor?.heading, pages]);
+
+  // Scroll to heading after the page renders
+  useEffect(() => {
+    if (!anchor?.heading || loading) return;
+    const slug = slugifyHeading(anchor.heading);
+    const id = requestAnimationFrame(() => {
+      const el = document.getElementById(slug);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [pageIndex, anchor, loading]);
+
+  const activeName = selectedDoc || docs[0]?.name ?? "";
+
+  // Search: find pages that contain the query, auto-navigate to first match
+  const lowerQuery = searchQuery.toLowerCase();
+  const matchingPageIndices = useMemo(
+    () => (lowerQuery ? pages.map((p, i) => (p.toLowerCase().includes(lowerQuery) ? i : -1)).filter((i) => i !== -1) : []),
+    [pages, lowerQuery],
+  );
+  const currentMatchPos = lowerQuery ? matchingPageIndices.indexOf(pageIndex) : -1;
+
+  // Jump to first matching page when search changes
+  useEffect(() => {
+    if (lowerQuery && matchingPageIndices.length > 0 && !matchingPageIndices.includes(pageIndex)) {
+      setPageIndex(matchingPageIndices[0]!);
+      contentScrollRef.current?.scrollTo({ top: 0 });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lowerQuery, pages]);
+
+  const goToMatch = (dir: 1 | -1) => {
+    if (matchingPageIndices.length === 0) return;
+    const next = currentMatchPos === -1
+      ? (dir === 1 ? 0 : matchingPageIndices.length - 1)
+      : (currentMatchPos + dir + matchingPageIndices.length) % matchingPageIndices.length;
+    setPageIndex(matchingPageIndices[next]!);
+    contentScrollRef.current?.scrollTo({ top: 0 });
+  };
+
+  return (
+    <div className="flex flex-col h-full min-w-0">
+      {/* Header */}
+      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-(--g-border) bg-(--g-surface)">
+        <GroupedDocSelect
+          docs={docs}
+          value={activeName}
+          onChange={setSelectedDoc}
+          height={28}
+          fontSize={12}
+          minWidth={120}
+          color="var(--g-text)"
+        />
+        <span className="flex-1" />
+        {/* Search */}
+        <div className="relative flex items-center">
+          <span className="absolute left-1.5 text-(--g-text-dim) pointer-events-none">{Ic.search(11)}</span>
+          <input
+            type="text"
+            placeholder="Search…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="h-6 w-28 rounded border border-(--g-border) bg-(--g-surface) pl-6 pr-5 text-xs text-(--g-text) placeholder:text-(--g-text-dim) focus:border-(--g-accent) focus:outline-none"
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery("")} className="absolute right-1 text-(--g-text-dim) hover:text-(--g-text)">
+              {Ic.x(10)}
+            </button>
+          )}
+        </div>
+        {/* Search navigation — shown when query has matches */}
+        {lowerQuery && (
+          <div className="flex items-center gap-0.5">
+            <button onClick={() => goToMatch(-1)} title="Previous match" className="flex items-center justify-center w-4 h-4 rounded text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors disabled:opacity-30" disabled={matchingPageIndices.length === 0}>
+              <svg width={10} height={10} viewBox="0 0 16 16" fill="none"><path d="M10 3L6 8l4 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </button>
+            <span className="text-[0.5625rem] font-mono text-(--g-text-dim) tabular-nums select-none w-[3.25rem] text-center">
+              {matchingPageIndices.length === 0 ? "no match" : `${currentMatchPos + 1}/${matchingPageIndices.length}`}
+            </span>
+            <button onClick={() => goToMatch(1)} title="Next match" className="flex items-center justify-center w-4 h-4 rounded text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors disabled:opacity-30" disabled={matchingPageIndices.length === 0}>
+              <svg width={10} height={10} viewBox="0 0 16 16" fill="none"><path d="M6 3l4 5-4 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </button>
+          </div>
+        )}
+        {/* Pagination — hidden when searching or single-page */}
+        {!lowerQuery && pages.length > 1 && (
+          <>
+            <button
+              onClick={() => { setPageIndex((i) => Math.max(0, i - 1)); contentScrollRef.current?.scrollTo({ top: 0 }); }}
+              disabled={pageIndex === 0}
+              title="Previous page"
+              className="flex items-center justify-center w-4 h-4 rounded text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors disabled:opacity-30 disabled:cursor-default"
+            >
+              <svg width={10} height={10} viewBox="0 0 16 16" fill="none">
+                <path d="M10 3L6 8l4 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            <span className="text-[0.5625rem] font-mono text-(--g-text-dim) tabular-nums select-none" style={{ minWidth: "3rem", textAlign: "center" }}>
+              {pageIndex + 1}/{pages.length}
+            </span>
+            <button
+              onClick={() => { setPageIndex((i) => Math.min(pages.length - 1, i + 1)); contentScrollRef.current?.scrollTo({ top: 0 }); }}
+              disabled={pageIndex === pages.length - 1}
+              title="Next page"
+              className="flex items-center justify-center w-4 h-4 rounded text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors disabled:opacity-30 disabled:cursor-default"
+            >
+              <svg width={10} height={10} viewBox="0 0 16 16" fill="none">
+                <path d="M6 3l4 5-4 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </>
+        )}
+        {/* Zoom controls */}
+        <button onClick={() => setZoom((z) => Math.max(0.6, parseFloat((z - 0.1).toFixed(1))))} title="Zoom out" className="flex items-center justify-center w-5 h-5 rounded text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors">
+          <svg width={14} height={14} viewBox="0 0 16 16" fill="none">
+            <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            <path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+        </button>
+        <span className="text-[0.625rem] font-mono text-(--g-text-dim) w-7 text-center tabular-nums">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button onClick={() => setZoom((z) => Math.min(1.6, parseFloat((z + 0.1).toFixed(1))))} title="Zoom in" className="flex items-center justify-center w-5 h-5 rounded text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors">
+          <svg width={14} height={14} viewBox="0 0 16 16" fill="none">
+            <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M4.5 6.5h4M6.5 4.5v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            <path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+        </button>
+        {/* Popout */}
+        <Button variant="ghost" size="icon-xs" onClick={() => window.open(`${window.location.origin}${window.location.pathname}#docs`, "_blank")} title="Open in new tab">
+          {Ic.ext()}
+        </Button>
+        <Button variant="ghost" size="icon-xs" onClick={onClose} title="Close panel">
+          {Ic.x(12)}
+        </Button>
+      </div>
+
+      {/* Content */}
+      {activeName ? (
+        <div ref={contentScrollRef} className="flex-1 min-h-0 overflow-auto p-3">
+          {loading ? (
+            <div className="flex items-center justify-center h-full text-(--g-text-dim)">Loading...</div>
+          ) : (
+            <div style={{ fontSize: `${zoom}em` }}>
+              <MarkdownContent content={pages[pageIndex] ?? ""} className="text-(--g-text-muted) leading-relaxed" />
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col flex-1 items-center justify-center gap-3 text-(--g-text-dim)">
+          <div className="flex">{Ic.doc(32)}</div>
+          <span className="text-sm">No docs ingested yet</span>
+        </div>
+      )}
     </div>
   );
 });
@@ -1586,7 +2210,9 @@ const GregPage = (): JSX.Element => {
     chatHistory,
     newChat,
     loadChat,
+    renameChat,
     deleteChat,
+    activeChatId,
     saveChat,
     setDoubleCheck,
     clearChat,
@@ -1617,7 +2243,9 @@ const GregPage = (): JSX.Element => {
     chatHistory: s.chatHistory,
     newChat: s.newChat,
     loadChat: s.loadChat,
+    renameChat: s.renameChat,
     deleteChat: s.deleteChat,
+    activeChatId: s.activeChatId,
     saveChat: s.saveChat,
     setDoubleCheck: s.setDoubleCheck,
     clearChat: s.clearChat,
@@ -1643,6 +2271,10 @@ const GregPage = (): JSX.Element => {
     [activeConversation.parentId, conversations],
   );
   const isBranchActive = parentConversation !== null && activeConversation.forkIndex !== null;
+  const activeChatTitle = useMemo(
+    () => chatHistory.find((c) => c.id === activeChatId)?.title ?? null,
+    [chatHistory, activeChatId],
+  );
   const forkExcerpt = isBranchActive
     ? (parentConversation!.messages[activeConversation.forkIndex!]?.text ?? "")
     : "";
@@ -1690,7 +2322,53 @@ const GregPage = (): JSX.Element => {
   const [loadingGif, setLoadingGif] = useState<string | null>(null);
   const [greeting, setGreetingText] = useState<string>("");
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => { try { const v = localStorage.getItem("greg-sidebar-open"); return v === null ? false : v !== "false"; } catch { return false; } });
+  const [sidebarWidth, setSidebarWidth] = useState(() => { try { return parseInt(localStorage.getItem("greg-sidebar-width") ?? "") || 260; } catch { return 260; } });
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const handleSidebarResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    const sidebar = sidebarRef.current;
+    const toggle = toggleRef.current;
+    // Disable CSS transitions during drag for instant feedback
+    if (sidebar) sidebar.style.transition = "none";
+    if (toggle) toggle.style.transition = "none";
+    const onMove = (ev: MouseEvent) => {
+      const w = Math.max(180, Math.min(520, startW + ev.clientX - startX));
+      // Direct DOM — zero React overhead
+      if (sidebar) sidebar.style.width = `${w}px`;
+      if (toggle) toggle.style.left = `${w}px`;
+    };
+    const onUp = (ev: MouseEvent) => {
+      const w = Math.max(180, Math.min(520, startW + ev.clientX - startX));
+      if (sidebar) sidebar.style.transition = "";
+      if (toggle) toggle.style.transition = "";
+      setSidebarWidth(w);
+      try { localStorage.setItem("greg-sidebar-width", String(w)); } catch {}
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+  const [selectedChatIds, setSelectedChatIds] = useState<Set<string>>(new Set());
+  const toggleChatSelection = (id: string) => setSelectedChatIds((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+  const clearChatSelection = () => setSelectedChatIds(new Set());
+  const deleteSelectedChats = () => {
+    selectedChatIds.forEach((id) => deleteChat(id));
+    clearChatSelection();
+  };
+  const [renamingTitle, setRenamingTitle] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const [historySearch, setHistorySearch] = useState(() => { try { return localStorage.getItem("greg-history-search") ?? ""; } catch { return ""; } });
+  const handleHistorySearch = (q: string) => { setHistorySearch(q); try { localStorage.setItem("greg-history-search", q); } catch {} };
   const [debugMsgIdx, setDebugMsgIdx] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [followUpSuggestions, setFollowUpSuggestions] = useState<string[]>([]);
@@ -1705,32 +2383,63 @@ const GregPage = (): JSX.Element => {
     if (contextBoundaries.includes(chatMessages.length)) items.push({ kind: "boundary" });
     return items;
   }, [chatMessages, contextBoundaries]);
-  const [autoCompact, setAutoCompact] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem("greg-auto-compact");
-      if (saved !== null) return saved !== "false";
-    } catch {}
-    return true;
-  });
+
+  const groupedHistory = useMemo(() => {
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const startOfYesterday = new Date(startOfToday); startOfYesterday.setDate(startOfToday.getDate() - 1);
+    const startOf7Days = new Date(startOfToday); startOf7Days.setDate(startOfToday.getDate() - 7);
+
+    const q = historySearch.toLowerCase();
+    const filtered = q ? chatHistory.filter((c) => c.title.toLowerCase().includes(q)) : chatHistory;
+
+    const groups: Array<{ label: string; entries: typeof chatHistory }> = [
+      { label: "Today", entries: [] },
+      { label: "Yesterday", entries: [] },
+      { label: "Previous 7 Days", entries: [] },
+      { label: "Older", entries: [] },
+    ];
+
+    for (const chat of filtered) {
+      if (chat.ts >= startOfToday.getTime()) groups[0]!.entries.push(chat);
+      else if (chat.ts >= startOfYesterday.getTime()) groups[1]!.entries.push(chat);
+      else if (chat.ts >= startOf7Days.getTime()) groups[2]!.entries.push(chat);
+      else groups[3]!.entries.push(chat);
+    }
+
+    return groups.filter((g) => g.entries.length > 0);
+  }, [chatHistory, historySearch]);
+
+  const [autoCompact, setAutoCompact] = useState(true);
   const autoCompactRef = useRef(autoCompact);
   autoCompactRef.current = autoCompact;
-  const [chatZoom, setChatZoom] = useState<number>(() => {
-    try { const v = parseFloat(localStorage.getItem("greg-chat-zoom") ?? ""); return v > 0 ? v : 1; } catch { return 1; }
-  });
+  const [chatZoom, setChatZoom] = useState(1);
   useEffect(() => { try { localStorage.setItem("greg-chat-zoom", String(chatZoom)); } catch {} }, [chatZoom]);
   const [personalityOpen, setPersonalityOpen] = useState(false);
   const personalityRef = useRef<HTMLDivElement>(null);
-  const [panelOpen, setPanelOpen] = useState<boolean>(() => {
-    try { return localStorage.getItem("greg-panel-open") !== "false"; } catch { return false; }
-  });
+  const [apisOpen, setApisOpen] = useState(() => { try { return localStorage.getItem("greg-apis-open") === "true"; } catch { return false; } });
+  const [docsOpen, setDocsOpen] = useState(() => { try { return localStorage.getItem("greg-docs-open") === "true"; } catch { return false; } });
+  const panelOpen = apisOpen || docsOpen;
+
+  // Hydrate localStorage-backed state after mount
+  useEffect(() => {
+    try {
+      const savedCompact = localStorage.getItem("greg-auto-compact");
+      if (savedCompact !== null) setAutoCompact(savedCompact !== "false");
+      const savedZoom = parseFloat(localStorage.getItem("greg-chat-zoom") ?? "");
+      if (savedZoom > 0) setChatZoom(savedZoom);
+    } catch {}
+  }, []);
   const [panelAnchor, setPanelAnchor] = useState<{ api: string; method?: string; path?: string } | null>(null);
+  const [panelDocAnchor, setPanelDocAnchor] = useState<{ docName: string; heading: string } | null>(null);
   const abortRef = useRef<{ controller: AbortController; convId: string } | null>(null);
 
   useEffect(() => { listModels().then(setModels).catch(() => {}); }, []);
   useEffect(() => { fetchSuggestions().then(setSuggestions).catch(() => {}); }, []);
   useEffect(() => { setGreetingText(getGreeting(personality)); }, [personality]);
   useEffect(() => { try { localStorage.setItem("greg-auto-compact", String(autoCompact)); } catch {} }, [autoCompact]);
-  useEffect(() => { try { localStorage.setItem("greg-panel-open", String(panelOpen)); } catch {} }, [panelOpen]);
+  useEffect(() => { try { localStorage.setItem("greg-apis-open", String(apisOpen)); } catch {} }, [apisOpen]);
+  useEffect(() => { try { localStorage.setItem("greg-docs-open", String(docsOpen)); } catch {} }, [docsOpen]);
+  useEffect(() => { try { localStorage.setItem("greg-sidebar-open", String(sidebarOpen)); } catch {} }, [sidebarOpen]);
   // If provider is ollama and the user has never explicitly set a preference, default auto-compact ON
   useEffect(() => {
     try {
@@ -1754,20 +2463,32 @@ const GregPage = (): JSX.Element => {
   const outerGroupRef = useGroupRef();
   const swaggerPanelRef = usePanelRef();
   const debugPanelRef = usePanelRef();
+  // Preferred open-width for each panel — stored in dedicated keys so they survive
+  // the panel being closed (rp-greg-* gets [100,0] when closed and can't be trusted).
+  const swaggerSizeRef = useRef(25);
+  const debugSizeRef = useRef(15);
   useLayoutEffect(() => {
     try {
       const inner = localStorage.getItem("rp-greg-inner");
       if (inner && innerGroupRef.current) innerGroupRef.current.setLayout(JSON.parse(inner) as Layout);
+      const swaggerSize = parseFloat(localStorage.getItem("greg-swagger-size") ?? "");
+      if (swaggerSize > 0) swaggerSizeRef.current = swaggerSize;
+    } catch {}
+    try {
+      const outer = localStorage.getItem("rp-greg-outer");
+      if (outer && outerGroupRef.current) outerGroupRef.current.setLayout(JSON.parse(outer) as Layout);
+      const debugSize = parseFloat(localStorage.getItem("greg-debug-size") ?? "");
+      if (debugSize > 0) debugSizeRef.current = debugSize;
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Animate swagger panel open/close via resize()/collapse() on state change.
   // ⚠️ resize() treats bare numbers as pixels — pass "25%" to get a percentage.
-  // Only resize to 25% if currently collapsed — don't override the user's resized width.
+  // Only resize to swaggerSizeRef if currently collapsed — don't override the user's resized width.
   useEffect(() => {
     const p = swaggerPanelRef.current;
     if (!p) return;
-    if (panelOpen) { if (p.isCollapsed()) p.resize("25%"); }
+    if (panelOpen) { if (p.isCollapsed()) p.resize(`${swaggerSizeRef.current}%`); }
     else p.collapse();
   }, [panelOpen]);
   useEffect(() => {
@@ -1776,12 +2497,11 @@ const GregPage = (): JSX.Element => {
     if (debugMsgIdx !== null) {
       // Only set the initial size when the panel is actually collapsed — don't
       // override the user's manually resized width when switching between messages
-      if (p.isCollapsed()) p.resize("15%");
+      if (p.isCollapsed()) p.resize(`${debugSizeRef.current}%`);
     } else {
       p.collapse();
     }
   }, [debugMsgIdx]);
-
   const fetchGreetingGif = useCallback(() => {
     fetch("/api/greeting-gif").then((r) => r.json()).then((d) => setGreetingGif(d.url ?? null)).catch(() => {});
   }, []);
@@ -1798,10 +2518,16 @@ const GregPage = (): JSX.Element => {
 
   const handleSelectEndpoint = useCallback((ep: EndpointCard) => {
     setPanelAnchor({ api: ep.api, method: ep.method, path: ep.path });
-    setPanelOpen(true);
+    setApisOpen(true);
   }, []);
 
-  const handleCloseSwagger = useCallback(() => { setPanelOpen(false); setPanelAnchor(null); }, []);
+  const handleSelectDoc = useCallback((dc: DocCard) => {
+    setPanelDocAnchor({ docName: dc.doc_name, heading: dc.heading });
+    setDocsOpen(true);
+  }, []);
+
+  const handleCloseApis = useCallback(() => { setApisOpen(false); setPanelAnchor(null); }, []);
+  const handleCloseDocs = useCallback(() => setDocsOpen(false), []);
   const handleCloseDebug = useCallback(() => setDebugMsgIdx(null), []);
 
   // Keep a ref to the latest handleSend so handleRetry always picks up the
@@ -1832,7 +2558,7 @@ const GregPage = (): JSX.Element => {
   }, []);
 
   const DIAGRAM_PROMPTS: Record<string, string> = {
-    flowchart: "show the above as a mermaid flowchart diagram (flowchart LR). Include the actual endpoint methods and paths (e.g. GET /users/{id}) as node labels — do not use generic descriptions.",
+    flowchart: "show the above as a mermaid flowchart diagram (flowchart TD). Include the actual endpoint methods and paths (e.g. GET /users/{id}) as node labels — do not use generic descriptions.",
     sequence:  "show the above as a mermaid sequence diagram (sequenceDiagram). Label each arrow with the actual HTTP method and path (e.g. POST /orders) — do not use generic descriptions.",
     er:        "show the above as a mermaid ER diagram (erDiagram). Use the actual resource names from the API paths and include the key fields from request/response schemas.",
     state:     "show the above as a mermaid state diagram (stateDiagram-v2). Label transitions with the actual endpoint that triggers each state change (e.g. PUT /orders/{id}/cancel).",
@@ -2005,6 +2731,8 @@ const GregPage = (): JSX.Element => {
     let doneUsage: { input: number; output: number; toolCalls: number } | undefined;
     let doneVerificationUsage: { input: number; output: number } | undefined;
     const endpointMap = new Map<string, EndpointCard>();
+    const docCardMap = new Map<string, DocCard>();
+    const citedDocNames = new Set<string>();
     const debugLog: Record<string, unknown>[] = [];
 
     // Batch text updates to one per animation frame to avoid thrashing the reconciler
@@ -2044,6 +2772,22 @@ const GregPage = (): JSX.Element => {
               }
             }
             break;
+          case "docs":
+            // Deduplicate by doc_name+heading, keep highest score
+            for (const dc of event.docCards ?? []) {
+              const key = `${dc.doc_name}:${dc.heading}`;
+              const existing = docCardMap.get(key);
+              if (!existing || (dc.score ?? 0) > (existing.score ?? 0)) {
+                docCardMap.set(key, dc);
+              }
+            }
+            break;
+          case "docrefs": {
+            // Doc names the LLM explicitly cited — used post-stream to filter doc cards.
+            const names = (event as { docNames?: string[] }).docNames ?? [];
+            for (const name of names) citedDocNames.add(name);
+            break;
+          }
           case "followups": {
             // Inline follow-ups emitted by the main LLM alongside the response.
             // Replaces the prior post-stream generateFollowUpSuggestions call.
@@ -2065,6 +2809,13 @@ const GregPage = (): JSX.Element => {
             break;
           case "debug":
             debugLog.push(event as unknown as Record<string, unknown>);
+            // Push tool activity events immediately so the streaming UI can show them
+            if (event.event === "tool_call" || event.event === "tool_result" || event.event === "round") {
+              updateLastAssistantIn(targetConvId, (m) => ({
+                ...m,
+                debug: [...(m.debug ?? []), event as unknown as Record<string, unknown>],
+              }));
+            }
             if (event.event === "verification_start") {
               // Greg is done, verification is starting — render Greg's markdown, show checking indicator
               const eps = relevantEndpoints([...endpointMap.values()]);
@@ -2091,6 +2842,12 @@ const GregPage = (): JSX.Element => {
 
     abortRef.current = null;
     const dedupedEndpoints = [...endpointMap.values()];
+    // Filter doc cards to only those the LLM explicitly cited via <docrefs>.
+    // If the tag was omitted (no docs used, or LLM forgot), fall back to a
+    // strict score threshold so at least the highest-confidence results show.
+    const allDocCards = citedDocNames.size > 0
+      ? [...docCardMap.values()].filter((dc) => citedDocNames.has(dc.doc_name))
+      : [...docCardMap.values()].filter((dc) => (dc.score ?? 0) >= 0.8);
 
     // Scan response text for inline route mentions (e.g. `GET /devices/{id}/commands`).
     // Anything mentioned directly in the assistant's text is promoted to the top of the card list.
@@ -2115,13 +2872,16 @@ const GregPage = (): JSX.Element => {
           .filter(Boolean)
           .map((r) => ({ method: r!.method, path: r!.path, api: r!.api, description: r!.description, score: r!.score, full_text: r!.full_text, response_schema: r!.response_schema, ...(r!.warnings ? { warnings: r!.warnings } : {}) }))
       : [];
-    // Filter search results by score; inline-mentioned routes (lookedUp) always pass.
-    // Bump score on any endpoint that was mentioned in the text so EndpointDropdown's
-    // score-descending sort lifts it to the top.
-    const combined = [...relevantEndpoints(dedupedEndpoints), ...lookedUp];
-    const allEndpoints = combined.map((ep) =>
-      mentionedKeys.has(`${ep.method}:${ep.path}`) ? { ...ep, score: 1 } : ep,
-    );
+    // Only show endpoints that were explicitly mentioned in the response text
+    // (bumped to score=1) or fetched via get_endpoint (already score=1).
+    // Search results that the LLM retrieved but never cited are excluded.
+    const combined = [
+      ...dedupedEndpoints
+        .map((ep) => mentionedKeys.has(`${ep.method}:${ep.path}`) ? { ...ep, score: 1 } : ep)
+        .filter((ep) => (ep.score ?? 0) >= 1),
+      ...lookedUp,
+    ];
+    const allEndpoints = combined;
 
     updateLastAssistantIn(targetConvId, (m) => ({
       ...m,
@@ -2131,6 +2891,7 @@ const GregPage = (): JSX.Element => {
       streaming: false,
       verificationStreaming: false,
       ...(allEndpoints.length > 0 ? { endpoints: allEndpoints } : {}),
+      ...(allDocCards.length > 0 ? { docs: allDocCards } : {}),
       ...(doneModel !== undefined && { model: doneModel }),
       ...(doneUsage !== undefined && { usage: doneUsage }),
       ...(doneVerificationUsage !== undefined && { verificationUsage: doneVerificationUsage }),
@@ -2167,73 +2928,227 @@ const GregPage = (): JSX.Element => {
 
   return (
     <div className="flex h-[calc(100%-2.75rem)]">
-      {/* History sidebar — DOM-affecting flex child */}
-      <div
-        className="flex shrink-0 overflow-hidden border-r border-(--g-border) bg-(--g-surface) transition-[width] duration-200"
-        style={{ width: sidebarOpen ? "16.25rem" : "0" }}
-      >
-        <div className="flex flex-col w-[16.25rem] min-w-[16.25rem] h-full overflow-auto px-2.5 py-3">
-          <div className="flex items-center mb-2.5">
-            <span className="flex-1 text-[0.75rem] font-semibold text-(--g-text)">History</span>
-            <Button variant="ghost" size="icon-xs" onClick={handleNewChat} className="text-(--g-accent)" title="New chat">
-              {Ic.plus(14)}
-            </Button>
-          </div>
-          {chatHistory.length === 0 && (
-            <span className="text-[0.6875rem] text-(--g-text-dim)">No chats yet</span>
-          )}
-          {chatHistory.map((chat) => {
-            const isActive = chat.id === useStore.getState().activeChatId;
-            return (
-              <div
-                key={chat.id}
-                onClick={() => { loadChat(chat.id); setFollowUpSuggestions([]); }}
-                className="flex items-center gap-1.5 mb-0.5 px-2 py-1 rounded-md cursor-pointer transition-colors duration-100"
-                style={{
-                  background: isActive ? "var(--g-surface-active)" : "transparent",
-                  borderLeft: isActive ? "2px solid var(--g-accent)" : "2px solid transparent",
-                }}
-                onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "var(--g-surface-hover)"; }}
-                onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-              >
-                <span className="flex-1 truncate text-[0.6875rem] text-(--g-text)">
-                  {chat.title}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}
-                  className="shrink-0 opacity-50"
-                >
-                  {Ic.x(11)}
-                </Button>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
       {/* History toggle badge — fixed, slides with sidebar */}
       <button
+        ref={toggleRef}
         onClick={() => setSidebarOpen(!sidebarOpen)}
         className="fixed z-30 flex items-center justify-center px-3 py-3 rounded-r-lg border border-l-0 border-(--g-border) bg-(--g-surface) shadow-sm hover:bg-(--g-surface-hover) -translate-y-1/2 transition-[left,color] duration-200"
-        style={{ top: "4.25rem", left: sidebarOpen ? "16.25rem" : "0", color: sidebarOpen ? "var(--g-accent)" : "var(--g-text-dim)" }}
+        style={{ top: "4.25rem", left: sidebarOpen ? sidebarWidth : 0, color: sidebarOpen ? "var(--g-accent)" : "var(--g-text-dim)" }}
         title={sidebarOpen ? "Close history" : "Open history"}
       >
         {Ic.clock(18)}
       </button>
 
+      {/* History sidebar — width controlled by drag, visibility by sidebarOpen */}
+      <div
+        ref={sidebarRef}
+        className="relative shrink-0 overflow-hidden border-r border-(--g-border) bg-(--g-surface) transition-[width] duration-200"
+        style={{ width: sidebarOpen ? sidebarWidth : 0 }}
+      >
+        <div className="flex flex-col w-full h-full overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center px-3 py-[0.6875rem] border-b border-(--g-border) shrink-0 gap-1.5">
+            {selectedChatIds.size > 0 ? (
+              <>
+                <span className="flex-1 text-[0.625rem] font-medium text-(--g-text-dim)">{selectedChatIds.size} selected</span>
+                <button
+                  onClick={deleteSelectedChats}
+                  title="Delete selected"
+                  className="flex items-center gap-1 h-6 px-2 rounded-[6px] text-[0.625rem] font-medium text-red-400 border border-red-400/30 hover:bg-red-400/10 transition-colors duration-150"
+                >
+                  {Ic.x(10)} Delete
+                </button>
+                <button
+                  onClick={clearChatSelection}
+                  title="Clear selection"
+                  className="flex items-center justify-center w-6 h-6 rounded-[6px] border border-(--g-border-hover) text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors duration-150"
+                >
+                  {Ic.x(12)}
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="flex-1 text-[0.625rem] font-medium uppercase tracking-[0.1em] text-(--g-text-dim)">Chats</span>
+                <button
+                  onClick={handleNewChat}
+                  title="New chat"
+                  className="flex items-center justify-center w-6 h-6 rounded-[6px] border border-(--g-border-hover) text-(--g-text-dim) hover:border-(--g-border-hover) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors duration-150"
+                >
+                  {Ic.plus(14)}
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Search */}
+          <div className="px-2.5 py-2 shrink-0">
+            <div className="relative">
+              <span className="absolute left-[9px] top-1/2 -translate-y-1/2 text-(--g-text-dim) pointer-events-none">
+                {Ic.search(13)}
+              </span>
+              <input
+                type="text"
+                value={historySearch}
+                onChange={(e) => handleHistorySearch(e.target.value)}
+                placeholder="Search chats…"
+                className="w-full h-[30px] pl-[30px] pr-2.5 rounded-[6px] text-[0.75rem] bg-(--g-surface) border border-(--g-border) text-(--g-text) placeholder:text-(--g-text-dim) outline-none focus:border-(--g-border-hover) focus:bg-(--g-surface-hover) transition-colors"
+              />
+            </div>
+          </div>
+
+          {/* Grouped list */}
+          <div className="flex-1 overflow-y-auto px-1.5 pb-3 [scrollbar-width:thin] [scrollbar-color:var(--g-surface-hover)_transparent]">
+            {groupedHistory.length === 0 && (
+              <p className="px-2 pt-6 text-center text-[0.6875rem] tracking-[0.02em] text-(--g-text-dim)">
+                {historySearch ? "No chats match your search" : "No chats yet"}
+              </p>
+            )}
+            {groupedHistory.map((group) => (
+              <div key={group.label}>
+                <div className="px-1 pt-3 pb-[5px] text-[0.625rem] font-medium uppercase tracking-[0.08em] text-(--g-text-dim)">
+                  {group.label}
+                </div>
+                {group.entries.map((chat) => {
+                  const isActive = chat.id === useStore.getState().activeChatId;
+                  const relTime = (() => {
+                    const diff = Date.now() - chat.ts;
+                    const mins = Math.floor(diff / 60000);
+                    if (mins < 1) return "just now";
+                    if (mins < 60) return `${mins}m ago`;
+                    const hrs = Math.floor(mins / 60);
+                    if (hrs < 24) return `${hrs}h ago`;
+                    const days = Math.floor(hrs / 24);
+                    if (days === 1) return "Yesterday";
+                    if (days < 7) return `${days}d ago`;
+                    return new Date(chat.ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                  })();
+                  const isSelected = selectedChatIds.has(chat.id);
+                  const hasSelection = selectedChatIds.size > 0;
+                  return (
+                    <div
+                      key={chat.id}
+                      onClick={() => {
+                        if (hasSelection) { toggleChatSelection(chat.id); return; }
+                        loadChat(chat.id); setFollowUpSuggestions([]);
+                      }}
+                      className={cn(
+                        "group/item relative flex items-center gap-2 mb-px pl-1.5 pr-2 py-[7px] rounded-[9px] border cursor-pointer transition-colors duration-100",
+                        isSelected
+                          ? "bg-(--g-surface) border-(--g-accent)/40"
+                          : isActive
+                            ? "bg-(--g-surface) border-(--g-border-hover)"
+                            : "border-transparent hover:bg-(--g-surface) hover:border-(--g-border-hover)",
+                      )}
+                    >
+                      {/* Checkbox */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleChatSelection(chat.id); }}
+                        className={cn(
+                          "shrink-0 flex items-center justify-center w-4 h-4 rounded-[4px] border transition-all duration-100",
+                          isSelected
+                            ? "bg-(--g-accent) border-(--g-accent)"
+                            : "border-(--g-border-hover) opacity-0 group-hover/item:opacity-100",
+                        )}
+                      >
+                        {isSelected && (
+                          <svg width={9} height={9} viewBox="0 0 10 10" fill="none">
+                            <path d="M2 5l2.5 2.5L8 3" stroke="var(--g-bg)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </button>
+
+                      {/* Text */}
+                      <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                        {/* Active left bar */}
+                        {isActive && !isSelected && (
+                          <span className="absolute left-0 top-[20%] bottom-[20%] w-0.5 rounded-sm bg-(--g-accent)" />
+                        )}
+                        <span className="truncate text-[0.75rem] text-(--g-text) leading-[1.35] pr-6">{chat.title}</span>
+                        <span className="text-[0.625rem] tracking-[0.02em] text-(--g-text-dim)">{relTime}</span>
+                      </div>
+
+                      {/* Hover actions (hidden when in selection mode) */}
+                      {!hasSelection && (
+                        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover/item:flex items-center gap-[3px] bg-(--g-surface-hover) border border-(--g-border) rounded-[6px] p-0.5">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}
+                            className="flex items-center justify-center w-[22px] h-[22px] rounded text-(--g-text-dim) hover:text-red-400 hover:bg-(--g-surface) transition-colors"
+                            title="Delete"
+                          >
+                            {Ic.x(11)}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* Drag handle — sits on top of the border-r */}
+        <div
+          className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-10 hover:bg-(--g-accent) transition-colors duration-150 opacity-0 hover:opacity-40"
+          onMouseDown={handleSidebarResizeStart}
+        />
+      </div>
+
       {/* Main area: chat + swagger + debug — all resizable */}
-      <ResizablePanelGroup groupRef={outerGroupRef} onLayoutChanged={(l) => { try { localStorage.setItem("rp-greg-outer", JSON.stringify(l)); } catch {} }} className="flex flex-1 min-w-0">
+      <ResizablePanelGroup groupRef={outerGroupRef} onLayoutChanged={(l) => { try { localStorage.setItem("rp-greg-outer", JSON.stringify(l)); if (l[1] > 0) { debugSizeRef.current = l[1]; localStorage.setItem("greg-debug-size", String(l[1])); } } catch {} }} className="flex flex-1 min-w-0">
         {/* Inner group: chat + swagger */}
         <ResizablePanel id="main" minSize={20}>
-          <ResizablePanelGroup groupRef={innerGroupRef} onLayoutChanged={(l) => { try { localStorage.setItem("rp-greg-inner", JSON.stringify(l)); } catch {} }}>
+          <ResizablePanelGroup groupRef={innerGroupRef} onLayoutChanged={(l) => { try { localStorage.setItem("rp-greg-inner", JSON.stringify(l)); if (l[1] > 0) { swaggerSizeRef.current = l[1]; localStorage.setItem("greg-swagger-size", String(l[1])); } } catch {} }}>
             <ResizablePanel id="chat" defaultSize={75} minSize={20}>
         {/* Chat column */}
         <div
-          className="flex flex-col h-full min-w-0 px-6 pt-5 pb-5"
+          className="flex flex-col h-full min-w-0 px-6 pt-2 pb-5"
           style={chatZoom !== 1 ? { zoom: chatZoom } : undefined}
         >
+        {/* Chat title bar */}
+        {activeChatTitle !== null && (
+          <div className="flex items-center gap-2 mb-1 min-w-0 group/title pl-12">
+            {renamingTitle ? (
+              <input
+                ref={renameInputRef}
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const t = renameValue.trim();
+                    if (t && activeChatId) renameChat(activeChatId, t);
+                    setRenamingTitle(false);
+                  } else if (e.key === "Escape") {
+                    setRenamingTitle(false);
+                  }
+                }}
+                onBlur={() => {
+                  const t = renameValue.trim();
+                  if (t && activeChatId) renameChat(activeChatId, t);
+                  setRenamingTitle(false);
+                }}
+                className="flex-1 min-w-0 bg-transparent border-b border-(--g-accent) text-[0.8125rem] font-medium text-(--g-text) outline-none py-0.5"
+              />
+            ) : (
+              <button
+                onClick={() => { setRenameValue(activeChatTitle); setRenamingTitle(true); setTimeout(() => { renameInputRef.current?.select(); }, 0); }}
+                className="flex-1 min-w-0 text-left text-[0.8125rem] font-medium text-(--g-text-dim) truncate hover:text-(--g-text) transition-colors"
+                title="Click to rename"
+              >
+                {activeChatTitle}
+              </button>
+            )}
+            {!renamingTitle && (
+              <button
+                onClick={() => { setRenameValue(activeChatTitle); setRenamingTitle(true); setTimeout(() => { renameInputRef.current?.select(); }, 0); }}
+                className="shrink-0 opacity-0 group-hover/title:opacity-60 hover:!opacity-100 text-(--g-text-dim) transition-opacity"
+                title="Rename chat"
+              >
+                {Ic.pencil(13)}
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Messages + detail panel */}
         <div className="flex flex-1 gap-5 min-h-0">
           {/* Messages */}
@@ -2301,7 +3216,7 @@ const GregPage = (): JSX.Element => {
               {isBranchActive ? (
                 <ForkContext parentName={parentConversation?.name ?? "Main"} excerpt={forkExcerpt} />
               ) : (
-                <div className={cn("flex flex-col items-center gap-4 text-(--g-text-dim) px-6", hasChatMessages ? "pt-6 pb-2" : "min-h-full justify-center")}>
+                <div className={cn("flex flex-col items-center gap-4 text-(--g-text-dim) px-6", hasChatMessages ? "pt-3 pb-2" : "min-h-full justify-center")}>
                   <img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" className="max-h-[45rem] rounded-xl" />
                   <span className="text-lg">{greeting}</span>
                   {suggestions.length > 0 && !hasChatMessages && (
@@ -2324,7 +3239,7 @@ const GregPage = (): JSX.Element => {
               {chatItems.map((item, index) => {
                 if (item.kind === "boundary") {
                   return (
-                    <div key={`b-${index}`} className="flex items-center gap-2 my-1 px-6">
+                    <div key={`b-${index}`} className="flex items-center gap-2 my-1 w-full max-w-[1000px] mx-auto px-6">
                       <div className="flex-1 h-px bg-(--g-border)" />
                       <span className="text-[0.6875rem] text-(--g-text-dim) select-none">context cleared</span>
                       <div className="flex-1 h-px bg-(--g-border)" />
@@ -2332,11 +3247,12 @@ const GregPage = (): JSX.Element => {
                   );
                 }
                 return (
-                  <div key={`m-${item.msgIndex}`} className="px-6 py-1.5">
+                  <div key={`m-${item.msgIndex}`} className="w-full max-w-[1000px] mx-auto px-6 py-1.5 [content-visibility:auto] [contain-intrinsic-size:0_auto]">
                     <ChatMessage
                       msg={item.msg}
                       i={item.msgIndex}
                       onSelectEndpoint={handleSelectEndpoint}
+                      onSelectDoc={handleSelectDoc}
                       onShowDebug={setDebugMsgIdx}
                       onRetry={handleRetry}
                       onQuickAction={handleQuickAction}
@@ -2351,7 +3267,7 @@ const GregPage = (): JSX.Element => {
               {/* Follow-up suggestions — inside the scroll container so they
                   don't resize the scrollable area and cause position jumps. */}
               {(generatingFollowUps || followUpSuggestions.length > 0) && (
-                <div className="px-6 pb-2">
+                <div className="w-full max-w-[1000px] mx-auto px-6 pt-3 pb-2">
                   {generatingFollowUps && followUpSuggestions.length === 0 && (
                     <span className="ml-0.5 text-[0.6875rem] text-(--g-text-dim) animate-pulse">generating follow-ups…</span>
                   )}
@@ -2408,9 +3324,9 @@ const GregPage = (): JSX.Element => {
                   ref={inputRef}
                   rows={1}
                   placeholder={isGregLike ? "talk to greg..." : chatMessages.length > 0 ? "Reply..." : "How can I help?"}
-                  onChange={(e) => { const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; }}
+                  onChange={supportsFieldSizing ? undefined : (e) => { const t = e.target; requestAnimationFrame(() => { t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; }); }}
                   onKeyDown={handleKeyDown}
-                  className="w-full min-h-7 p-0 resize-none border-none bg-transparent outline-none font-[inherit] text-base text-(--g-text) leading-[1.55] mb-1"
+                  className="w-full min-h-7 max-h-[160px] overflow-y-auto p-0 resize-none border-none bg-transparent outline-none font-[inherit] text-base text-(--g-text) leading-[1.55] mb-1 [field-sizing:content]"
                 />
                 <div className="flex items-center mb-1.5">
                   <span className="text-[0.6875rem] text-(--g-text-dim) select-none">
@@ -2501,12 +3417,23 @@ const GregPage = (): JSX.Element => {
                     <span>Auto-compact</span>
                   </button>
 
+                  {/* APIs toggle */}
+                  <button
+                    onClick={() => setApisOpen((v) => !v)}
+                    className="flex items-center gap-1.5 h-8 px-2.5 rounded-md text-xs font-medium transition-colors hover:bg-(--g-surface-hover)"
+                    style={{ color: apisOpen ? "var(--g-accent)" : "var(--g-text-dim)" }}
+                    title="Toggle API docs"
+                  >
+                    {Ic.server(14)}
+                    <span>APIs</span>
+                  </button>
+
                   {/* Docs toggle */}
                   <button
-                    onClick={() => setPanelOpen(!panelOpen)}
+                    onClick={() => setDocsOpen((v) => !v)}
                     className="flex items-center gap-1.5 h-8 px-2.5 rounded-md text-xs font-medium transition-colors hover:bg-(--g-surface-hover)"
-                    style={{ color: panelOpen ? "var(--g-accent)" : "var(--g-text-dim)" }}
-                    title="Toggle API docs"
+                    style={{ color: docsOpen ? "var(--g-accent)" : "var(--g-text-dim)" }}
+                    title="Toggle markdown docs"
                   >
                     {Ic.doc(14)}
                     <span>Docs</span>
@@ -2548,7 +3475,7 @@ const GregPage = (): JSX.Element => {
         </div>
             </ResizablePanel>
 
-            {/* Swagger panel — always mounted so collapse/expand slides smoothly */}
+            {/* Side panel (APIs / Docs) — always mounted so collapse/expand slides smoothly */}
             <ResizableHandle withHandle className={cn("transition-opacity duration-200", panelOpen ? "opacity-100" : "opacity-0 pointer-events-none")} />
             <ResizablePanel
               panelRef={swaggerPanelRef}
@@ -2559,7 +3486,21 @@ const GregPage = (): JSX.Element => {
               collapsedSize={0}
               className="transition-all duration-300 ease-in-out overflow-hidden"
             >
-              {panelOpen && <SwaggerPanel anchor={panelAnchor} onClose={handleCloseSwagger} />}
+              {apisOpen && docsOpen ? (
+                <ResizablePanelGroup direction="vertical" className="h-full">
+                  <ResizablePanel minSize={20} defaultSize={55}>
+                    <SwaggerPanel anchor={panelAnchor} onClose={handleCloseApis} />
+                  </ResizablePanel>
+                  <ResizableHandle withHandle />
+                  <ResizablePanel minSize={20} defaultSize={45}>
+                    <DocsSidePanel onClose={handleCloseDocs} anchor={panelDocAnchor} />
+                  </ResizablePanel>
+                </ResizablePanelGroup>
+              ) : apisOpen ? (
+                <SwaggerPanel anchor={panelAnchor} onClose={handleCloseApis} />
+              ) : docsOpen ? (
+                <DocsSidePanel onClose={handleCloseDocs} anchor={panelDocAnchor} />
+              ) : null}
             </ResizablePanel>
           </ResizablePanelGroup>
         </ResizablePanel>

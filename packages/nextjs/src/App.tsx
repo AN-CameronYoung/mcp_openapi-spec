@@ -4,12 +4,15 @@ import { useEffect, useRef } from "react";
 
 import { useShallow } from "zustand/react/shallow";
 
-import { listApis } from "./lib/api";
+import { listApis, listDocs } from "./lib/api";
 import { useStore, pageFromHash, chatIdFromHash, branchIndexFromHash } from "./store/store";
 import Header from "./components/Header";
 import GregPage from "./pages/GregPage";
 import SearchPage from "./pages/SearchPage";
+import ApisPage from "./pages/ApisPage";
+import DocsPage from "./pages/DocsPage";
 import SettingsPage from "./pages/SettingsPage";
+import AdminPage from "./pages/AdminPage";
 import IngestFloat from "./components/IngestFloat";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "./components/ui/sheet";
 
@@ -18,13 +21,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "./components/ui/sh
  * API listing, and the settings drawer.
  */
 const App = (): JSX.Element => {
-	const { page, setPage, setApis, setDocsApi, docsApi, theme, setTheme, hydrateFromStorage } = useStore(
-		useShallow((s) => ({ page: s.page, setPage: s.setPage, setApis: s.setApis, setDocsApi: s.setDocsApi, docsApi: s.docsApi, theme: s.theme, setTheme: s.setTheme, hydrateFromStorage: s.hydrateFromStorage }))
+	const { page, setPage, setApis, setDocs, setApisApi, apisApi, theme, setTheme, hydrateFromStorage } = useStore(
+		useShallow((s) => ({ page: s.page, setPage: s.setPage, setApis: s.setApis, setDocs: s.setDocs, setApisApi: s.setApisApi, apisApi: s.apisApi, theme: s.theme, setTheme: s.setTheme, hydrateFromStorage: s.hydrateFromStorage }))
 	);
 
 	// Track the last non-settings page so content stays visible behind the drawer
-	const lastPageRef = useRef<"greg" | "search">("greg");
-	if (page !== "settings") lastPageRef.current = page as "greg" | "search";
+	const lastPageRef = useRef<"greg" | "search" | "apis" | "docs">("greg");
+	if (page !== "settings" && page !== "admin") lastPageRef.current = page as "greg" | "search" | "apis" | "docs";
 	const contentPage = lastPageRef.current;
 
 	useEffect(() => {
@@ -35,10 +38,13 @@ const App = (): JSX.Element => {
 		listApis()
 			.then((apis) => {
 				setApis(apis);
-				if (!docsApi && apis.length > 0) {
-					setDocsApi(apis[0]!.name);
+				if (!apisApi && apis.length > 0) {
+					setApisApi(apis[0]!.name);
 				}
 			})
+			.catch(() => {});
+		listDocs()
+			.then((d) => setDocs(d))
 			.catch(() => {});
 	}, []);
 
@@ -92,9 +98,12 @@ const App = (): JSX.Element => {
 			{/* Navigation */}
 			<Header />
 
-			{/* Page content — always mounted so DocsPage iframe survives tab switches */}
-			<div className={contentPage === "greg" ? "contents" : "hidden"}><GregPage /></div>
-			<div className={contentPage === "search" ? "contents" : "hidden"}><SearchPage /></div>
+			{/* Page content — always mounted so pages survive tab switches */}
+			<div className={contentPage === "greg" && page !== "admin" ? "contents" : "hidden"}><GregPage /></div>
+			<div className={contentPage === "search" && page !== "admin" ? "contents" : "hidden"}><SearchPage /></div>
+			<div className={contentPage === "apis" && page !== "admin" ? "contents" : "hidden"}><ApisPage /></div>
+			<div className={contentPage === "docs" && page !== "admin" ? "contents" : "hidden"}><DocsPage /></div>
+			<div className={page === "admin" ? "contents" : "hidden"}><AdminPage /></div>
 
 			{/* Settings drawer */}
 			<Sheet open={showSettings} onOpenChange={handleSheetOpenChange}>

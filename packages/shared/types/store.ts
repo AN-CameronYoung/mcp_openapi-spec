@@ -24,4 +24,5 @@ export interface ApiInfo {
 	name: string;
 	endpoints: number;
 	schemas: number;
+	project: string;
 }

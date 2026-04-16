@@ -13,6 +13,11 @@ const SERVER_EXTERNAL = [
 ];
 
 const nextConfig: NextConfig = {
+	experimental: {
+		serverActions: {
+			bodySizeLimit: "20mb",
+		},
+	},
 	// Hide the Next.js dev indicator (the "N" logo)
 	devIndicators: false,
 

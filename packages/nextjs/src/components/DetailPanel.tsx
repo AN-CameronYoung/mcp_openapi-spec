@@ -26,11 +26,12 @@ interface DetailItem {
   response_schema?: string;
   operation_id?: string;
   tags?: string;
+  api_refs?: string[];
 }
 
 interface DetailPanelProps {
   item: DetailItem;
-  type: "endpoints" | "schemas";
+  type: "endpoints" | "schemas" | "docs";
   onClose: () => void;
 }
 
@@ -225,8 +226,9 @@ const parseFullText = (text: string): { params: ParsedParam[]; bodyFields: strin
  * Slide-in panel showing full details for a selected endpoint or schema.
  */
 const DetailPanel = ({ item, type, onClose }: DetailPanelProps): JSX.Element => {
-  const viewDocs = useStore((s) => s.viewDocs);
+  const viewApis = useStore((s) => s.viewApis);
   const isEp = type === "endpoints";
+  const isDoc = type === "docs";
   const m = isEp ? METHOD_COLORS[item.method ?? "GET"] ?? METHOD_COLORS.GET : null;
 
   // Format response schema — now stored as JSON from chunker
@@ -276,8 +278,8 @@ const DetailPanel = ({ item, type, onClose }: DetailPanelProps): JSX.Element => 
     }
   }
 
-  const handleViewDocs = () =>
-    viewDocs(item.api, item.method ?? "GET", item.path ?? "", item.operation_id, item.tags?.split(",")[0]?.trim());
+  const handleViewApis = () =>
+    viewApis(item.api, item.method ?? "GET", item.path ?? "", item.operation_id, item.tags?.split(",")[0]?.trim());
 
   const handleCopyPath = () => navigator.clipboard?.writeText(item.path ?? "");
 
@@ -286,15 +288,15 @@ const DetailPanel = ({ item, type, onClose }: DetailPanelProps): JSX.Element => 
       {/* Header */}
       <div className="flex items-center gap-2 px-3.5 py-[0.6875rem] border-b border-(--g-border)">
         <span className="text-xs font-semibold text-(--g-text-dim) uppercase tracking-[0.05em]">
-          {isEp ? "Endpoint" : "Schema"}
+          {isDoc ? "Document" : isEp ? "Endpoint" : "Schema"}
         </span>
         <span className="flex-1" />
         {isEp && (
           <button
-            onClick={handleViewDocs}
+            onClick={handleViewApis}
             className="flex items-center gap-1 px-2.5 py-1 rounded border-none cursor-pointer text-xs font-medium bg-(--g-accent-muted) text-(--g-accent)"
           >
-            {Ic.doc(14)} Docs {Ic.arr(13)}
+            {Ic.doc(14)} APIs {Ic.arr(13)}
           </button>
         )}
         <button onClick={onClose} className="btn-icon p-[0.1875rem]">
@@ -304,7 +306,63 @@ const DetailPanel = ({ item, type, onClose }: DetailPanelProps): JSX.Element => 
 
       {/* Body */}
       <div className="p-3.5">
-        {isEp ? (
+        {isDoc ? (
+          <>
+            {/* Doc header */}
+            <div className="flex items-center gap-[0.4375rem] mb-2 flex-wrap">
+              <span className="flex opacity-50 text-purple-500">{Ic.doc(18)}</span>
+              <span className="text-sm font-semibold text-(--g-text)">
+                {item.name}
+              </span>
+              <span className="api-badge">
+                <span className="opacity-50 flex">{Ic.tag()}</span>
+                {item.api}
+              </span>
+              {item.score != null && <ScoreBar score={item.score} />}
+            </div>
+
+            {/* Heading path */}
+            {item.path && (
+              <div className="mb-2 text-xs text-(--g-text-dim)">
+                {item.path}
+              </div>
+            )}
+
+            {/* Linked APIs */}
+            {item.api_refs && item.api_refs.length > 0 && (
+              <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                <span className="flex opacity-50 text-(--g-text-dim)">{Ic.server(13)}</span>
+                {item.api_refs.map((ref) => (
+                  <span
+                    key={ref}
+                    onClick={() => viewApis(ref, "", "")}
+                    className="text-[0.6875rem] px-1.5 py-px rounded bg-(--g-accent-muted) text-(--g-accent) font-medium cursor-pointer hover:opacity-80"
+                  >
+                    {ref}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Tags */}
+            {item.tags && (
+              <div className="flex gap-1 mb-3 flex-wrap">
+                {item.tags.split(",").map((t) => t.trim()).filter(Boolean).map((t) => (
+                  <span key={t} className="text-[0.6875rem] px-1.5 py-px rounded bg-muted-foreground/10 text-muted-foreground font-medium">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Content */}
+            {item.full_text && (
+              <div className="max-h-[400px] overflow-auto rounded px-3.5 py-[0.6875rem] text-xs text-(--g-text-muted) leading-[1.7] whitespace-pre-wrap bg-(--g-bg)">
+                {item.full_text}
+              </div>
+            )}
+          </>
+        ) : isEp ? (
           <>
             {/* Method + API + Score */}
             <div className="flex flex-wrap items-center gap-[0.4375rem] mb-2">

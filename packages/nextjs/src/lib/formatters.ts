@@ -1,4 +1,5 @@
-import type { QueryResult, DocumentResult } from "#types/store";
+import type { QueryResult, DocumentResult, ApiInfo } from "#types/store";
+import type { DocInfo } from "#types/doc";
 
 export interface SearchResult {
 	id: string;
@@ -14,6 +15,7 @@ export interface SearchResult {
 	full_text: string;
 	response_schema: string;
 	warnings?: string;
+	api_refs?: string[];
 }
 
 function extractDescription(fullText: string): string {
@@ -75,6 +77,33 @@ export function formatDocResult(r: DocumentResult): SearchResult {
 		response_schema: m.response_schema ?? "",
 		warnings: m.warnings ?? "",
 	};
+}
+
+export function formatDocSearchResult(r: QueryResult): SearchResult {
+	const m = r.metadata;
+	const fullText = m.full_text ?? r.text;
+	return {
+		id: r.id,
+		method: "",
+		path: m.heading_path ?? m.heading ?? "",
+		name: m.doc_name ?? "",
+		api: m.project ?? "",
+		type: "doc",
+		operation_id: "",
+		tags: m.tags ?? "",
+		description: fullText.slice(0, 200),
+		score: Math.max(0, Math.round((1 - (r.distance ?? 0) / 2) * 100) / 100),
+		full_text: fullText,
+		response_schema: "",
+		warnings: "",
+		api_refs: m.api_refs ? m.api_refs.split(",").map((r) => r.trim()).filter(Boolean) : [],
+	};
+}
+
+export interface ProjectInfo {
+	name: string;
+	apis: ApiInfo[];
+	docs: DocInfo[];
 }
 
 export function formatFirstTag(tags: string): string {

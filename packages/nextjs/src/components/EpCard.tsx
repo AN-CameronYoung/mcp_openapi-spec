@@ -68,7 +68,7 @@ const EpCard = ({ method, path, api, description, warnings, compact, onClick }: 
       </p>
 
       {/* Warnings */}
-      {!compact && warningList.length > 0 && (
+      {/* {!compact && warningList.length > 0 && (
         <div className="flex flex-wrap gap-[0.1875rem] mt-1 pl-10">
           {warningList.map((w, i) => (
             <span
@@ -79,7 +79,7 @@ const EpCard = ({ method, path, api, description, warnings, compact, onClick }: 
             </span>
           ))}
         </div>
-      )}
+      )} */}
     </div>
   );
 };

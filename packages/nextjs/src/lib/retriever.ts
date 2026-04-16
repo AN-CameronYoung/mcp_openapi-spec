@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import Retriever from "@greg/shared/core/retriever";
+import DocRetriever from "@greg/shared/core/docRetriever";
 
 // ---------------------------------------------------------------------------
 // Use globalThis to ensure singletons survive module re-evaluation (Turbopack)
@@ -10,12 +11,24 @@ import Retriever from "@greg/shared/core/retriever";
 
 type AutoIngestGlobals = {
 	__retriever?: Retriever;
+	__docRetriever?: DocRetriever;
 	__autoIngestDone?: boolean;
 	__autoIngestEvents?: EventEmitter;
 	__autoIngestState?: AutoIngestState;
 };
 
 const g = globalThis as unknown as AutoIngestGlobals;
+
+// ---------------------------------------------------------------------------
+// DocRetriever singleton
+// ---------------------------------------------------------------------------
+
+export const getDocRetriever = (): DocRetriever => {
+	if (!g.__docRetriever) {
+		g.__docRetriever = new DocRetriever();
+	}
+	return g.__docRetriever;
+};
 
 // ---------------------------------------------------------------------------
 // Auto-ingest types & shared state

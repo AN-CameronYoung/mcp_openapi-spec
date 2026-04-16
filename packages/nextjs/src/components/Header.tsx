@@ -102,16 +102,41 @@ const ThemeToggle = (): JSX.Element => {
 /**
  * Top navigation bar with logo, page tabs, API stats, ingest indicator, theme toggle, and settings.
  */
-const Header = (): JSX.Element => {
-  const { page, setPage, apis } = useStore(useShallow((s) => ({ page: s.page, setPage: s.setPage, apis: s.apis })));
+type NavTab = { key: "greg" | "search" | "apis" | "docs"; label: string };
 
-  const totalEndpoints = apis.reduce((s, a) => s + a.endpoints, 0);
+const NAV_TABS: NavTab[] = [
+  { key: "greg", label: "Chat" },
+  // { key: "search", label: "Search" },
+  { key: "apis", label: "APIs" },
+  { key: "docs", label: "Docs" },
+];
+
+const Header = (): JSX.Element => {
+  const { page, setPage, apis, docs } = useStore(useShallow((s) => ({ page: s.page, setPage: s.setPage, apis: s.apis, docs: s.docs })));
 
   return (
     <div className="flex items-stretch h-11 px-5 border-b border-border shrink-0">
       {/* Logo */}
       <div className="flex items-center mr-[1.375rem]">
-        <span className="text-lg font-semibold tracking-[-0.01em]">greg</span>
+        <span className="text-lg font-semibold tracking-[-0.01em]">greg.</span>
+      </div>
+
+      {/* Page tabs */}
+      <div className="flex items-stretch gap-1">
+        {NAV_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setPage(tab.key)}
+            className={cn(
+              "flex items-center px-3 text-sm font-medium border-b-2 transition-colors",
+              page === tab.key || (page === "settings" && tab.key === "greg")
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* Stats + theme toggle */}
@@ -119,22 +144,26 @@ const Header = (): JSX.Element => {
         <span className="flex items-center gap-1 text-xs text-muted-foreground">
           {Ic.server()} {apis.length} APIs
         </span>
-        <span className="text-xs text-muted-foreground">{totalEndpoints} endpoints</span>
+        {docs.length > 0 && (
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            {Ic.doc()} {docs.length} Docs
+          </span>
+        )}
         <AutoIngestIndicator />
-        <ThemeToggle />
         <Button
           variant="ghost"
-          size="icon"
-          onClick={() => setPage("settings")}
+          size="sm"
+          onClick={() => setPage("admin")}
           className={cn(
-            page === "settings"
+            "h-6 px-2 text-xs font-medium",
+            page === "admin"
               ? "bg-accent text-primary"
               : "text-muted-foreground hover:text-foreground",
           )}
-          title="Ingest"
         >
-          {Ic.upload(16)}
+          Admin
         </Button>
+        <ThemeToggle />
       </div>
     </div>
   );

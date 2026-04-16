@@ -340,7 +340,7 @@ const MermaidDiagram = ({ code, isDark }: { code: string; isDark: boolean }): JS
                 write a valid SVG into the same container. */}
             <div
                 className={cn(
-                    "relative my-3 overflow-x-auto rounded-lg border p-4 group",
+                    "relative my-3 w-full overflow-x-auto rounded-lg border p-4 group",
                     error
                         ? "border-(--g-danger) bg-(--g-danger-muted)"
                         : "border-(--g-border) bg-(--g-surface) cursor-zoom-in",

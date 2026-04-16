@@ -8,10 +8,11 @@ import {
 
 import config from "./config";
 import { StoreError } from "./errors";
-import type { ApiInfo, DocumentResult, QueryResult } from "#types/store";
+import type { DocInfo } from "#types/doc";
+import type { DocumentResult, QueryResult } from "#types/store";
 
 // ---------------------------------------------------------------------------
-// Remote Ollama embedding via HTTP (no ollama npm dep needed)
+// Remote Ollama embedding via HTTP
 // ---------------------------------------------------------------------------
 
 class RemoteOllamaEmbeddingFunction implements IEmbeddingFunction {
@@ -23,15 +24,14 @@ class RemoteOllamaEmbeddingFunction implements IEmbeddingFunction {
 		this.#model = model;
 	}
 
-	/**
-	 * Generates embeddings for an array of texts via the Ollama /api/embed endpoint.
-	 */
 	async generate(texts: string[]): Promise<number[][]> {
 		const res = await fetch(`${this.#url}/api/embed`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ model: this.#model, input: texts }),
-			signal: AbortSignal.timeout(300_000), // 5 min for large batches
+			// num_ctx overrides Ollama's default context window (often 512 for embedding models).
+			// snowflake-arctic-embed2 supports up to 8 192 tokens; other models vary.
+			body: JSON.stringify({ model: this.#model, input: texts, options: { num_ctx: 8192 } }),
+			signal: AbortSignal.timeout(300_000),
 		});
 		if (!res.ok) {
 			const body = await res.text().catch(() => "");
@@ -46,26 +46,16 @@ class RemoteOllamaEmbeddingFunction implements IEmbeddingFunction {
 // Client & Embedding Builders
 // ---------------------------------------------------------------------------
 
-/**
- * Constructs the appropriate IEmbeddingFunction based on the current config.
- * Returns undefined when ChromaDB should handle embeddings server-side.
- */
 const buildEmbeddingFunction = (): IEmbeddingFunction | undefined => {
 	if (config.OLLAMA_URL) {
-		console.log(`[embeddings] using Ollama  url=${config.OLLAMA_URL}  model=${config.OLLAMA_MODEL}`);
 		return new RemoteOllamaEmbeddingFunction(config.OLLAMA_URL, config.OLLAMA_MODEL);
 	}
 	if (config.CHROMA_HOST) {
-		console.log("[embeddings] using ChromaDB server-side embeddings");
 		return undefined;
 	}
-	console.log(`[embeddings] using default chromadb embeddings  model=${config.EMBEDDING_MODEL}`);
 	return new DefaultEmbeddingFunction({ model: config.EMBEDDING_MODEL });
 };
 
-/**
- * Constructs a ChromaClient pointed at the configured host and port.
- */
 const buildClient = (): ChromaClient => {
 	const host = config.CHROMA_HOST ?? "localhost";
 	const baseUrl = `${config.CHROMA_SSL ? "https" : "http"}://${host}:${config.CHROMA_PORT}`;
@@ -76,28 +66,25 @@ const buildClient = (): ChromaClient => {
 };
 
 // ---------------------------------------------------------------------------
-// SpecStore
+// DocStore
 // ---------------------------------------------------------------------------
 
-export default class SpecStore {
+export default class DocStore {
 	#client: ChromaClient;
 	#collection: Collection | null = null;
 	#embeddingFunction: IEmbeddingFunction | undefined;
 	#collectionName: string;
 
-	static readonly BATCH_SIZE = 100;   // upsert batch when using local pre-computed embeddings
-	static readonly EMBED_BATCH = 100;  // embed 100 texts at a time (local embedding function)
-	static readonly SERVER_EMBED_BATCH = 25; // smaller batches when ChromaDB server embeds (blocking per batch)
+	static readonly BATCH_SIZE = 100;
+	static readonly EMBED_BATCH = 100;
+	static readonly SERVER_EMBED_BATCH = 25;
 
 	constructor() {
 		this.#client = buildClient();
 		this.#embeddingFunction = buildEmbeddingFunction();
-		this.#collectionName = config.CHROMA_COLLECTION;
+		this.#collectionName = config.CHROMA_DOCS_COLLECTION;
 	}
 
-	/**
-	 * Returns the ChromaDB collection, creating it if it doesn't exist yet.
-	 */
 	async #getCollection(): Promise<Collection> {
 		if (!this.#collection) {
 			this.#collection = await this.#client.getOrCreateCollection({
@@ -113,11 +100,6 @@ export default class SpecStore {
 	// Ingest
 	// ------------------------------------------------------------------
 
-	/**
-	 * Upserts a batch of documents into the ChromaDB collection.
-	 * Pre-computes embeddings locally if an embedding function is configured,
-	 * then stores them in batches with progress callbacks.
-	 */
 	async upsert(
 		documents: [string, string, Record<string, string>][],
 		onProgress?: (done: number, total: number, phase: "embedding" | "storing") => void,
@@ -128,21 +110,20 @@ export default class SpecStore {
 		const texts = documents.map((d) => d[1]);
 		const metadatas = documents.map((d) => d[2]);
 
-		// Pre-compute embeddings with progress tracking
 		let embeddings: number[][] | undefined;
 		if (this.#embeddingFunction) {
 			embeddings = [];
-			for (let i = 0; i < texts.length; i += SpecStore.EMBED_BATCH) {
-				const batch = texts.slice(i, i + SpecStore.EMBED_BATCH);
+			for (let i = 0; i < texts.length; i += DocStore.EMBED_BATCH) {
+				const batch = texts.slice(i, i + DocStore.EMBED_BATCH);
 				const batchEmbeddings = await this.#embeddingFunction.generate(batch);
 				embeddings.push(...batchEmbeddings);
-				onProgress?.(Math.min(i + SpecStore.EMBED_BATCH, texts.length), texts.length, "embedding");
+				onProgress?.(Math.min(i + DocStore.EMBED_BATCH, texts.length), texts.length, "embedding");
 			}
 		}
 
 		onProgress?.(0, ids.length, "storing");
 		const collection = await this.#getCollection();
-		const batchSize = this.#embeddingFunction ? SpecStore.BATCH_SIZE : SpecStore.SERVER_EMBED_BATCH;
+		const batchSize = this.#embeddingFunction ? DocStore.BATCH_SIZE : DocStore.SERVER_EMBED_BATCH;
 		for (let i = 0; i < ids.length; i += batchSize) {
 			const end = Math.min(i + batchSize, ids.length);
 			const upsertParams: Record<string, unknown> = {
@@ -160,43 +141,15 @@ export default class SpecStore {
 		return ids.length;
 	}
 
-	/**
-	 * Deletes all documents belonging to a given API from the collection.
-	 */
-	async deleteApi(apiName: string): Promise<void> {
+	async deleteByDocName(docName: string): Promise<void> {
 		const collection = await this.#getCollection();
-		await collection.delete({ where: { api: apiName } });
-	}
-
-	/**
-	 * Retrieves all documents for a given API, returning them as DocumentResult objects.
-	 */
-	async getAll(apiName: string): Promise<DocumentResult[]> {
-		const collection = await this.#getCollection();
-		const results = await collection.get({
-			where: { api: apiName },
-			include: [IncludeEnum.Documents, IncludeEnum.Metadatas],
-		});
-
-		const ids = results.ids ?? [];
-		const docs = results.documents ?? [];
-		const metas = results.metadatas ?? [];
-
-		return ids.map((id, i) => ({
-			id,
-			text: (docs[i] as string) ?? "",
-			metadata: (metas[i] as Record<string, string>) ?? {},
-		}));
+		await collection.delete({ where: { doc_name: docName } });
 	}
 
 	// ------------------------------------------------------------------
 	// Query
 	// ------------------------------------------------------------------
 
-	/**
-	 * Performs a semantic similarity query against the collection.
-	 * Optionally filters by a where clause and returns the top nResults matches.
-	 */
 	async query(
 		queryText: string,
 		nResults: number = 5,
@@ -227,13 +180,10 @@ export default class SpecStore {
 			}));
 		} catch (err: unknown) {
 			const message = err instanceof Error ? err.message : String(err);
-			throw new StoreError(`Query failed: ${message}`);
+			throw new StoreError(`Doc query failed: ${message}`);
 		}
 	}
 
-	/**
-	 * Retrieves a single document by its ID, or null if not found.
-	 */
 	async getById(docId: string): Promise<DocumentResult | null> {
 		const collection = await this.#getCollection();
 		const results = await collection.get({
@@ -251,35 +201,57 @@ export default class SpecStore {
 		};
 	}
 
+	async getAll(docName: string): Promise<DocumentResult[]> {
+		const collection = await this.#getCollection();
+		const results = await collection.get({
+			where: { doc_name: docName },
+			include: [IncludeEnum.Documents, IncludeEnum.Metadatas],
+		});
+
+		const ids = results.ids ?? [];
+		const docs = results.documents ?? [];
+		const metas = results.metadatas ?? [];
+
+		return ids.map((id, i) => ({
+			id,
+			text: (docs[i] as string) ?? "",
+			metadata: (metas[i] as Record<string, string>) ?? {},
+		}));
+	}
+
 	// ------------------------------------------------------------------
 	// Metadata
 	// ------------------------------------------------------------------
 
-	/**
-	 * Lists all indexed APIs with their endpoint and schema counts, sorted alphabetically.
-	 */
-	async listApis(): Promise<ApiInfo[]> {
+	async listDocs(): Promise<DocInfo[]> {
 		const collection = await this.#getCollection();
 		const total = await collection.count();
 		if (total === 0) return [];
 		const results = await collection.get({ include: [IncludeEnum.Metadatas], limit: total });
-		const counts = new Map<string, { endpoints: number; schemas: number; project: string }>();
+		const counts = new Map<string, { project: string; category: string; chunks: number; apiRefs: string[] }>();
 		for (const meta of results.metadatas ?? []) {
 			const m = meta as Record<string, string> | null;
-			if (!m?.api) continue;
-			const entry = counts.get(m.api) ?? { endpoints: 0, schemas: 0, project: m.project ?? m.api };
-			if (m.type === "endpoint") entry.endpoints++;
-			else if (m.type === "schema") entry.schemas++;
-			counts.set(m.api, entry);
+			if (!m?.doc_name) continue;
+			const entry = counts.get(m.doc_name) ?? {
+				project: m.project ?? "",
+				category: m.category ?? "guide",
+				chunks: 0,
+				apiRefs: m.api_refs ? m.api_refs.split(",").map((r) => r.trim()).filter(Boolean) : [],
+			};
+			entry.chunks++;
+			counts.set(m.doc_name, entry);
 		}
 		return Array.from(counts.entries())
 			.sort(([a], [b]) => a.localeCompare(b))
-			.map(([name, c]) => ({ name, endpoints: c.endpoints, schemas: c.schemas, project: c.project }));
+			.map(([name, c]) => ({
+				name,
+				project: c.project,
+				category: c.category as DocInfo["category"],
+				chunks: c.chunks,
+				apiRefs: c.apiRefs,
+			}));
 	}
 
-	/**
-	 * Returns the total number of documents in the collection.
-	 */
 	async count(): Promise<number> {
 		const collection = await this.#getCollection();
 		return collection.count();
