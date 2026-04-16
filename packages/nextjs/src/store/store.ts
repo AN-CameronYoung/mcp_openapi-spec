@@ -3,7 +3,7 @@
 import { create } from "zustand";
 
 import { generateTitle } from "../lib/api";
-import type { ApiInfo, SearchResult, EndpointCard } from "../lib/api";
+import type { ApiInfo, SearchResult, EndpointCard, DocCard, DocInfo } from "../lib/api";
 import type { Personality } from "@greg/shared/chat";
 
 // ---------------------------------------------------------------------------
@@ -14,6 +14,7 @@ export interface ChatMsg {
 	role: "user" | "assistant";
 	text: string;
 	endpoints?: EndpointCard[];
+	docs?: DocCard[];
 	streaming?: boolean;
 	model?: string;
 	personality?: Personality;
@@ -151,7 +152,7 @@ const applyTheme = (pref: ThemePref): void => {
 // Apply on load immediately (before React renders, client-only)
 if (typeof window !== "undefined") applyTheme(getStoredTheme());
 
-const VALID_PAGES = new Set(["greg", "search", "docs", "settings"]);
+const VALID_PAGES = new Set(["greg", "search", "apis", "docs", "settings", "admin"]);
 
 /**
  * Parses the current URL hash to determine the active page.
@@ -250,18 +251,26 @@ type AppState = {
 	setTheme: (t: ThemePref) => void;
 
 	// Navigation
-	page: "greg" | "search" | "docs" | "settings";
-	setPage: (p: "greg" | "search" | "docs" | "settings") => void;
+	page: "greg" | "search" | "apis" | "docs" | "settings" | "admin";
+	setPage: (p: "greg" | "search" | "apis" | "docs" | "settings" | "admin") => void;
 
 	// APIs metadata
 	apis: ApiInfo[];
 	setApis: (a: ApiInfo[]) => void;
 
-	// Docs tab
-	docsApi: string;
-	docsAnchor: { method: string; path: string; operationId?: string; tag?: string } | null;
-	setDocsApi: (api: string) => void;
-	viewDocs: (api: string, method: string, path: string, operationId?: string, tag?: string) => void;
+	// Docs metadata
+	docs: DocInfo[];
+	setDocs: (d: DocInfo[]) => void;
+
+	// APIs tab (Swagger/OpenAPI viewer)
+	apisApi: string;
+	apisAnchor: { method: string; path: string; operationId?: string; tag?: string } | null;
+	setApisApi: (api: string) => void;
+	viewApis: (api: string, method: string, path: string, operationId?: string, tag?: string) => void;
+
+	// Docs tab (markdown viewer)
+	selectedDoc: string;
+	setSelectedDoc: (doc: string) => void;
 
 	// Chat — multi-conversation model (single-depth branches)
 	conversations: Conversation[];
@@ -297,6 +306,7 @@ type AppState = {
 	activeChatId: string | null;
 	saveChat: () => void;
 	loadChat: (id: string) => void;
+	renameChat: (id: string, title: string) => void;
 	deleteChat: (id: string) => void;
 	newChat: () => void;
 
@@ -340,8 +350,8 @@ type AppState = {
 
 	// Detail panel
 	detailItem: SearchResult | EndpointCard | null;
-	detailType: "endpoints" | "schemas";
-	setDetail: (item: SearchResult | EndpointCard | null, type?: "endpoints" | "schemas") => void;
+	detailType: "endpoints" | "schemas" | "docs" | "apis";
+	setDetail: (item: SearchResult | EndpointCard | null, type?: "endpoints" | "schemas" | "docs" | "apis") => void;
 
 	// Client-side hydration from localStorage (call once in useEffect)
 	hydrateFromStorage: () => void;
@@ -367,20 +377,26 @@ export const useStore = create<AppState>()((set) => ({
 				const hash = p === "greg" ? buildGregHash(chatId, branchIdx > 0 ? branchIdx : 0) : `/${p}`;
 				window.history.pushState(null, "", `#${hash}`);
 			}
-			return { page: p, ...(p !== "docs" && { docsAnchor: null }) };
+			return { page: p, ...(p !== "apis" && { apisAnchor: null }) };
 		});
 	},
 
 	apis: [],
 	setApis: (apis) => set({ apis }),
 
-	docsApi: "",
-	docsAnchor: null,
-	setDocsApi: (api) => set({ docsApi: api, docsAnchor: null }),
-	viewDocs: (api, method, path, operationId, tag) => {
-		set({ page: "docs", docsApi: api, docsAnchor: { method, path, ...(operationId !== undefined && { operationId }), ...(tag !== undefined && { tag }) } });
-		if (typeof window !== "undefined") window.history.pushState(null, "", "#/docs");
+	docs: [],
+	setDocs: (docs) => set({ docs }),
+
+	apisApi: "",
+	apisAnchor: null,
+	setApisApi: (api) => set({ apisApi: api, apisAnchor: null }),
+	viewApis: (api, method, path, operationId, tag) => {
+		set({ page: "apis", apisApi: api, apisAnchor: { method, path, ...(operationId !== undefined && { operationId }), ...(tag !== undefined && { tag }) } });
+		if (typeof window !== "undefined") window.history.pushState(null, "", "#/apis");
 	},
+
+	selectedDoc: "",
+	setSelectedDoc: (doc) => set({ selectedDoc: doc }),
 
 	conversations: [INITIAL_MAIN],
 	activeConversationId: INITIAL_MAIN.id,
@@ -521,7 +537,10 @@ export const useStore = create<AppState>()((set) => ({
 		const id = s.activeChatId ?? `chat-${Date.now()}`;
 		const main = s.conversations[0];
 		const userMsg = main?.messages.find((m) => m.role === "user")?.text ?? "";
-		const title = userMsg.slice(0, 50) || "New chat";
+		const existingEntry = s.chatHistory.find((c) => c.id === id);
+		// Preserve a manually-set (or previously auto-generated) title; only derive from
+		// message text on the very first save so manual renames are never clobbered.
+		const title = existingEntry?.title ?? (userMsg.slice(0, 50) || "New chat");
 		const existing = s.chatHistory.filter((c) => c.id !== id);
 		const entry: ChatHistoryEntry = {
 			id,
@@ -537,8 +556,8 @@ export const useStore = create<AppState>()((set) => ({
 			const idx = s.conversations.findIndex((c) => c.id === s.activeConversationId);
 			window.history.replaceState(null, "", `#${buildGregHash(id, idx > 0 ? idx : 0)}`);
 		}
-		// Generate a better title async
-		if (userMsg) {
+		// Generate a better title only for brand-new chats — never overwrite an existing title
+		if (userMsg && isNew) {
 			generateTitle(userMsg).then(({ title: t }) => {
 				set((cur) => {
 					const updated = cur.chatHistory.map((c) => c.id === id ? { ...c, title: t } : c);
@@ -561,6 +580,11 @@ export const useStore = create<AppState>()((set) => ({
 			activeConversationId: chat.activeConversationId,
 			activeChatId: id,
 		};
+	}),
+	renameChat: (id, title) => set((s) => {
+		const updated = s.chatHistory.map((c) => c.id === id ? { ...c, title } : c);
+		try { localStorage.setItem("greg-history", JSON.stringify(updated)); } catch {}
+		return { chatHistory: updated };
 	}),
 	deleteChat: (id) => set((s) => {
 		const history = s.chatHistory.filter((c) => c.id !== id);
