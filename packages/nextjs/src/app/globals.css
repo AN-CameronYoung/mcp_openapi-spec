@@ -187,12 +187,21 @@ html, body {
 	margin: 0;
 	padding: 0;
 	height: 100%;
-	background: var(--g-bg);
+	background-color: var(--g-bg);
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E");
+	background-repeat: repeat;
+	background-size: 200px;
+	background-blend-mode: multiply;
 	color: var(--g-text);
 	font-family: var(--font-sans), -apple-system, "Segoe UI", sans-serif;
 	font-size: 1rem;
 	line-height: 1.5;
-	transition: background 0.15s, color 0.15s;
+	transition: background-color 0.15s, color 0.15s;
+}
+
+.dark body, .dark html {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.12'/%3E%3C/svg%3E");
+	background-blend-mode: screen;
 }
 
 *, *::before, *::after {
