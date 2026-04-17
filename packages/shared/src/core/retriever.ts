@@ -1,7 +1,7 @@
 import SpecStore from "./store";
 import { loadSpec, parseSpecContent, extractEndpoints, extractSchemas } from "./parser";
 import { endpointToDocument, schemaToDocument } from "./chunker";
-import type { ApiInfo, DocumentResult, IngestSummary, QueryResult } from "#types/store";
+import type { ApiInfo, DocumentResult, IngestSummary, QueryResult, SourceType } from "#types/store";
 
 export interface ProgressEvent {
 	phase: "parsing" | "parsed" | "deleting" | "embedding" | "storing" | "done";
@@ -33,7 +33,7 @@ export default class Retriever {
 		source: string,
 		apiName: string,
 		onProgress?: (event: ProgressEvent) => void,
-		opts?: { skipDelete?: boolean; project?: string },
+		opts?: { skipDelete?: boolean; project?: string; sourceType?: SourceType },
 	): Promise<IngestSummary> {
 		onProgress?.({ phase: "parsing", message: "Loading spec..." });
 		const spec = await loadSpec(source);
@@ -41,8 +41,8 @@ export default class Retriever {
 		const schemas = extractSchemas(spec);
 		onProgress?.({ phase: "parsed", message: `Found ${endpoints.length} endpoints, ${schemas.length} schemas` });
 
-		const endpointDocs = endpoints.map((e) => endpointToDocument(e, apiName, opts?.project));
-		const schemaDocs = schemas.map((s) => schemaToDocument(s, apiName, opts?.project));
+		const endpointDocs = endpoints.map((e) => endpointToDocument(e, apiName, opts?.project, opts?.sourceType));
+		const schemaDocs = schemas.map((s) => schemaToDocument(s, apiName, opts?.project, opts?.sourceType));
 		const allDocs = [...endpointDocs, ...schemaDocs];
 
 		if (!opts?.skipDelete) {
@@ -67,7 +67,7 @@ export default class Retriever {
 		format: "yaml" | "json",
 		apiName: string,
 		onProgress?: (event: ProgressEvent) => void,
-		opts?: { project?: string },
+		opts?: { project?: string; sourceType?: SourceType },
 	): Promise<IngestSummary> {
 		onProgress?.({ phase: "parsing", message: "Parsing spec..." });
 		const spec = await parseSpecContent(raw, format);
@@ -75,8 +75,8 @@ export default class Retriever {
 		const schemas = extractSchemas(spec);
 		onProgress?.({ phase: "parsed", message: `Found ${endpoints.length} endpoints, ${schemas.length} schemas` });
 
-		const endpointDocs = endpoints.map((e) => endpointToDocument(e, apiName, opts?.project));
-		const schemaDocs = schemas.map((s) => schemaToDocument(s, apiName, opts?.project));
+		const endpointDocs = endpoints.map((e) => endpointToDocument(e, apiName, opts?.project, opts?.sourceType));
+		const schemaDocs = schemas.map((s) => schemaToDocument(s, apiName, opts?.project, opts?.sourceType));
 		const allDocs = [...endpointDocs, ...schemaDocs];
 
 		onProgress?.({ phase: "deleting", message: "Removing old data..." });
@@ -105,8 +105,9 @@ export default class Retriever {
 		tag?: string,
 		n: number = 2,
 		maxDistance: number = MAX_DISTANCE,
+		sourceType?: SourceType,
 	): Promise<QueryResult[]> {
-		const where = buildWhere({ type: "endpoint", ...(api !== undefined && { api }), ...(method !== undefined && { method }) });
+		const where = buildWhere({ type: "endpoint", ...(api !== undefined && { api }), ...(method !== undefined && { method }), ...(sourceType !== undefined && { source_type: sourceType }) });
 		let results = await this.#store.query(query, n * 4, where ?? undefined);
 		results = results.filter((r) => (r.distance ?? 1) <= maxDistance);
 		if (tag) {
@@ -129,8 +130,9 @@ export default class Retriever {
 		api?: string,
 		n: number = 2,
 		maxDistance: number = MAX_DISTANCE,
+		sourceType?: SourceType,
 	): Promise<QueryResult[]> {
-		const where = buildWhere({ type: "schema", ...(api !== undefined && { api }) });
+		const where = buildWhere({ type: "schema", ...(api !== undefined && { api }), ...(sourceType !== undefined && { source_type: sourceType }) });
 		let results = await this.#store.query(query, n * 3, where ?? undefined);
 		results = results.filter((r) => (r.distance ?? 1) <= maxDistance);
 		return results.slice(0, n);
@@ -201,6 +203,7 @@ interface WhereFilters {
 	type?: string;
 	api?: string;
 	method?: string;
+	source_type?: string;
 }
 
 /**
@@ -289,6 +292,7 @@ const buildWhere = (filters: WhereFilters): Record<string, unknown> | null => {
 	if (filters.type) clauses.push({ type: filters.type });
 	if (filters.api) clauses.push({ api: filters.api });
 	if (filters.method) clauses.push({ method: filters.method.toUpperCase() });
+	if (filters.source_type) clauses.push({ source_type: filters.source_type });
 
 	if (clauses.length === 0) return null;
 	if (clauses.length === 1) return clauses[0]!;

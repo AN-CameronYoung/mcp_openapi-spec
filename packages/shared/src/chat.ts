@@ -541,7 +541,7 @@ const executeTool = async (
 			const n = Number(input.n ?? 5);
 			const results = await docRetriever.searchDocs(
 				input.query as string,
-				{ project: input.project as string | undefined },
+				input.project ? { project: input.project as string } : undefined,
 				n,
 			);
 			if (results.length === 0) return { result: "No docs found.", endpoints: [], docs: [] };

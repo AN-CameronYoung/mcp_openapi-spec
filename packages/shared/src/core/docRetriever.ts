@@ -1,7 +1,7 @@
 import DocStore from "./docStore";
 import { docToDocuments, parseMeta } from "./docChunker";
 import type { DocInfo, DocIngestSummary } from "#types/doc";
-import type { DocumentResult, QueryResult } from "#types/store";
+import type { DocumentResult, QueryResult, SourceType } from "#types/store";
 
 export interface DocProgressEvent {
 	phase: "parsing" | "parsed" | "deleting" | "embedding" | "storing" | "done";
@@ -29,10 +29,11 @@ export default class DocRetriever {
 		raw: string,
 		docName: string,
 		onProgress?: (event: DocProgressEvent) => void,
+		opts?: { sourceType?: SourceType },
 	): Promise<DocIngestSummary> {
 		onProgress?.({ phase: "parsing", message: "Parsing document..." });
 		const { meta } = parseMeta(raw);
-		const docs = docToDocuments(raw, docName);
+		const docs = docToDocuments(raw, docName, opts?.sourceType);
 		onProgress?.({ phase: "parsed", message: `Found ${docs.length} chunks` });
 
 		onProgress?.({ phase: "deleting", message: "Removing old data..." });
@@ -53,7 +54,7 @@ export default class DocRetriever {
 
 	async searchDocs(
 		query: string,
-		filters?: { project?: string; category?: string; tags?: string; author?: string; status?: string },
+		filters?: { project?: string; category?: string; tags?: string; author?: string; status?: string; sourceType?: SourceType },
 		n: number = 5,
 		maxDistance: number = 0.75,
 	): Promise<QueryResult[]> {
@@ -103,7 +104,7 @@ export default class DocRetriever {
 // ---------------------------------------------------------------------------
 
 const buildDocWhere = (
-	filters?: { project?: string; category?: string; tags?: string; author?: string; status?: string },
+	filters?: { project?: string; category?: string; tags?: string; author?: string; status?: string; sourceType?: SourceType },
 ): Record<string, unknown> | null => {
 	if (!filters) return null;
 
@@ -116,6 +117,7 @@ const buildDocWhere = (
 	if (filters.tags) {
 		clauses.push({ tags: { $contains: filters.tags } });
 	}
+	if (filters.sourceType) clauses.push({ source_type: filters.sourceType });
 
 	if (clauses.length === 0) return null;
 	if (clauses.length === 1) return clauses[0]!;
