@@ -104,6 +104,14 @@ export const Ic = {
 			<path d="M8 5v3.5l2 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
 		</svg>
 	),
+	map: (s = 13) => (
+		<svg width={s} height={s} viewBox="0 0 16 16" fill="none">
+			<path d="M2 4h7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+			<path d="M4 7.5h6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+			<path d="M2 11h9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+			<path d="M6 4.5v-2M8 8v-1.5M5 11.5v-1" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+		</svg>
+	),
 	bug: (s = 14) => (
 		<svg width={s} height={s} viewBox="0 0 16 16" fill="none">
 			<ellipse cx="8" cy="9.5" rx="3.5" ry="4.5" stroke="currentColor" strokeWidth="1.2"/>

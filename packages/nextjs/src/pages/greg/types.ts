@@ -60,6 +60,7 @@ export type SectionDropdownProps = {
   langMap: Record<string, string>;
   defaultOpen: boolean;
   isDark: boolean;
+  id?: string;
 };
 
 /** Props for the assistant markdown renderer with section collapsing. */

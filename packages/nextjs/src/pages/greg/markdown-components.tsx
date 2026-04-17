@@ -37,6 +37,7 @@ import {
   getTextFromChildren,
   hasSubContent,
   stripStreamTags,
+  slugifyHeading,
 } from "./utils";
 
 // ---------------------------------------------------------------------------
@@ -291,18 +292,18 @@ export const LiDropdown = ({ children, index }: LiDropdownProps): JSX.Element =>
 /**
  * Collapsible markdown section triggered by a heading line.
  */
-export const SectionDropdown = ({ title, body, msgKey, langMap, defaultOpen, isDark }: SectionDropdownProps): JSX.Element => {
+export const SectionDropdown = ({ title, body, msgKey, langMap, defaultOpen, isDark, id }: SectionDropdownProps): JSX.Element => {
   const [open, setOpen] = useState(defaultOpen);
   const components = useMemo(() => mdComponents(msgKey, langMap, isDark), [msgKey, langMap, isDark]);
 
   if (!body.trim()) {
-    return <div className="mb-1.5"><span className="text-xl font-semibold text-(--g-text)">{title}</span></div>;
+    return <div id={id} className="mb-1.5"><span className="text-xl font-semibold text-(--g-text)">{title}</span></div>;
   }
 
   const handleToggle = (): void => setOpen(!open);
 
   return (
-    <div className="mb-1.5">
+    <div id={id} className="mb-1.5">
       <button
         onClick={handleToggle}
         className={cn(collapseBtn, "w-full py-1 text-left bg-none")}
@@ -399,12 +400,12 @@ export const mdComponents = (msgKey: number | string, langMap: Record<string, st
   thead({ children }: { children?: React.ReactNode }) { return <thead className="border-b border-(--g-border)">{children as React.ReactNode}</thead>; },
   th({ children }: { children?: React.ReactNode }) { return <th className="py-1 px-2 text-left font-semibold text-(--g-text)">{children as React.ReactNode}</th>; },
   td({ children }: { children?: React.ReactNode }) { return <td className="py-1 px-2 border-t border-(--g-border) text-(--g-text-muted)">{children as React.ReactNode}</td>; },
-  h1({ children }: { children?: React.ReactNode }) { return <h1 className="text-xl font-bold text-(--g-text) mt-4 mb-1.5 leading-snug">{children as React.ReactNode}</h1>; },
-  h2({ children }: { children?: React.ReactNode }) { return <h2 className="text-lg font-semibold text-(--g-text) mt-3.5 mb-1 leading-snug">{children as React.ReactNode}</h2>; },
-  h3({ children }: { children?: React.ReactNode }) { return <h3 className="text-base font-semibold text-(--g-text) mt-3 mb-1 leading-snug">{children as React.ReactNode}</h3>; },
-  h4({ children }: { children?: React.ReactNode }) { return <h4 className="text-sm font-semibold text-(--g-text) mt-2.5 mb-0.5 leading-snug">{children as React.ReactNode}</h4>; },
-  h5({ children }: { children?: React.ReactNode }) { return <h5 className="text-sm font-semibold text-(--g-text-muted) mt-2 mb-0.5">{children as React.ReactNode}</h5>; },
-  h6({ children }: { children?: React.ReactNode }) { return <h6 className="text-xs font-semibold text-(--g-text-muted) mt-2 mb-0.5 uppercase tracking-wide">{children as React.ReactNode}</h6>; },
+  h1({ children }: { children?: React.ReactNode }) { const id = `msg-${msgKey}-h-${slugifyHeading(getTextFromChildren(children))}`; return <h1 id={id} className="text-xl font-bold text-(--g-text) mt-4 mb-1.5 leading-snug">{children as React.ReactNode}</h1>; },
+  h2({ children }: { children?: React.ReactNode }) { const id = `msg-${msgKey}-h-${slugifyHeading(getTextFromChildren(children))}`; return <h2 id={id} className="text-lg font-semibold text-(--g-text) mt-3.5 mb-1 leading-snug">{children as React.ReactNode}</h2>; },
+  h3({ children }: { children?: React.ReactNode }) { const id = `msg-${msgKey}-h-${slugifyHeading(getTextFromChildren(children))}`; return <h3 id={id} className="text-base font-semibold text-(--g-text) mt-3 mb-1 leading-snug">{children as React.ReactNode}</h3>; },
+  h4({ children }: { children?: React.ReactNode }) { const id = `msg-${msgKey}-h-${slugifyHeading(getTextFromChildren(children))}`; return <h4 id={id} className="text-sm font-semibold text-(--g-text) mt-2.5 mb-0.5 leading-snug">{children as React.ReactNode}</h4>; },
+  h5({ children }: { children?: React.ReactNode }) { const id = `msg-${msgKey}-h-${slugifyHeading(getTextFromChildren(children))}`; return <h5 id={id} className="text-sm font-semibold text-(--g-text-muted) mt-2 mb-0.5">{children as React.ReactNode}</h5>; },
+  h6({ children }: { children?: React.ReactNode }) { const id = `msg-${msgKey}-h-${slugifyHeading(getTextFromChildren(children))}`; return <h6 id={id} className="text-xs font-semibold text-(--g-text-muted) mt-2 mb-0.5 uppercase tracking-wide">{children as React.ReactNode}</h6>; },
   strong({ children }: { children?: React.ReactNode }) { return <strong className="font-semibold text-(--g-text)">{children as React.ReactNode}</strong>; },
   em({ children }: { children?: React.ReactNode }) { return <em className="italic">{children as React.ReactNode}</em>; },
   blockquote({ children }: { children?: React.ReactNode }) { return <blockquote className="my-2 pl-3 border-l-2 border-(--g-border-accent) text-(--g-text-muted) italic">{children as React.ReactNode}</blockquote>; },
@@ -452,7 +453,7 @@ export const GregMarkdown = memo(({ text, msgKey }: GregMarkdownProps): JSX.Elem
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={components as never}>{sections.preamble}</ReactMarkdown>
         )}
         {sections.items.map((s, i) => (
-          <SectionDropdown key={i} title={s.title} body={s.body} msgKey={msgKey} langMap={langMap} defaultOpen={true} isDark={isDark} />
+          <SectionDropdown key={i} title={s.title} body={s.body} msgKey={msgKey} langMap={langMap} defaultOpen={true} isDark={isDark} id={`msg-${msgKey}-h-${slugifyHeading(s.title)}`} />
         ))}
       </>
     );

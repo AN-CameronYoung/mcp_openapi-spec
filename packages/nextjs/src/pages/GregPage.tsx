@@ -32,7 +32,7 @@ import {
   CODE_PROMPTS,
   relevantEndpoints,
 } from "./greg/constants";
-import { getGreeting, stripCodeBlocks, compactMessage, cleanText } from "./greg/utils";
+import { getGreeting, stripCodeBlocks, compactMessage, cleanText, slugifyHeading } from "./greg/utils";
 import { ChatMessage, TokenCounter, InputBoxWrapper } from "./greg/chat-components";
 import { DebugPanel, SwaggerPanel, DocsSidePanel } from "./greg/panel-components";
 
@@ -159,10 +159,9 @@ const GregPage = (): JSX.Element => {
   const [loadingGif, setLoadingGif] = useState<string | null>(null);
   const [greeting, setGreetingText] = useState<string>("");
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(() => { try { const v = localStorage.getItem("greg-sidebar-open"); return v === null ? false : v !== "false"; } catch { return false; } });
+  const [sidebarView, setSidebarView] = useState<"history" | "map" | null>(() => { try { const v = localStorage.getItem("greg-sidebar-view"); return (v === "history" || v === "map") ? v : null; } catch { return null; } });
   const [sidebarWidth, setSidebarWidth] = useState(() => { try { return parseInt(localStorage.getItem("greg-sidebar-width") ?? "") || 260; } catch { return 260; } });
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const toggleRef = useRef<HTMLButtonElement>(null);
   const [selectedChatIds, setSelectedChatIds] = useState<Set<string>>(new Set());
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -202,6 +201,21 @@ const GregPage = (): JSX.Element => {
     if (contextBoundaries.includes(chatMessages.length)) items.push({ kind: "boundary" });
     return items;
   }, [chatMessages, contextBoundaries]);
+
+  type ChatHeading = { msgIndex: number; level: number; text: string; id: string };
+  const chatHeadings = useMemo((): ChatHeading[] => {
+    const results: ChatHeading[] = [];
+    for (const item of chatItems) {
+      if (item.kind !== "message" || item.msg.role !== "assistant" || !item.msg.text) continue;
+      const safe = item.msg.text.replace(/```[\s\S]*?```/g, (m) => " ".repeat(m.length));
+      for (const m of safe.matchAll(/^(#{1,3})\s+(.+)$/gm)) {
+        const level = m[1]!.length;
+        const text = m[2]!.trim();
+        results.push({ msgIndex: item.msgIndex, level, text, id: `msg-${item.msgIndex}-h-${slugifyHeading(text)}` });
+      }
+    }
+    return results;
+  }, [chatItems]);
 
   const groupedHistory = useMemo(() => {
     const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
@@ -243,7 +257,7 @@ const GregPage = (): JSX.Element => {
   useEffect(() => { try { localStorage.setItem("greg-auto-compact", String(autoCompact)); } catch {} }, [autoCompact]);
   useEffect(() => { try { localStorage.setItem("greg-apis-open", String(apisOpen)); } catch {} }, [apisOpen]);
   useEffect(() => { try { localStorage.setItem("greg-docs-open", String(docsOpen)); } catch {} }, [docsOpen]);
-  useEffect(() => { try { localStorage.setItem("greg-sidebar-open", String(sidebarOpen)); } catch {} }, [sidebarOpen]);
+  useEffect(() => { try { localStorage.setItem("greg-sidebar-view", sidebarView ?? ""); } catch {} }, [sidebarView]);
   useEffect(() => {
     try { if (selectedProvider === "ollama" && localStorage.getItem("greg-auto-compact") === null) setAutoCompact(true); } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -307,18 +321,14 @@ const GregPage = (): JSX.Element => {
     const startX = e.clientX;
     const startW = sidebarWidth;
     const sidebar = sidebarRef.current;
-    const toggle = toggleRef.current;
     if (sidebar) sidebar.style.transition = "none";
-    if (toggle) toggle.style.transition = "none";
     const onMove = (ev: MouseEvent): void => {
       const w = Math.max(180, Math.min(520, startW + ev.clientX - startX));
       if (sidebar) sidebar.style.width = `${w}px`;
-      if (toggle) toggle.style.left = `${w}px`;
     };
     const onUp = (ev: MouseEvent): void => {
       const w = Math.max(180, Math.min(520, startW + ev.clientX - startX));
       if (sidebar) sidebar.style.transition = "";
-      if (toggle) toggle.style.transition = "";
       setSidebarWidth(w);
       try { localStorage.setItem("greg-sidebar-width", String(w)); } catch {}
       document.removeEventListener("mousemove", onMove);
@@ -339,6 +349,16 @@ const GregPage = (): JSX.Element => {
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     userScrolledRef.current = false;
     setUserScrolled(false);
+  }, []);
+
+  const scrollToHeading = useCallback((id: string): void => {
+    const el = document.getElementById(id);
+    const container = scrollRef.current;
+    if (!el || !container) return;
+    const elTop = el.getBoundingClientRect().top;
+    const containerTop = container.getBoundingClientRect().top;
+    // offset 56px: 40px toolbar height + 16px breathing room
+    container.scrollBy({ top: elTop - containerTop - 56, behavior: "smooth" });
   }, []);
 
   const handleScroll = useCallback((): void => {
@@ -702,97 +722,136 @@ const GregPage = (): JSX.Element => {
 
   return (
     <div className="flex h-[calc(100%-2.75rem)]">
-      {/* History toggle badge */}
-      <button
-        ref={toggleRef}
-        onClick={() => setSidebarOpen(!sidebarOpen)}
-        className="fixed z-30 flex items-center justify-center px-3 py-3 rounded-r-lg border border-l-0 border-(--g-border) bg-(--g-surface) shadow-sm hover:bg-(--g-surface-hover) -translate-y-1/2 transition-[left,color] duration-200"
-        style={{ top: "4.25rem", left: sidebarOpen ? sidebarWidth : 0, color: sidebarOpen ? "var(--g-accent)" : "var(--g-text-dim)" }}
-        title={sidebarOpen ? "Close history" : "Open history"}
-      >
-        {Ic.clock(18)}
-      </button>
+      {/* Persistent icon strip */}
+      <div className="shrink-0 flex flex-col items-center gap-1 pt-2 pb-2 w-11 border-r border-(--g-border) bg-(--g-surface)">
+        <button
+          onClick={() => setSidebarView((v) => v === "history" ? null : "history")}
+          title={sidebarView === "history" ? "Close history" : "Open history"}
+          className={cn(
+            "flex items-center justify-center w-8 h-8 rounded-md transition-colors",
+            sidebarView === "history" ? "text-(--g-accent) bg-(--g-surface-hover)" : "text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover)",
+          )}
+        >
+          {Ic.clock(18)}
+        </button>
+        <button
+          onClick={() => setSidebarView((v) => v === "map" ? null : "map")}
+          title={sidebarView === "map" ? "Close chat map" : "Open chat map"}
+          className={cn(
+            "flex items-center justify-center w-8 h-8 rounded-md transition-colors",
+            sidebarView === "map" ? "text-(--g-accent) bg-(--g-surface-hover)" : "text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover)",
+          )}
+        >
+          {Ic.map(18)}
+        </button>
+      </div>
 
-      {/* History sidebar */}
+      {/* Sliding panel — history or map */}
       <div
         ref={sidebarRef}
         className="relative shrink-0 overflow-hidden border-r border-(--g-border) bg-(--g-surface) transition-[width] duration-200"
-        style={{ width: sidebarOpen ? sidebarWidth : 0 }}
+        style={{ width: sidebarView !== null ? sidebarWidth : 0 }}
       >
-        <div className="flex flex-col w-full h-full overflow-hidden">
-          <div className="flex items-center px-3 py-[0.6875rem] border-b border-(--g-border) shrink-0 gap-1.5">
-            {hasSelection ? (
-              <>
-                <span className="flex-1 text-[0.625rem] font-medium text-(--g-text-dim)">{selectedChatIds.size} selected</span>
-                <button onClick={deleteSelectedChats} title="Delete selected" className="flex items-center gap-1 h-6 px-2 rounded-[6px] text-[0.625rem] font-medium text-red-400 border border-red-400/30 hover:bg-red-400/10 transition-colors duration-150">{Ic.x(10)} Delete</button>
-                <button onClick={clearChatSelection} title="Clear selection" className="flex items-center justify-center w-6 h-6 rounded-[6px] border border-(--g-border-hover) text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors duration-150">{Ic.x(12)}</button>
-              </>
-            ) : (
-              <>
-                <span className="flex-1 text-[0.625rem] font-medium uppercase tracking-[0.1em] text-(--g-text-dim)">Chats</span>
-                <button onClick={handleNewChat} title="New chat" className="flex items-center justify-center w-6 h-6 rounded-[6px] border border-(--g-border-hover) text-(--g-text-dim) hover:border-(--g-border-hover) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors duration-150">{Ic.plus(14)}</button>
-              </>
-            )}
-          </div>
-          <div className="px-2.5 py-2 shrink-0">
-            <div className="relative">
-              <span className="absolute left-[9px] top-1/2 -translate-y-1/2 text-(--g-text-dim) pointer-events-none">{Ic.search(13)}</span>
-              <input type="text" value={historySearch} onChange={(e) => handleHistorySearch(e.target.value)} placeholder="Search chats…" className="w-full h-[30px] pl-[30px] pr-2.5 rounded-[6px] text-[0.75rem] bg-(--g-surface) border border-(--g-border) text-(--g-text) placeholder:text-(--g-text-dim) outline-none focus:border-(--g-border-hover) focus:bg-(--g-surface-hover) transition-colors" />
+        {sidebarView === "history" && (
+          <div className="flex flex-col w-full h-full overflow-hidden">
+            <div className="flex items-center px-3 py-[0.6875rem] border-b border-(--g-border) shrink-0 gap-1.5">
+              {hasSelection ? (
+                <>
+                  <span className="flex-1 text-[0.625rem] font-medium text-(--g-text-dim)">{selectedChatIds.size} selected</span>
+                  <button onClick={deleteSelectedChats} title="Delete selected" className="flex items-center gap-1 h-6 px-2 rounded-[6px] text-[0.625rem] font-medium text-red-400 border border-red-400/30 hover:bg-red-400/10 transition-colors duration-150">{Ic.x(10)} Delete</button>
+                  <button onClick={clearChatSelection} title="Clear selection" className="flex items-center justify-center w-6 h-6 rounded-[6px] border border-(--g-border-hover) text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors duration-150">{Ic.x(12)}</button>
+                </>
+              ) : (
+                <>
+                  <span className="flex-1 text-[0.625rem] font-medium uppercase tracking-[0.1em] text-(--g-text-dim)">Chats</span>
+                  <button onClick={handleNewChat} title="New chat" className="flex items-center justify-center w-6 h-6 rounded-[6px] border border-(--g-border-hover) text-(--g-text-dim) hover:border-(--g-border-hover) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors duration-150">{Ic.plus(14)}</button>
+                </>
+              )}
+            </div>
+            <div className="px-2.5 py-2 shrink-0">
+              <div className="relative">
+                <span className="absolute left-[9px] top-1/2 -translate-y-1/2 text-(--g-text-dim) pointer-events-none">{Ic.search(13)}</span>
+                <input type="text" value={historySearch} onChange={(e) => handleHistorySearch(e.target.value)} placeholder="Search chats…" className="w-full h-[30px] pl-[30px] pr-2.5 rounded-[6px] text-[0.75rem] bg-(--g-surface) border border-(--g-border) text-(--g-text) placeholder:text-(--g-text-dim) outline-none focus:border-(--g-border-hover) focus:bg-(--g-surface-hover) transition-colors" />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-1.5 pb-3 [scrollbar-width:thin] [scrollbar-color:var(--g-surface-hover)_transparent]">
+              {groupedHistory.length === 0 && (
+                <p className="px-2 pt-6 text-center text-[0.6875rem] tracking-[0.02em] text-(--g-text-dim)">
+                  {historySearch ? "No chats match your search" : "No chats yet"}
+                </p>
+              )}
+              {groupedHistory.map((group) => (
+                <div key={group.label}>
+                  <div className="px-1 pt-3 pb-[5px] text-[0.625rem] font-medium uppercase tracking-[0.08em] text-(--g-text-dim)">{group.label}</div>
+                  {group.entries.map((chat) => {
+                    const isActive = chat.id === useStore.getState().activeChatId;
+                    const relTime = (() => {
+                      const diff = Date.now() - chat.ts;
+                      const mins = Math.floor(diff / 60000);
+                      if (mins < 1) return "just now";
+                      if (mins < 60) return `${mins}m ago`;
+                      const hrs = Math.floor(mins / 60);
+                      if (hrs < 24) return `${hrs}h ago`;
+                      const days = Math.floor(hrs / 24);
+                      if (days === 1) return "Yesterday";
+                      if (days < 7) return `${days}d ago`;
+                      return new Date(chat.ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                    })();
+                    const isSelected = selectedChatIds.has(chat.id);
+                    return (
+                      <div
+                        key={chat.id}
+                        onClick={() => { if (hasSelection) { toggleChatSelection(chat.id); return; } loadChat(chat.id); setFollowUpSuggestions([]); }}
+                        className={cn(
+                          "group/item relative flex items-center gap-2 mb-px pl-1.5 pr-2 py-[7px] rounded-[9px] border cursor-pointer transition-colors duration-100",
+                          isSelected ? "bg-(--g-surface) border-(--g-accent)/40" : isActive ? "bg-(--g-surface) border-(--g-border-hover)" : "border-transparent hover:bg-(--g-surface) hover:border-(--g-border-hover)",
+                        )}
+                      >
+                        <button onClick={(e) => { e.stopPropagation(); toggleChatSelection(chat.id); }} className={cn("shrink-0 flex items-center justify-center w-4 h-4 rounded-[4px] border transition-all duration-100", isSelected ? "bg-(--g-accent) border-(--g-accent)" : "border-(--g-border-hover) opacity-0 group-hover/item:opacity-100")}>
+                          {isSelected && <svg width={9} height={9} viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.5L8 3" stroke="var(--g-bg)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                        </button>
+                        <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                          {isActive && !isSelected && <span className="absolute left-0 top-[20%] bottom-[20%] w-0.5 rounded-sm bg-(--g-accent)" />}
+                          <span className="truncate text-[0.75rem] text-(--g-text) leading-[1.35] pr-6">{chat.title}</span>
+                          <span className="text-[0.625rem] tracking-[0.02em] text-(--g-text-dim)">{relTime}</span>
+                        </div>
+                        {!hasSelection && (
+                          <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover/item:flex items-center gap-[3px] bg-(--g-surface-hover) border border-(--g-border) rounded-[6px] p-0.5">
+                            <button onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }} className="flex items-center justify-center w-[22px] h-[22px] rounded text-(--g-text-dim) hover:text-red-400 hover:bg-(--g-surface) transition-colors" title="Delete">{Ic.x(11)}</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto px-1.5 pb-3 [scrollbar-width:thin] [scrollbar-color:var(--g-surface-hover)_transparent]">
-            {groupedHistory.length === 0 && (
-              <p className="px-2 pt-6 text-center text-[0.6875rem] tracking-[0.02em] text-(--g-text-dim)">
-                {historySearch ? "No chats match your search" : "No chats yet"}
-              </p>
-            )}
-            {groupedHistory.map((group) => (
-              <div key={group.label}>
-                <div className="px-1 pt-3 pb-[5px] text-[0.625rem] font-medium uppercase tracking-[0.08em] text-(--g-text-dim)">{group.label}</div>
-                {group.entries.map((chat) => {
-                  const isActive = chat.id === useStore.getState().activeChatId;
-                  const relTime = (() => {
-                    const diff = Date.now() - chat.ts;
-                    const mins = Math.floor(diff / 60000);
-                    if (mins < 1) return "just now";
-                    if (mins < 60) return `${mins}m ago`;
-                    const hrs = Math.floor(mins / 60);
-                    if (hrs < 24) return `${hrs}h ago`;
-                    const days = Math.floor(hrs / 24);
-                    if (days === 1) return "Yesterday";
-                    if (days < 7) return `${days}d ago`;
-                    return new Date(chat.ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-                  })();
-                  const isSelected = selectedChatIds.has(chat.id);
-                  return (
-                    <div
-                      key={chat.id}
-                      onClick={() => { if (hasSelection) { toggleChatSelection(chat.id); return; } loadChat(chat.id); setFollowUpSuggestions([]); }}
-                      className={cn(
-                        "group/item relative flex items-center gap-2 mb-px pl-1.5 pr-2 py-[7px] rounded-[9px] border cursor-pointer transition-colors duration-100",
-                        isSelected ? "bg-(--g-surface) border-(--g-accent)/40" : isActive ? "bg-(--g-surface) border-(--g-border-hover)" : "border-transparent hover:bg-(--g-surface) hover:border-(--g-border-hover)",
-                      )}
-                    >
-                      <button onClick={(e) => { e.stopPropagation(); toggleChatSelection(chat.id); }} className={cn("shrink-0 flex items-center justify-center w-4 h-4 rounded-[4px] border transition-all duration-100", isSelected ? "bg-(--g-accent) border-(--g-accent)" : "border-(--g-border-hover) opacity-0 group-hover/item:opacity-100")}>
-                        {isSelected && <svg width={9} height={9} viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.5L8 3" stroke="var(--g-bg)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                      </button>
-                      <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                        {isActive && !isSelected && <span className="absolute left-0 top-[20%] bottom-[20%] w-0.5 rounded-sm bg-(--g-accent)" />}
-                        <span className="truncate text-[0.75rem] text-(--g-text) leading-[1.35] pr-6">{chat.title}</span>
-                        <span className="text-[0.625rem] tracking-[0.02em] text-(--g-text-dim)">{relTime}</span>
-                      </div>
-                      {!hasSelection && (
-                        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover/item:flex items-center gap-[3px] bg-(--g-surface-hover) border border-(--g-border) rounded-[6px] p-0.5">
-                          <button onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }} className="flex items-center justify-center w-[22px] h-[22px] rounded text-(--g-text-dim) hover:text-red-400 hover:bg-(--g-surface) transition-colors" title="Delete">{Ic.x(11)}</button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
+        )}
+        {sidebarView === "map" && (
+          <div className="flex flex-col w-full h-full overflow-hidden">
+            <div className="flex items-center px-3 py-[0.6875rem] border-b border-(--g-border) shrink-0">
+              <span className="flex-1 text-[0.625rem] font-medium uppercase tracking-[0.1em] text-(--g-text-dim)">Chat Map</span>
+            </div>
+            <div className="flex-1 overflow-y-auto px-2 py-2 [scrollbar-width:thin] [scrollbar-color:var(--g-surface-hover)_transparent]">
+              {chatHeadings.length === 0 ? (
+                <p className="px-2 pt-6 text-center text-[0.6875rem] tracking-[0.02em] text-(--g-text-dim)">No headings in this chat</p>
+              ) : (
+                chatHeadings.map((h, i) => (
+                  <button
+                    key={i}
+                    onClick={() => scrollToHeading(h.id)}
+                    className="w-full text-left py-[5px] pr-2 rounded-[6px] text-[0.75rem] text-(--g-text-muted) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors truncate"
+                    style={{ paddingLeft: `${(h.level - 1) * 12 + 8}px` }}
+                    title={h.text}
+                  >
+                    {h.text}
+                  </button>
+                ))
+              )}
+            </div>
           </div>
-        </div>
+        )}
         <div className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-10 hover:bg-(--g-accent) transition-colors duration-150 opacity-0 hover:opacity-40" onMouseDown={handleSidebarResizeStart} />
       </div>
 
@@ -802,44 +861,42 @@ const GregPage = (): JSX.Element => {
           <ResizablePanelGroup groupRef={innerGroupRef} onLayoutChanged={(l) => { try { localStorage.setItem("rp-greg-inner", JSON.stringify(l)); if ((l[1] ?? 0) > 0) { swaggerSizeRef.current = l[1]!; localStorage.setItem("greg-swagger-size", String(l[1])); } } catch {} }}>
             <ResizablePanel id="chat" defaultSize={75} minSize={20}>
               <div className="flex flex-col h-full min-w-0 px-6 pt-2 pb-5" style={chatZoom !== 1 ? { zoom: chatZoom } : undefined}>
-                {/* Chat title bar */}
-                {activeChatTitle !== null && (
-                  <div className="flex items-center gap-2 mb-1 min-w-0 group/title pl-12">
-                    {renamingTitle ? (
-                      <input ref={renameInputRef} value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") { const t = renameValue.trim(); if (t && activeChatId) renameChat(activeChatId, t); setRenamingTitle(false); } else if (e.key === "Escape") setRenamingTitle(false); }}
-                        onBlur={() => { const t = renameValue.trim(); if (t && activeChatId) renameChat(activeChatId, t); setRenamingTitle(false); }}
-                        className="flex-1 min-w-0 bg-transparent border-b border-(--g-accent) text-[0.8125rem] font-medium text-(--g-text) outline-none py-0.5" />
-                    ) : (
-                      <button onClick={() => { setRenameValue(activeChatTitle); setRenamingTitle(true); setTimeout(() => { renameInputRef.current?.select(); }, 0); }} className="flex-1 min-w-0 text-left text-[0.8125rem] font-medium text-(--g-text-dim) truncate hover:text-(--g-text) transition-colors" title="Click to rename">{activeChatTitle}</button>
-                    )}
-                    {!renamingTitle && (
-                      <button onClick={() => { setRenameValue(activeChatTitle); setRenamingTitle(true); setTimeout(() => { renameInputRef.current?.select(); }, 0); }} className="shrink-0 opacity-0 group-hover/title:opacity-60 hover:!opacity-100 text-(--g-text-dim) transition-opacity" title="Rename chat">{Ic.pencil(13)}</button>
+                {/* Title bar + zoom/clear controls */}
+                <div className="flex items-center gap-2 mb-1 min-w-0 h-8 shrink-0">
+                  {activeChatTitle !== null && (
+                    <>
+                      <span className="shrink-0 text-(--g-text-dim) opacity-40">{Ic.pencil(12)}</span>
+                      {renamingTitle ? (
+                        <input ref={renameInputRef} value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") { const t = renameValue.trim(); if (t && activeChatId) renameChat(activeChatId, t); setRenamingTitle(false); } else if (e.key === "Escape") setRenamingTitle(false); }}
+                          onBlur={() => { const t = renameValue.trim(); if (t && activeChatId) renameChat(activeChatId, t); setRenamingTitle(false); }}
+                          className="flex-1 min-w-0 bg-transparent border-b border-(--g-accent) text-[0.8125rem] font-medium text-(--g-text) outline-none py-0.5" />
+                      ) : (
+                        <button onClick={() => { setRenameValue(activeChatTitle); setRenamingTitle(true); setTimeout(() => { renameInputRef.current?.select(); }, 0); }} className="flex-1 min-w-0 text-left text-[0.9375rem] font-semibold text-(--g-text) truncate hover:opacity-80 transition-opacity" title="Click to rename">{activeChatTitle}</button>
+                      )}
+                    </>
+                  )}
+                  <div className="ml-auto flex items-center gap-1 shrink-0">
+                    <button onClick={() => setChatZoom((z) => Math.max(0.6, parseFloat((z - 0.1).toFixed(1))))} title="Zoom out" className="flex items-center justify-center w-7 h-7 rounded-md text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors">
+                      <svg width={16} height={16} viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.3" /><path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /><path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
+                    </button>
+                    <span className="text-xs font-mono text-(--g-text-dim) w-8 text-center tabular-nums">{Math.round(chatZoom * 100)}%</span>
+                    <button onClick={() => setChatZoom((z) => Math.min(1.6, parseFloat((z + 0.1).toFixed(1))))} title="Zoom in" className="flex items-center justify-center w-7 h-7 rounded-md text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors">
+                      <svg width={16} height={16} viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.3" /><path d="M4.5 6.5h4M6.5 4.5v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /><path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
+                    </button>
+                    {chatMessages.length > 0 && (
+                      <button onClick={() => { clearChat(); setFollowUpSuggestions([]); }} className="flex items-center gap-1.5 h-7 px-2.5 rounded-md text-sm text-red-400 hover:text-red-300 hover:bg-(--g-surface-hover) transition-colors" title="Clear chat">
+                        <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                        Clear
+                      </button>
                     )}
                   </div>
-                )}
+                </div>
 
                 <div className="flex flex-1 gap-5 min-h-0">
                   <div className="relative flex flex-col flex-1 min-w-0">
-                    {/* Top toolbar */}
-                    <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-end gap-2 px-3 h-10" style={{ background: "linear-gradient(to bottom, var(--g-bg) 0%, var(--g-bg) 65%, transparent 100%)" }}>
-                      <button onClick={() => setChatZoom((z) => Math.max(0.6, parseFloat((z - 0.1).toFixed(1))))} title="Zoom out" className="flex items-center justify-center w-8 h-8 rounded-md text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors">
-                        <svg width={18} height={18} viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.3" /><path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /><path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
-                      </button>
-                      <span className="text-xs font-mono text-(--g-text-dim) w-9 text-center tabular-nums">{Math.round(chatZoom * 100)}%</span>
-                      <button onClick={() => setChatZoom((z) => Math.min(1.6, parseFloat((z + 0.1).toFixed(1))))} title="Zoom in" className="flex items-center justify-center w-8 h-8 rounded-md text-(--g-text-dim) hover:text-(--g-text) hover:bg-(--g-surface-hover) transition-colors">
-                        <svg width={18} height={18} viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.3" /><path d="M4.5 6.5h4M6.5 4.5v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /><path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
-                      </button>
-                      {chatMessages.length > 0 && (
-                        <button onClick={() => { clearChat(); setFollowUpSuggestions([]); }} className="flex items-center gap-1.5 h-8 px-3 rounded-md text-sm text-red-400 hover:text-red-300 hover:bg-(--g-surface-hover) transition-colors" title="Clear chat">
-                          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                          Clear
-                        </button>
-                      )}
-                    </div>
-
                     {conversations.length > 1 && (
-                      <div className="mt-10 shrink-0">
+                      <div className="shrink-0">
                         <TabBar conversations={conversations} activeConversationId={activeConversationId} onSwitch={handleSwitchTab} onClose={handleCloseTab} onRename={renameConversation} />
                       </div>
                     )}
