@@ -40,22 +40,106 @@ bun run dev   # runs on port 3001
 
 The frontend proxies `/openapi/*` to the backend on port 3000. Start the backend first with `--transport http`.
 
-The UI is a chat-first interface named **greg** with:
-- Multiple AI personalities: `greg` (casual), `explanatory`, `curt`, `casual`
-- Provider/model selection: Anthropic or Ollama
-- Persistent chat history (localStorage), with chat ID stamped into the URL hash
-- Endpoint search and inline result cards (parsed from `<endpoint/>` tags the model emits)
-- Mermaid diagram rendering with SVG / PNG / PDF / clipboard export, available from both the inline view and the expanded lightbox
-- "Diagram" and "Code" quick-action buttons under each reply, disabled only when the content is already present in the response
-- Structured follow-up question suggestions after each reply, in a fixed 4-slot shape: **security → high availability → failure modes → open**
-- Retry from any user message — always uses the **current** personality and model, not the one that produced the original reply
-- Double-check (verification pass) toggle
-- Theme switcher: system / light / dark / claude
-- Ingest job UI with live progress
+The UI is a chat-first interface named **greg** — an API documentation assistant that combines conversational AI with interactive API and doc browsing.
 
-## Known Issues
+### Personalities
 
-- **Follow-up suggestions don't render.** The structured 4-slot follow-up questions (security → HA → failure modes → open) are generated server-side but do not appear in the Virtuoso footer after an assistant reply completes. Likely caused by `react-virtuoso` not re-rendering `components.Footer` in response to closure-captured state changes. Next step: switch the Footer to receive state via Virtuoso's `context` prop rather than closure, or lift follow-up state into Zustand so the Footer can subscribe directly.
+Four assistant personalities, each with distinct tone, color, and system prompt:
+
+| Personality | Color | Style |
+|-------------|-------|-------|
+| `greg` | green | Casual, slangy ("greg here. what api u need") |
+| `explanatory` | orange | In-depth technical explanations |
+| `quick` | blue | Brief, direct answers |
+| `casual` | purple | Relaxed ("ok") |
+
+Switch personalities via the picker in the input bar. Each personality has a configurable custom system prompt.
+
+### Chat
+
+- Real-time streaming with smooth character reveal animation
+- Full GitHub-flavored markdown: tables, code blocks, headings, blockquotes, lists, links, images
+- Syntax-highlighted code blocks (TypeScript, JavaScript, Python, Bash, JSON, YAML, and more)
+- Code blocks >30 lines auto-collapse with a "code: N lines" header and copy button
+- Ordered lists >2 items auto-collapse into expandable items
+- Sections auto-collapse into dropdowns when 2+ headings are present in a response
+- Inline Mermaid diagram rendering (flowchart, sequence, ER, state, C4 architecture) — export as SVG / PNG / PDF or copy to clipboard
+- Inline detection of `METHOD /path` patterns in response text; mentioned endpoints are auto-promoted to the top of the results panel
+- Per-message metadata: model name, input/output token counts, tool call count badge, copy button, delete button
+
+### Inline Results Panels
+
+After each response, collapsible panels show what the assistant retrieved:
+
+**Endpoint cards** — API endpoints retrieved during the response, sorted by relevance score. Each card shows the HTTP method (color-coded), path with highlighted parameters, API name, description, and any warnings. Click a card to open the Swagger panel and scroll to that endpoint.
+
+**Doc cards** — Documentation sections retrieved, grouped by document name. Each entry shows the doc name, project badge, and matching headings. Click an entry to open the Docs panel and scroll to that heading.
+
+### Quick Actions (per message)
+
+- **Diagram** — dropdown with 5 Mermaid diagram types: Flowchart, Sequence, ER, State, C4 Architecture. Disabled if a diagram already exists in the response.
+- **Code** — dropdown for cURL, Python, or JavaScript snippets. Disabled if code already exists.
+- **Fork** — branches the conversation from that message into a new tab (main conversation only).
+
+### Tool Call Activity
+
+While the assistant is responding, a live inline panel shows each tool call as it executes: tool name, input parameters, token count, and a preview of the result (first 600 chars, expandable). A summary header shows total tool calls and tokens once complete.
+
+### Verification Badge
+
+When the double-check toggle is on, a verification pass runs after each response:
+- **Verified**: green checkmark with verification text and token count
+- **Corrected**: orange alert with expandable correction rendered as markdown
+
+### Debug Panel
+
+Click the bug icon on any assistant message (when debug data exists) to open a trace panel showing:
+- Per-round token counts (input, output, stop reason)
+- Each tool call: name, inputs, result preview
+- Token breakdown (primary, verification, tool calls)
+- Auto-compact status and token savings
+- Estimated USD cost (calculated from Anthropic pricing tables)
+- Compacted history sent to the API (when auto-compact is on)
+
+### Input Bar Controls
+
+| Control | Description |
+|---------|-------------|
+| Personality picker | Switch between greg / explanatory / quick / casual |
+| Model selector | Pick any Anthropic or Ollama model; defaults to store default |
+| Token counter | Shows context window usage; turns yellow at warning threshold, red at critical; a **Compact** button appears at red |
+| Auto-compact toggle | When on, strips code blocks from history after each response to preserve context (full text remains visible in the UI) |
+| APIs toggle | Show/hide the Swagger panel |
+| Docs toggle | Show/hide the Docs panel |
+| Send / Stop | Send message (Enter) or abort streaming (shown while streaming) |
+
+**Keyboard shortcuts:** `Enter` to send, `Shift+Enter` for a new line, `/clear` to add a context boundary (clears API history for the next request while keeping messages visible).
+
+### Sidebar
+
+A collapsible, resizable chat history sidebar (drag to resize, 180–520px, persisted):
+- Search bar to filter by title
+- New chat button
+- Chats grouped by time period (Today, Yesterday, Last 7 days, Earlier)
+- Per-chat timestamps, delete on hover
+- Bulk selection mode with multi-delete
+
+### Conversation Tabs & Forking
+
+- **Main conversation**: the primary thread
+- **Branch conversations**: forked from any message in the main thread; prepends the parent context automatically
+- Tab bar shows all open conversations with close buttons
+- Fork context header shows the parent name and the message excerpt the fork originated from
+
+### Side Panels
+
+**Swagger / API panel** — full Swagger UI for any ingested API. Includes an API selector (grouped by project), endpoint search with previous/next navigation, zoom controls (0.6×–1.6×, persisted), and a popout button.
+
+**Docs panel** — rendered markdown documentation. Includes a doc selector, search with navigation, pagination for large documents (split at H1/H2 boundaries), zoom controls (50–160%, persisted), and auto-scroll to a specific heading when opened from a doc card.
+
+### Follow-up Suggestions
+
+Inline follow-up question pills appear below each response, generated from a `<followups>` tag in the stream. A refresh button regenerates them. A "generating follow-ups…" indicator is shown while pending.
 
 ## MCP Configuration
 

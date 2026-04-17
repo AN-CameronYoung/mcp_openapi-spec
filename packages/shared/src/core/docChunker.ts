@@ -1,5 +1,5 @@
 import type { DocMeta, DocCategory, DocStatus, DocAudience } from "#types/doc";
-import type { Document } from "#types/store";
+import type { Document, SourceType } from "#types/store";
 
 // ---------------------------------------------------------------------------
 // Meta parsing
@@ -93,11 +93,10 @@ export const parseMeta = (raw: string): { meta: DocMeta; body: string } => {
 // ---------------------------------------------------------------------------
 
 // Maximum characters sent to the embedding model per chunk.
-// Dense text (table rows, dot-leaders, pipe chars) can tokenize at ~1–2 chars/token,
-// so 512 chars is a hard floor that fits inside any model's default 512-token context.
 // docStore.ts overrides num_ctx to 8 192 for Ollama, so models that support long
 // contexts (e.g. snowflake-arctic-embed2) will use the larger window automatically.
-const MAX_EMBED_CHARS = 512;
+// 4 096 chars at ~1-2 chars/token fits comfortably within the 8 192-token override.
+const MAX_EMBED_CHARS = 4096;
 
 const slugify = (text: string): string =>
 	text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -106,7 +105,7 @@ const slugify = (text: string): string =>
  * Splits a markdown document body into Document tuples by H1/H2/H3 headings.
  * Each chunk gets its own ID, embed text (heading path + content), and metadata.
  */
-export const docToDocuments = (raw: string, docName: string): Document[] => {
+export const docToDocuments = (raw: string, docName: string, sourceType?: SourceType): Document[] => {
 	const { meta, body } = parseMeta(raw);
 	if (!body) return [];
 
@@ -128,8 +127,8 @@ export const docToDocuments = (raw: string, docName: string): Document[] => {
 		const trimmed = content.trim();
 		if (!trimmed && !heading) continue;
 
-		const slug = heading ? slugify(heading) : `section-${i}`;
-		const docId = `doc:${docName}:${i}:${slug}`;
+		const pathSlug = headingPath.map(slugify).join("--");
+		const docId = `doc:${docName}:${i}:${pathSlug || `section-${i}`}`;
 
 		// Embed text: breadcrumb + content, capped so large sections don't exceed
 		// the embedding model's context window (most models cap around 512–8192 tokens).
@@ -158,6 +157,7 @@ export const docToDocuments = (raw: string, docName: string): Document[] => {
 		}
 		if (meta.version) metadata.version = meta.version;
 		if (meta.apiRefs) metadata.api_refs = meta.apiRefs.join(",");
+		if (sourceType) metadata.source_type = sourceType;
 
 		documents.push([docId, embedText, metadata]);
 	}
@@ -268,7 +268,7 @@ const splitByHeadings = (body: string): Section[] => {
 	};
 
 	for (const line of lines) {
-		const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+		const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
 		if (headingMatch) {
 			flush();
 			currentLevel = headingMatch[1]!.length;

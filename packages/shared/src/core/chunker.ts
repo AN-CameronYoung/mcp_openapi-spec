@@ -1,5 +1,5 @@
 import type { Endpoint, SchemaDefinition } from "#types/openapi";
-import type { Document } from "#types/store";
+import type { Document, SourceType } from "#types/store";
 
 // ---------------------------------------------------------------------------
 // Endpoint → Document
@@ -9,7 +9,7 @@ import type { Document } from "#types/store";
  * Converts an OpenAPI Endpoint into a Document tuple for storage and retrieval.
  * Builds full display text, a compact embedding text, and rich metadata.
  */
-export const endpointToDocument = (endpoint: Endpoint, apiName: string, project?: string): Document => {
+export const endpointToDocument = (endpoint: Endpoint, apiName: string, project?: string, sourceType?: SourceType): Document => {
 	const { method, path } = endpoint;
 	const docId = `${apiName}:endpoint:${method}:${path}`;
 
@@ -133,6 +133,7 @@ export const endpointToDocument = (endpoint: Endpoint, apiName: string, project?
 	};
 	if (endpoint.operationId) metadata.operation_id = endpoint.operationId;
 	if (endpoint.tags.length > 0) metadata.tags = endpoint.tags.join(", ");
+	if (sourceType) metadata.source_type = sourceType;
 
 	// Store full response schema for exact lookups
 	for (const [status, resp] of Object.entries(responses)) {
@@ -184,7 +185,7 @@ export const endpointToDocument = (endpoint: Endpoint, apiName: string, project?
 /**
  * Converts a SchemaDefinition into a Document tuple for storage and retrieval.
  */
-export const schemaToDocument = (schema: SchemaDefinition, apiName: string, project?: string): Document => {
+export const schemaToDocument = (schema: SchemaDefinition, apiName: string, project?: string, sourceType?: SourceType): Document => {
 	const { name } = schema;
 	const docId = `${apiName}:schema:${name}`;
 
@@ -238,6 +239,7 @@ export const schemaToDocument = (schema: SchemaDefinition, apiName: string, proj
 		project: project ?? apiName,
 		full_text: fullText,
 	};
+	if (sourceType) metadata.source_type = sourceType;
 
 	return [docId, embedText, metadata];
 };

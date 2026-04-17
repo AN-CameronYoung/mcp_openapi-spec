@@ -18,7 +18,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 	if (!role) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 	if (role !== "admin") return NextResponse.json({ error: "admin role required" }, { status: 403 });
 
-	const body = await req.json() as { source: string; api_name: string };
+	const body = await req.json() as { source: string; api_name: string; source_type?: "internal" | "external" };
 	if (!body.source || !body.api_name) {
 		return NextResponse.json({ error: "missing source or api_name" }, { status: 400 });
 	}
@@ -49,7 +49,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 				} catch {}
 			}
 
-			const summary = await getRetriever().ingest(body.source, body.api_name, (e) => send(e as unknown as Record<string, unknown>));
+			const summary = await getRetriever().ingest(body.source, body.api_name, (e) => send(e as unknown as Record<string, unknown>), { ...(body.source_type && { sourceType: body.source_type }) });
 			send({ phase: "complete", summary });
 		} catch (err) {
 			send({ phase: "error", message: err instanceof Error ? err.message : "ingest failed" });

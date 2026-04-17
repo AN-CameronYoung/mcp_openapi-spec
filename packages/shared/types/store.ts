@@ -1,3 +1,5 @@
+export type SourceType = "internal" | "external";
+
 export type Document = [id: string, text: string, metadata: Record<string, string>];
 
 export interface QueryResult {
